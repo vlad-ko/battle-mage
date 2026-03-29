@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
-import { verifySlackSignature, replyInThread } from "@/lib/slack";
+import {
+  verifySlackSignature,
+  replyInThread,
+  fetchMessage,
+  getBotUserId,
+} from "@/lib/slack";
 import { runAgent } from "@/lib/claude";
+import { createIssue } from "@/lib/github";
+import { parseProposalFromMessage } from "@/tools/create-issue";
 
 /**
  * Slack Events API webhook handler.
@@ -72,7 +79,7 @@ export async function POST(request: NextRequest) {
               "",
               proposal.body,
               "",
-              '👆 Reply *"yes"* or *"create it"* to confirm, or *"no"* to cancel.',
+              "React with :white_check_mark: to create this issue, or ignore to cancel.",
             ].join("\n"),
           );
         } else {
@@ -86,6 +93,67 @@ export async function POST(request: NextRequest) {
           threadTs,
           `Something went wrong while processing your request. Error: ${msg}`,
         );
+      }
+    });
+
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── Handle ✅ reaction on proposal messages → create the issue ─────
+  if (event.type === "reaction_added" && event.reaction === "white_check_mark") {
+    const item = event.item;
+    if (item?.type !== "message") return NextResponse.json({ ok: true });
+
+    const channel: string = item.channel;
+    const messageTs: string = item.ts;
+    const reactingUser: string = event.user;
+
+    after(async () => {
+      try {
+        // Ignore reactions from the bot itself
+        const botId = await getBotUserId();
+        if (botId && reactingUser === botId) return;
+
+        // Fetch the message that was reacted to
+        const msg = await fetchMessage(channel, messageTs);
+        if (!msg) return;
+
+        // Only act on our own messages (proposals posted by the bot)
+        if (msg.user !== botId) return;
+
+        // Parse the proposal from the message text
+        const proposal = parseProposalFromMessage(msg.text);
+        if (!proposal) return; // Not a proposal message — ignore
+
+        // Create the issue on GitHub
+        const issue = await createIssue(
+          proposal.title,
+          proposal.body,
+          proposal.labels,
+        );
+
+        // Reply in the same thread with the new issue link
+        const threadTs = msg.thread_ts || messageTs;
+        await replyInThread(
+          channel,
+          threadTs,
+          `:white_check_mark: Created issue *#${issue.number}*: <${issue.url}|${issue.title}>`,
+        );
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : "Unknown error";
+        console.error("Battle Mage reaction handler error:", errMsg);
+        // Best-effort reply — use thread_ts if available
+        try {
+          const msg = await fetchMessage(channel, messageTs);
+          const threadTs = msg?.thread_ts || messageTs;
+          await replyInThread(
+            channel,
+            threadTs,
+            `Failed to create issue: ${errMsg}`,
+          );
+        } catch {
+          // Can't reply — just log
+        }
       }
     });
 

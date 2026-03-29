@@ -54,3 +54,39 @@ export async function replyInThread(
     text,
   });
 }
+
+// ── Fetch a single message by channel + ts ───────────────────────────
+// Works for both thread parents and threaded replies.
+// Uses conversations.replies which accepts any message ts in a thread.
+export async function fetchMessage(
+  channel: string,
+  ts: string,
+): Promise<{ text: string; user?: string; thread_ts?: string } | null> {
+  try {
+    const result = await slack.conversations.replies({
+      channel,
+      ts,
+      inclusive: true,
+      limit: 1,
+    });
+    const msg = result.messages?.[0];
+    if (!msg) return null;
+    return { text: msg.text ?? "", user: msg.user, thread_ts: msg.thread_ts };
+  } catch {
+    return null;
+  }
+}
+
+// ── Get bot's own user ID (cached per cold start) ────────────────────
+let cachedBotUserId: string | undefined;
+
+export async function getBotUserId(): Promise<string | undefined> {
+  if (cachedBotUserId) return cachedBotUserId;
+  try {
+    const result = await slack.auth.test();
+    cachedBotUserId = result.user_id ?? undefined;
+    return cachedBotUserId;
+  } catch {
+    return undefined;
+  }
+}
