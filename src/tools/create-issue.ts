@@ -45,3 +45,38 @@ export function extractIssueProposal(
     labels: input.labels as string[] | undefined,
   };
 }
+
+// ── Parse a proposal from the bot's own Slack message text ────────────
+// The bot posts proposals in a known format (see route.ts). This parses
+// the title, labels, and body back out so we can create the issue when
+// the user confirms via ✅ reaction.
+
+const PROPOSAL_TITLE_RE = /\*Proposed Issue:\*\s*(.+)/;
+const PROPOSAL_LABELS_RE = /\*Labels:\*\s*(.+)/;
+const PROPOSAL_CONFIRM_LINE = "React with :white_check_mark: to create this issue";
+
+export function parseProposalFromMessage(
+  text: string,
+): IssueProposal | null {
+  const titleMatch = text.match(PROPOSAL_TITLE_RE);
+  if (!titleMatch) return null;
+
+  const title = titleMatch[1].trim();
+
+  const labelsMatch = text.match(PROPOSAL_LABELS_RE);
+  const labels = labelsMatch
+    ? labelsMatch[1].split(",").map((l) => l.trim()).filter(Boolean)
+    : undefined;
+
+  // Body sits between the labels/title line and the confirmation prompt
+  const anchorLine = labelsMatch ? labelsMatch[0] : titleMatch[0];
+  const bodyStart = text.indexOf(anchorLine) + anchorLine.length;
+  const bodyEnd = text.lastIndexOf(PROPOSAL_CONFIRM_LINE);
+
+  if (bodyEnd === -1) return null;
+
+  const body = text.slice(bodyStart, bodyEnd).trim();
+  if (!body) return null;
+
+  return { title, body, labels };
+}
