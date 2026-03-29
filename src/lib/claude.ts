@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { tools, executeTool, type ToolResult } from "@/tools";
 import type { IssueProposal } from "@/tools/create-issue";
+import { readFile } from "@/lib/github";
 
 // ── Anthropic client ──────────────────────────────────────────────────
 const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from env
@@ -8,10 +9,34 @@ const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from env
 const MODEL = "claude-sonnet-4-20250514";
 const MAX_TOOL_ROUNDS = 10;
 
+// ── Fetch CLAUDE.md from target repo (cached per cold start) ─────────
+let cachedClaudeMd: string | null | undefined; // undefined = not fetched yet
+
+async function getClaudeMd(): Promise<string | null> {
+  if (cachedClaudeMd !== undefined) return cachedClaudeMd;
+  try {
+    const result = await readFile("CLAUDE.md");
+    if ("content" in result && typeof result.content === "string") {
+      cachedClaudeMd = result.content;
+      return cachedClaudeMd;
+    }
+    cachedClaudeMd = null;
+    return null;
+  } catch {
+    cachedClaudeMd = null;
+    return null;
+  }
+}
+
 // ── System prompt ─────────────────────────────────────────────────────
-function buildSystemPrompt(): string {
+async function buildSystemPrompt(): Promise<string> {
   const owner = process.env.GITHUB_OWNER;
   const repo = process.env.GITHUB_REPO;
+
+  const claudeMd = await getClaudeMd();
+  const contextSection = claudeMd
+    ? `\n## Project Context (from CLAUDE.md)\n\n${claudeMd}\n`
+    : "";
 
   return `You are Battle Mage (@bm), an AI assistant embedded in Slack with read access to the ${owner}/${repo} GitHub repository.
 
@@ -41,7 +66,7 @@ You have access to these GitHub tools:
 
 Owner: ${owner}
 Repository: ${repo}
-`;
+${contextSection}`;
 }
 
 // ── Agent loop: message → tool calls → final answer ───────────────────
@@ -57,12 +82,13 @@ export async function runAgent(userMessage: string): Promise<AgentResult> {
   ];
 
   let issueProposal: IssueProposal | undefined;
+  const systemPrompt = await buildSystemPrompt();
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const response = await anthropic.messages.create({
       model: MODEL,
       max_tokens: 4096,
-      system: buildSystemPrompt(),
+      system: systemPrompt,
       tools,
       messages,
     });
