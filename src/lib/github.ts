@@ -1,7 +1,7 @@
 import { Octokit } from "@octokit/rest";
 
 // ── GitHub client ─────────────────────────────────────────────────────
-const octokit = new Octokit({ auth: process.env.GITHUB_PAT });
+const octokit = new Octokit({ auth: process.env.GITHUB_PAT_BM });
 
 const owner = () => process.env.GITHUB_OWNER!;
 const repo = () => process.env.GITHUB_REPO!;

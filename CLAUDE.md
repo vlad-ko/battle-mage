@@ -55,6 +55,6 @@ src/
 | `SLACK_BOT_TOKEN` | Slack bot OAuth token (`xoxb-...`) |
 | `SLACK_SIGNING_SECRET` | Slack app signing secret |
 | `ANTHROPIC_API_KEY` | Claude API key |
-| `GITHUB_PAT` | Fine-grained PAT for target repo |
+| `GITHUB_PAT_BM` | Fine-grained PAT for target repo |
 | `GITHUB_OWNER` | GitHub org/user (e.g., `wealthbot-io`) |
 | `GITHUB_REPO` | Repository name (e.g., `webo`) |
