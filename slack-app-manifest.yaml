@@ -1,0 +1,29 @@
+display_information:
+  name: Battle Mage
+  description: AI assistant with GitHub repo intelligence. @mention to ask about your codebase.
+  background_color: "#1a1a2e"
+
+features:
+  bot_user:
+    display_name: Battle Mage
+    always_online: true
+
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - reactions:read
+      - chat:write
+      - channels:history
+      - groups:history
+
+settings:
+  event_subscriptions:
+    # Replace with your Vercel production URL after first deploy
+    request_url: https://YOUR_VERCEL_DOMAIN/api/slack
+    bot_events:
+      - app_mention
+      - reaction_added
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
