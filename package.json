@@ -1,0 +1,33 @@
+{
+  "name": "battle-mage",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Slack agent with Claude AI intelligence and GitHub repo access. Invoke via @bm to ask questions about your codebase.",
+  "license": "MIT",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@octokit/rest": "^21.0.0",
+    "@slack/bolt": "^4.2.0",
+    "@slack/web-api": "^7.9.0",
+    "next": "^15.3.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^15.3.0",
+    "typescript": "^5.8.0"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  }
+}
