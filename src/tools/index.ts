@@ -18,19 +18,13 @@ export const tools: Tool[] = [
 // ── References ────────────────────────────────────────────────────────
 export interface Reference {
   label: string; // e.g. "app/Models/User.php" or "Issue #42"
-  url: string; // GitHub URL
+  url: string; // GitHub URL (html_url — includes line anchors for search results)
 }
 
 // ── Tool executor ─────────────────────────────────────────────────────
 export type ToolResult =
   | { type: "text"; text: string; references?: Reference[] }
   | { type: "issue_proposal"; proposal: IssueProposal; references?: Reference[] };
-
-function githubUrl(path: string): string {
-  const owner = process.env.GITHUB_OWNER;
-  const repo = process.env.GITHUB_REPO;
-  return `https://github.com/${owner}/${repo}/blob/main/${path}`;
-}
 
 function issueUrl(number: number): string {
   const owner = process.env.GITHUB_OWNER;
@@ -44,24 +38,14 @@ export async function executeTool(
 ): Promise<ToolResult> {
   switch (name) {
     case "search_code": {
-      const text = await executeSearchCode(input);
-      // Extract file paths from search results to build references
-      const refs: Reference[] = [];
-      const pathPattern = /^\*\*(.+?)\*\*/gm;
-      let match;
-      while ((match = pathPattern.exec(text)) !== null) {
-        const path = match[1];
-        if (path && !refs.some((r) => r.label === path)) {
-          refs.push({ label: path, url: githubUrl(path) });
-        }
-      }
-      return { type: "text", text, references: refs };
+      // Returns { text, references } with real GitHub html_urls (include line anchors)
+      const result = await executeSearchCode(input);
+      return { type: "text", text: result.text, references: result.references };
     }
     case "read_file": {
-      const path = input.path as string;
-      const text = await executeReadFile(input);
-      const refs: Reference[] = [{ label: path, url: githubUrl(path) }];
-      return { type: "text", text, references: refs };
+      // Returns { text, references } with real GitHub html_url for the file
+      const result = await executeReadFile(input);
+      return { type: "text", text: result.text, references: result.references };
     }
     case "list_issues": {
       const text = await executeListIssues(input);
