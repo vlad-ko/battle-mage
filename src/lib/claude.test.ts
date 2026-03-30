@@ -8,6 +8,7 @@ describe("assembleSystemPrompt", () => {
     claudeMd: null,
     knowledge: null,
     feedback: null,
+    repoIndex: null,
   };
 
   describe("source-of-truth hierarchy", () => {
@@ -104,6 +105,21 @@ describe("assembleSystemPrompt", () => {
     it("omits feedback section when null", () => {
       const prompt = assembleSystemPrompt(baseArgs);
       expect(prompt).not.toContain("User Feedback");
+    });
+
+    it("includes repo index when provided", () => {
+      const prompt = assembleSystemPrompt({
+        ...baseArgs,
+        repoIndex: "- *authentication*: app/Services/Auth/\n- *deployment*: Dockerfile",
+      });
+      expect(prompt).toContain("Repository Map");
+      expect(prompt).toContain("app/Services/Auth/");
+      expect(prompt).toContain("Dockerfile");
+    });
+
+    it("omits repo index section when null", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      expect(prompt).not.toContain("Repository Map");
     });
 
     it("includes owner and repo in prompt", () => {

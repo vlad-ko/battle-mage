@@ -4,6 +4,7 @@ import type { IssueProposal } from "@/tools/create-issue";
 import { readFile } from "@/lib/github";
 import { getKnowledgeAsMarkdown } from "@/lib/knowledge";
 import { getFeedbackAsMarkdown } from "@/lib/feedback";
+import { getOrRebuildIndex } from "@/lib/repo-index";
 
 // ── Anthropic client ──────────────────────────────────────────────────
 const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from env
@@ -46,10 +47,11 @@ export interface PromptInputs {
   claudeMd: string | null;
   knowledge: string | null;
   feedback: string | null;
+  repoIndex: string | null;
 }
 
 export function assembleSystemPrompt(inputs: PromptInputs): string {
-  const { owner, repo, claudeMd, knowledge, feedback } = inputs;
+  const { owner, repo, claudeMd, knowledge, feedback, repoIndex } = inputs;
 
   const contextSection = claudeMd
     ? `\n## Project Context (from CLAUDE.md)\n\n${claudeMd}\n`
@@ -59,6 +61,9 @@ export function assembleSystemPrompt(inputs: PromptInputs): string {
     : "";
   const feedbackSection = feedback
     ? `\n## User Feedback (from 👍/👎 reactions)\n\nThis is the weakest, most subjective signal — use it to calibrate tone and style, not as a source of factual truth.\n\n${feedback}\n`
+    : "";
+  const repoIndexSection = repoIndex
+    ? `\n## Repository Map (auto-generated index)\n\nThis map shows the key areas of the repo. Use it to jump directly to relevant files with \`read_file\` instead of searching blind. The map is rebuilt automatically when the repo changes.\n\n${repoIndex}\n`
     : "";
 
   return `You are Battle Mage (@bm), an AI assistant embedded in Slack with read access to the ${owner}/${repo} GitHub repository.
@@ -156,7 +161,7 @@ You are writing for Slack mrkdwn, NOT standard Markdown. Slack will show raw cha
 
 Owner: ${owner}
 Repository: ${repo}
-${contextSection}${knowledgeSection}${feedbackSection}`;
+${contextSection}${repoIndexSection}${knowledgeSection}${feedbackSection}`;
 }
 
 // ── Async wrapper that fetches data then assembles ────────────────────
@@ -167,6 +172,7 @@ async function buildSystemPrompt(): Promise<string> {
     claudeMd: await getClaudeMd(),
     knowledge: await getKnowledge(),
     feedback: await getFeedbackAsMarkdown(),
+    repoIndex: await getOrRebuildIndex(),
   });
 }
 
