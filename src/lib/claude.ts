@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { tools, executeTool, type ToolResult } from "@/tools";
 import type { IssueProposal } from "@/tools/create-issue";
 import { readFile } from "@/lib/github";
+import { getKnowledgeAsMarkdown } from "@/lib/knowledge";
 
 // ── Anthropic client ──────────────────────────────────────────────────
 const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from env
@@ -11,7 +12,7 @@ const MAX_TOOL_ROUNDS = 10;
 
 // ── Fetch context files from target repo (cached per cold start) ─────
 let cachedClaudeMd: string | null | undefined;
-let cachedKnowledge: string | null | undefined;
+// cachedKnowledge removed — now served by Vercel KV via @/lib/knowledge
 
 async function fetchRepoFile(path: string): Promise<string | null> {
   try {
@@ -32,8 +33,8 @@ async function getClaudeMd(): Promise<string | null> {
 }
 
 async function getKnowledge(): Promise<string | null> {
-  // NOT cached — always fetch fresh so new corrections are picked up immediately
-  return fetchRepoFile(".battle-mage/knowledge.md");
+  // Served by Vercel KV — no GitHub write access needed
+  return getKnowledgeAsMarkdown();
 }
 
 // ── System prompt ─────────────────────────────────────────────────────
@@ -70,7 +71,7 @@ You have access to these GitHub tools:
 
 ## Knowledge Base — IMPORTANT
 
-You have a persistent knowledge base at \`.battle-mage/knowledge.md\` in the repo. Use it as follows:
+You have a persistent knowledge base stored in Vercel KV (not in the GitHub repo). Use it as follows:
 
 *When to save:*
 - A user corrects you ("no, that's in app/Services not app/Http")

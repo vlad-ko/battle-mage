@@ -182,9 +182,11 @@ You:  That's wrong — auth lives in app/Services/Auth since the v3 refactor
 Bot:  Got it, I'll save that to the knowledge base.
 ```
 
-The bot commits a correction to `.battle-mage/knowledge.md` in your target repo. This file is loaded into every future conversation, so the bot won't make the same mistake again.
+The bot saves the correction to Vercel KV (a serverless key-value store that comes with your Vercel deployment). The knowledge is loaded into every future conversation, so the bot won't make the same mistake again.
 
-You can review, edit, or delete entries in that file anytime — it's just a markdown file in your repo. Each entry is timestamped so you can see when it was learned.
+You can view entries in the Vercel dashboard under Storage > KV. Each entry is timestamped so you can see when it was learned.
+
+> **Why not save to the repo?** Saving corrections as file commits would require the GitHub PAT to have Contents: Write permission — which means the bot could modify *any* file in your repo, not just the knowledge base. GitHub fine-grained PATs can't scope write access to a specific path. By using Vercel KV, the bot's GitHub access stays strictly read-only, and your repo is safe from accidental writes.
 
 ## Architecture
 
@@ -197,7 +199,7 @@ You can review, edit, or delete entries in that file anytime — it's just a mar
 | **Ack-then-process** | Slack requires a 200 OK within 3 seconds or it retries (and shows errors). The API route acks immediately, then uses Next.js `after()` to process the AI call asynchronously while Vercel keeps the function alive. |
 | **Thread-only replies** | Posting at channel root would be noisy and disruptive. Thread replies keep conversations contained. |
 | **Reaction-based confirmation** | Simpler than interactive buttons (no interactivity endpoint needed), and it's a natural Slack gesture. ✅ to confirm, ignore to cancel. |
-| **Knowledge file in the target repo** | Corrections are version-controlled, visible to the team, and don't require a database. Anyone can review or edit them. |
+| **Knowledge in Vercel KV** (not repo) | Keeps the GitHub PAT read-only. Fine-grained PATs can't scope write access to one file — Contents: Write means the bot could edit any file in your repo. KV avoids this entirely. Entries visible in the Vercel dashboard. |
 
 ### How the agent loop works
 
@@ -221,7 +223,8 @@ src/
   lib/
     slack.ts              — Slack client, signature verification, message helpers
     claude.ts             — Claude client, system prompt builder, agent loop
-    github.ts             — GitHub client: code search, file read, issues, PRs, knowledge
+    github.ts             — GitHub client: code search, file read, issues, PRs (read-only)
+    knowledge.ts          — Knowledge base storage (Vercel KV)
   tools/
     search-code.ts        — Code search tool definition + executor
     read-file.ts          — File read tool definition + executor

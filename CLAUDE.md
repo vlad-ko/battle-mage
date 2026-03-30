@@ -7,7 +7,8 @@ A Slack agent with Claude AI intelligence and GitHub repo access. Invoke via `@b
 - **Runtime**: Vercel (Next.js serverless functions)
 - **Slack**: Webhook mode via Next.js API route (`/api/slack`)
 - **AI**: Anthropic Claude API with tool use
-- **GitHub**: Octokit REST API (fine-grained PAT)
+- **GitHub**: Octokit REST API (fine-grained PAT, read-only)
+- **Knowledge**: Vercel KV (corrections persist without GitHub write access)
 - **Context**: Project CLAUDE.md + wizard reasoning framework
 
 ## Development
@@ -42,12 +43,14 @@ src/
   lib/
     slack.ts              — Slack client, signature verification, message helpers
     claude.ts             — Anthropic client, system prompt, agent loop
-    github.ts             — Octokit client (search, read, issues, PRs)
+    github.ts             — Octokit client (search, read, issues, PRs — read-only)
+    knowledge.ts          — Knowledge base (Vercel KV — no GitHub write access)
   tools/
     search-code.ts        — GitHub code search tool
     read-file.ts          — GitHub file read tool
     list-issues.ts        — GitHub issue list/lookup tool
     create-issue.ts       — GitHub issue proposal + parser
+    save-knowledge.ts     — Knowledge base save (Vercel KV)
 ```
 
 ## Environment Variables

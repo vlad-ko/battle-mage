@@ -1,10 +1,10 @@
 import type { Tool } from "@anthropic-ai/sdk/resources/messages";
-import { appendKnowledge } from "@/lib/github";
+import { saveKnowledgeEntry } from "@/lib/knowledge";
 
 export const saveKnowledgeTool: Tool = {
   name: "save_knowledge",
   description:
-    "Save a correction or learned fact to the persistent knowledge base (.battle-mage/knowledge.md in the target repo). Use this when a user corrects you, provides insider knowledge about the codebase, or clarifies something that would be wrong in future conversations. The entry is committed directly — no confirmation needed.",
+    "Save a correction or learned fact to the persistent knowledge base (Vercel KV). Use this when a user corrects you, provides insider knowledge about the codebase, or clarifies something that would be wrong in future conversations. The entry is saved immediately — no confirmation needed. Does NOT write to the GitHub repo.",
   input_schema: {
     type: "object" as const,
     properties: {
@@ -22,6 +22,6 @@ export async function executeSaveKnowledge(
   input: Record<string, unknown>,
 ): Promise<string> {
   const entry = input.entry as string;
-  const path = await appendKnowledge(entry);
-  return `Saved to knowledge base (${path}): "${entry}"`;
+  await saveKnowledgeEntry(entry);
+  return `Saved to knowledge base: "${entry}"`;
 }
