@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
     after(async () => {
       try {
         // Immediate feedback so the user knows the bot is working
-        await replyInThread(channel, threadTs, ":thread: Battle Mage is thinking...");
+        await replyInThread(channel, threadTs, ":brain: Battle Mage is thinking...");
 
         const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
         const result = await runAgent(cleanMessage);
