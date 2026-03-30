@@ -10,6 +10,15 @@ import { runAgent } from "@/lib/claude";
 import { createIssue } from "@/lib/github";
 import { parseProposalFromMessage } from "@/tools/create-issue";
 
+// ── Convert GitHub-style markdown to Slack mrkdwn ────────────────────
+function toSlackMrkdwn(text: string): string {
+  return text
+    // ## Heading → *Heading* (bold line)
+    .replace(/^#{1,6}\s+(.+)$/gm, "*$1*")
+    // **bold** → *bold*
+    .replace(/\*\*(.+?)\*\*/g, "*$1*");
+}
+
 /**
  * Slack Events API webhook handler.
  *
@@ -65,6 +74,8 @@ export async function POST(request: NextRequest) {
         const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
         const result = await runAgent(cleanMessage);
 
+        const text = toSlackMrkdwn(result.text);
+
         if (result.issueProposal) {
           const proposal = result.issueProposal;
           const labelsText = proposal.labels?.length
@@ -75,7 +86,7 @@ export async function POST(request: NextRequest) {
             channel,
             threadTs,
             [
-              result.text,
+              text,
               "",
               "───────────────────",
               `*Proposed Issue:* ${proposal.title}${labelsText}`,
@@ -86,7 +97,7 @@ export async function POST(request: NextRequest) {
             ].join("\n"),
           );
         } else {
-          await replyInThread(channel, threadTs, result.text);
+          await replyInThread(channel, threadTs, text);
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
