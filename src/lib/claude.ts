@@ -3,6 +3,7 @@ import { tools, executeTool, type ToolResult, type Reference } from "@/tools";
 import type { IssueProposal } from "@/tools/create-issue";
 import { readFile } from "@/lib/github";
 import { getKnowledgeAsMarkdown } from "@/lib/knowledge";
+import { getFeedbackAsMarkdown } from "@/lib/feedback";
 
 // ── Anthropic client ──────────────────────────────────────────────────
 const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from env
@@ -44,11 +45,15 @@ async function buildSystemPrompt(): Promise<string> {
 
   const claudeMd = await getClaudeMd();
   const knowledge = await getKnowledge();
+  const feedback = await getFeedbackAsMarkdown();
   const contextSection = claudeMd
     ? `\n## Project Context (from CLAUDE.md)\n\n${claudeMd}\n`
     : "";
   const knowledgeSection = knowledge
     ? `\n## Knowledge Base (learned corrections)\n\nThese are facts you learned from prior conversations. Trust these over your own assumptions — they are corrections from the team.\n\n${knowledge}\n`
+    : "";
+  const feedbackSection = feedback
+    ? `\n## User Feedback (from 👍/👎 reactions)\n\nThis is feedback from the team on your past answers. Use it to calibrate your approach — repeat patterns that got 👍, avoid patterns that got 👎.\n\n${feedback}\n`
     : "";
 
   return `You are Battle Mage (@bm), an AI assistant embedded in Slack with read access to the ${owner}/${repo} GitHub repository.
@@ -111,7 +116,7 @@ You are writing for Slack mrkdwn, NOT standard Markdown. Slack will show raw cha
 
 Owner: ${owner}
 Repository: ${repo}
-${contextSection}${knowledgeSection}`;
+${contextSection}${knowledgeSection}${feedbackSection}`;
 }
 
 // ── Agent loop: message → tool calls → final answer ───────────────────

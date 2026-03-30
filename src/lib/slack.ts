@@ -47,12 +47,13 @@ export async function replyInThread(
   channel: string,
   threadTs: string,
   text: string,
-): Promise<void> {
-  await slack.chat.postMessage({
+): Promise<string | undefined> {
+  const result = await slack.chat.postMessage({
     channel,
     thread_ts: threadTs,
     text,
   });
+  return result.ts; // message timestamp — used to track Q&A context for feedback
 }
 
 // ── Fetch a single message by channel + ts ───────────────────────────
