@@ -28,24 +28,26 @@ npm run dev                  # http://localhost:3000
 
 4. **Verify before asserting** — The agent uses GitHub tools to check that files, methods, and classes actually exist before referencing them. No hallucinated code references.
 
-5. **Issue creation requires confirmation** — The agent can propose a GitHub issue but NEVER creates one without explicit user approval in Slack.
+5. **Issue creation requires confirmation** — The agent can propose a GitHub issue but NEVER creates one without explicit ✅ reaction approval in Slack.
+
+6. **Thread follow-ups** — Once the bot is participating in a thread, users can send follow-up messages without re-mentioning. The bot checks for its own prior replies before responding.
 
 ## Project Structure
 
 ```
 src/
   app/
-    api/slack/route.ts    — Slack webhook handler
+    api/slack/route.ts    — Slack webhook handler (mention, reaction, thread follow-up)
     page.tsx              — Landing page
   lib/
-    slack.ts              — Slack client and signature verification
-    claude.ts             — Anthropic client and system prompt
-    github.ts             — Octokit client and helpers
+    slack.ts              — Slack client, signature verification, message helpers
+    claude.ts             — Anthropic client, system prompt, agent loop
+    github.ts             — Octokit client (search, read, issues, PRs)
   tools/
     search-code.ts        — GitHub code search tool
     read-file.ts          — GitHub file read tool
-    list-issues.ts        — GitHub issue list tool
-    create-issue.ts       — GitHub issue creation tool
+    list-issues.ts        — GitHub issue list/lookup tool
+    create-issue.ts       — GitHub issue proposal + parser
 ```
 
 ## Environment Variables
@@ -56,5 +58,5 @@ src/
 | `SLACK_SIGNING_SECRET` | Slack app signing secret |
 | `ANTHROPIC_API_KEY` | Claude API key |
 | `GITHUB_PAT_BM` | Fine-grained PAT for target repo |
-| `GITHUB_OWNER` | GitHub org/user (e.g., `wealthbot-io`) |
-| `GITHUB_REPO` | Repository name (e.g., `webo`) |
+| `GITHUB_OWNER` | GitHub org/user |
+| `GITHUB_REPO` | Repository name |
