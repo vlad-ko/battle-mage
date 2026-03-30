@@ -2,6 +2,7 @@
   "name": "battle-mage",
   "version": "0.1.0",
   "private": false,
+  "type": "module",
   "description": "Slack agent with Claude AI intelligence and GitHub repo access. Invoke via @bm to ask questions about your codebase.",
   "license": "MIT",
   "scripts": {
