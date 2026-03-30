@@ -5,7 +5,7 @@ display_information:
 
 features:
   bot_user:
-    display_name: Battle Mage
+    display_name: bm
     always_online: true
 
 oauth_config:
@@ -19,8 +19,7 @@ oauth_config:
 
 settings:
   event_subscriptions:
-    # Replace with your Vercel production URL after first deploy
-    request_url: https://YOUR_VERCEL_DOMAIN/api/slack
+    request_url: https://battle-mage.vercel.app/api/slack
     bot_events:
       - app_mention
       - reaction_added
