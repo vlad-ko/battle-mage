@@ -135,3 +135,26 @@ export async function getPullRequest(prNumber: number) {
     deletions: data.deletions,
   };
 }
+
+// ── Repo tree (for index building) ───────────────────────────────────
+export async function getRepoTree(): Promise<{ path: string; type: string }[]> {
+  const sha = await getHeadSha();
+  const { data } = await octokit.rest.git.getTree({
+    owner: owner(),
+    repo: repo(),
+    tree_sha: sha,
+    recursive: "true",
+  });
+  return data.tree
+    .filter((e) => e.path && e.type)
+    .map((e) => ({ path: e.path!, type: e.type! }));
+}
+
+export async function getHeadSha(): Promise<string> {
+  const { data } = await octokit.rest.repos.getBranch({
+    owner: owner(),
+    repo: repo(),
+    branch: "main",
+  });
+  return data.commit.sha;
+}
