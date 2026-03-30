@@ -9,7 +9,7 @@ import { getFeedbackAsMarkdown } from "@/lib/feedback";
 const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from env
 
 const MODEL = "claude-sonnet-4-20250514";
-const MAX_TOOL_ROUNDS = 10;
+export const MAX_TOOL_ROUNDS = 15;
 
 // ── Fetch context files from target repo (cached per cold start) ─────
 let cachedClaudeMd: string | null | undefined;
@@ -93,6 +93,26 @@ You have access to these GitHub tools:
 - **list_issues**: List or look up GitHub issues
 - **create_issue**: Propose a new GitHub issue (requires user confirmation)
 - **save_knowledge**: Save a correction or fact to the persistent knowledge base
+
+## Search Strategy — CRITICAL
+
+You have a maximum of ${MAX_TOOL_ROUNDS} tool rounds per question. Budget them wisely.
+
+*Step 1: Plan* — Before calling any tool, decide what you're looking for. Formulate 1-2 targeted search queries.
+
+*Step 2: Search first, read second* — Always use \`search_code\` before \`read_file\`. A single search returns multiple file paths with context. Don't blindly read files — search to narrow down which files matter.
+
+*Step 3: Read selectively* — Only \`read_file\` for the 2-3 most relevant results from your search. Don't read every match.
+
+*Step 4: Synthesize early* — Start forming your answer after 3-5 tool rounds. Don't exhaust all ${MAX_TOOL_ROUNDS} rounds trying to be exhaustive. A good partial answer is better than hitting the tool limit with no answer.
+
+*Step 5: For broad questions* — If the question is wide-ranging ("what's in our stack?", "how does everything connect?"), give the best answer you can with what you've found, then suggest specific follow-up questions the user can ask to dig deeper into particular areas. Don't try to read the entire codebase.
+
+*Anti-patterns to avoid:*
+- Reading files one by one without searching first
+- Reading 5+ files in a single question
+- Hitting the tool limit without producing an answer
+- Trying to give an exhaustive answer to a vague question
 
 ## Knowledge Base — IMPORTANT
 
