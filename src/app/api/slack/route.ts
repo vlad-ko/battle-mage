@@ -10,6 +10,7 @@ import {
 import { runAgent } from "@/lib/claude";
 import { createIssue } from "@/lib/github";
 import { parseProposalFromMessage } from "@/tools/create-issue";
+import { storeQAContext, getQAContext, saveFeedback } from "@/lib/feedback";
 
 import type { Reference } from "@/tools";
 
@@ -108,7 +109,16 @@ export async function POST(request: NextRequest) {
             ].join("\n") + refsFooter,
           );
         } else {
-          await replyInThread(channel, threadTs, text + refsFooter);
+          const replyTs = await replyInThread(channel, threadTs, text + refsFooter);
+
+          // Store Q&A context so 👍/👎 reactions can reference it
+          if (replyTs) {
+            await storeQAContext(channel, replyTs, {
+              question: cleanMessage,
+              answer: result.text.slice(0, 500),
+              references: result.references.map((r) => r.label),
+            });
+          }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
@@ -175,7 +185,15 @@ export async function POST(request: NextRequest) {
             ].join("\n") + refsFooter,
           );
         } else {
-          await replyInThread(channel, threadTs, text + refsFooter);
+          const replyTs = await replyInThread(channel, threadTs, text + refsFooter);
+
+          if (replyTs) {
+            await storeQAContext(channel, replyTs, {
+              question: cleanMessage,
+              answer: result.text.slice(0, 500),
+              references: result.references.map((r) => r.label),
+            });
+          }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
@@ -246,6 +264,88 @@ export async function POST(request: NextRequest) {
         } catch {
           // Can't reply — just log
         }
+      }
+    });
+
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── Handle 👍 reaction → save positive feedback ─────────────────────
+  if (event.type === "reaction_added" && event.reaction === "+1") {
+    const item = event.item;
+    if (item?.type !== "message") return NextResponse.json({ ok: true });
+
+    const channel: string = item.channel;
+    const messageTs: string = item.ts;
+
+    after(async () => {
+      try {
+        const botId = await getBotUserId();
+        if (botId && event.user === botId) return;
+
+        // Only act on bot messages
+        const msg = await fetchMessage(channel, messageTs);
+        if (!msg || msg.user !== botId) return;
+
+        const context = await getQAContext(channel, messageTs);
+        if (!context) return; // No Q&A context — probably not an answer message
+
+        await saveFeedback({
+          type: "positive",
+          question: context.question,
+          detail: `Good answer approach. Referenced: ${context.references.join(", ") || "general knowledge"}`,
+          timestamp: new Date().toISOString().split("T")[0],
+        });
+
+        // Silent acknowledgment — just add a checkmark reaction
+        try {
+          const { slack } = await import("@/lib/slack");
+          await slack.reactions.add({ channel, name: "brain", timestamp: messageTs });
+        } catch { /* already reacted or can't react — ignore */ }
+      } catch (err) {
+        console.error("Battle Mage 👍 handler error:", err instanceof Error ? err.message : err);
+      }
+    });
+
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── Handle 👎 reaction → ask for correction, save negative feedback ─
+  if (event.type === "reaction_added" && event.reaction === "-1") {
+    const item = event.item;
+    if (item?.type !== "message") return NextResponse.json({ ok: true });
+
+    const channel: string = item.channel;
+    const messageTs: string = item.ts;
+
+    after(async () => {
+      try {
+        const botId = await getBotUserId();
+        if (botId && event.user === botId) return;
+
+        const msg = await fetchMessage(channel, messageTs);
+        if (!msg || msg.user !== botId) return;
+
+        const context = await getQAContext(channel, messageTs);
+        if (!context) return;
+
+        // Save immediate negative feedback
+        await saveFeedback({
+          type: "negative",
+          question: context.question,
+          detail: `Answer was thumbs-downed. Original answer used: ${context.references.join(", ") || "general knowledge"}. Review approach for this type of question.`,
+          timestamp: new Date().toISOString().split("T")[0],
+        });
+
+        // Ask the user what was wrong so they can provide a correction
+        const threadTs = msg.thread_ts || messageTs;
+        await replyInThread(
+          channel,
+          threadTs,
+          `:thinking_face: Thanks for the feedback. What was wrong with this answer? Reply here and I'll save the correction to my knowledge base.`,
+        );
+      } catch (err) {
+        console.error("Battle Mage 👎 handler error:", err instanceof Error ? err.message : err);
       }
     });
 
