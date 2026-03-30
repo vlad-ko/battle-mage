@@ -38,25 +38,45 @@ async function getKnowledge(): Promise<string | null> {
   return getKnowledgeAsMarkdown();
 }
 
-// ── System prompt ─────────────────────────────────────────────────────
-async function buildSystemPrompt(): Promise<string> {
-  const owner = process.env.GITHUB_OWNER;
-  const repo = process.env.GITHUB_REPO;
+// ── System prompt (pure function — exported for testing) ──────────────
 
-  const claudeMd = await getClaudeMd();
-  const knowledge = await getKnowledge();
-  const feedback = await getFeedbackAsMarkdown();
+export interface PromptInputs {
+  owner: string | undefined;
+  repo: string | undefined;
+  claudeMd: string | null;
+  knowledge: string | null;
+  feedback: string | null;
+}
+
+export function assembleSystemPrompt(inputs: PromptInputs): string {
+  const { owner, repo, claudeMd, knowledge, feedback } = inputs;
+
   const contextSection = claudeMd
     ? `\n## Project Context (from CLAUDE.md)\n\n${claudeMd}\n`
     : "";
   const knowledgeSection = knowledge
-    ? `\n## Knowledge Base (learned corrections)\n\nThese are facts you learned from prior conversations. Trust these over your own assumptions — they are corrections from the team.\n\n${knowledge}\n`
+    ? `\n## Knowledge Base (learned corrections)\n\nThese are corrections from the team stored in Vercel KV. They can become stale as the codebase evolves — always verify against the actual code before trusting a KB entry.\n\n${knowledge}\n`
     : "";
   const feedbackSection = feedback
-    ? `\n## User Feedback (from 👍/👎 reactions)\n\nThis is feedback from the team on your past answers. Use it to calibrate your approach — repeat patterns that got 👍, avoid patterns that got 👎.\n\n${feedback}\n`
+    ? `\n## User Feedback (from 👍/👎 reactions)\n\nThis is the weakest, most subjective signal — use it to calibrate tone and style, not as a source of factual truth.\n\n${feedback}\n`
     : "";
 
   return `You are Battle Mage (@bm), an AI assistant embedded in Slack with read access to the ${owner}/${repo} GitHub repository.
+
+## Source-of-Truth Hierarchy
+
+When answering questions, you draw from multiple sources. These sources have different reliability levels. When they conflict, prefer higher-ranked sources and flag the discrepancy to the user.
+
+1. *Source code* — The actual implementation. Code is the ultimate source of truth. Always verify claims against the code before asserting them.
+2. *Tests* — Encode expected behavior. If tests pass, the tested behavior is correct.
+3. *Documentation* (docs/, CLAUDE.md, README) — Describes intent but can drift from reality. If documentation contradicts code, trust the code and flag the stale documentation.
+4. *Knowledge base* (Vercel KV corrections) — User corrections from Slack. Useful but can become outdated as code changes. If a KB entry contradicts what you see in the code, the code is authoritative — flag the discrepancy so the team can update the KB.
+5. *Feedback signals* (👍/👎 reactions) — The least authoritative signal. Subjective quality preferences. Never treat feedback as factual truth.
+
+*Conflict detection rules:*
+- For code-level questions, always read the actual code before asserting anything from docs, KB, or memory.
+- When you find a discrepancy between sources, include both the code truth and the stale source in your answer so the user can decide what to update.
+- Never silently prefer a lower-ranked source over a higher-ranked one.
 
 ## Core Principles
 
@@ -92,8 +112,8 @@ You have a persistent knowledge base stored in Vercel KV (not in the GitHub repo
 - Bad: "User said auth is somewhere else"
 
 *When reading:*
-- Your knowledge base is loaded into this prompt. Trust it over your own assumptions.
-- If a knowledge entry conflicts with what you see in the code, the code is authoritative — but flag the discrepancy.
+- Your knowledge base is loaded into this prompt below. It can become stale — always check the code first for code-level questions.
+- If a knowledge entry conflicts with what you see in the code, the code is authoritative — flag the discrepancy.
 
 ## Response Style — CRITICAL
 
@@ -117,6 +137,17 @@ You are writing for Slack mrkdwn, NOT standard Markdown. Slack will show raw cha
 Owner: ${owner}
 Repository: ${repo}
 ${contextSection}${knowledgeSection}${feedbackSection}`;
+}
+
+// ── Async wrapper that fetches data then assembles ────────────────────
+async function buildSystemPrompt(): Promise<string> {
+  return assembleSystemPrompt({
+    owner: process.env.GITHUB_OWNER,
+    repo: process.env.GITHUB_REPO,
+    claudeMd: await getClaudeMd(),
+    knowledge: await getKnowledge(),
+    feedback: await getFeedbackAsMarkdown(),
+  });
 }
 
 // ── Agent loop: message → tool calls → final answer ───────────────────
