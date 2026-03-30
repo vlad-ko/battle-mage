@@ -9,23 +9,31 @@ const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from env
 const MODEL = "claude-sonnet-4-20250514";
 const MAX_TOOL_ROUNDS = 10;
 
-// ── Fetch CLAUDE.md from target repo (cached per cold start) ─────────
-let cachedClaudeMd: string | null | undefined; // undefined = not fetched yet
+// ── Fetch context files from target repo (cached per cold start) ─────
+let cachedClaudeMd: string | null | undefined;
+let cachedKnowledge: string | null | undefined;
+
+async function fetchRepoFile(path: string): Promise<string | null> {
+  try {
+    const result = await readFile(path);
+    if ("content" in result && typeof result.content === "string") {
+      return result.content;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 async function getClaudeMd(): Promise<string | null> {
   if (cachedClaudeMd !== undefined) return cachedClaudeMd;
-  try {
-    const result = await readFile("CLAUDE.md");
-    if ("content" in result && typeof result.content === "string") {
-      cachedClaudeMd = result.content;
-      return cachedClaudeMd;
-    }
-    cachedClaudeMd = null;
-    return null;
-  } catch {
-    cachedClaudeMd = null;
-    return null;
-  }
+  cachedClaudeMd = await fetchRepoFile("CLAUDE.md");
+  return cachedClaudeMd;
+}
+
+async function getKnowledge(): Promise<string | null> {
+  // NOT cached — always fetch fresh so new corrections are picked up immediately
+  return fetchRepoFile(".battle-mage/knowledge.md");
 }
 
 // ── System prompt ─────────────────────────────────────────────────────
@@ -34,8 +42,12 @@ async function buildSystemPrompt(): Promise<string> {
   const repo = process.env.GITHUB_REPO;
 
   const claudeMd = await getClaudeMd();
+  const knowledge = await getKnowledge();
   const contextSection = claudeMd
     ? `\n## Project Context (from CLAUDE.md)\n\n${claudeMd}\n`
+    : "";
+  const knowledgeSection = knowledge
+    ? `\n## Knowledge Base (learned corrections)\n\nThese are facts you learned from prior conversations. Trust these over your own assumptions — they are corrections from the team.\n\n${knowledge}\n`
     : "";
 
   return `You are Battle Mage (@bm), an AI assistant embedded in Slack with read access to the ${owner}/${repo} GitHub repository.
@@ -54,6 +66,28 @@ You have access to these GitHub tools:
 - **read_file**: Read file contents or list directory entries
 - **list_issues**: List or look up GitHub issues
 - **create_issue**: Propose a new GitHub issue (requires user confirmation)
+- **save_knowledge**: Save a correction or fact to the persistent knowledge base
+
+## Knowledge Base — IMPORTANT
+
+You have a persistent knowledge base at \`.battle-mage/knowledge.md\` in the repo. Use it as follows:
+
+*When to save:*
+- A user corrects you ("no, that's in app/Services not app/Http")
+- A user shares non-obvious insider knowledge ("we deprecated that endpoint last week")
+- You discover something surprising that contradicts the codebase docs
+- A user says "remember this" or similar
+
+*How to save:*
+- Use the \`save_knowledge\` tool immediately when corrected — don't wait
+- Write entries as standalone facts, not conversation snippets
+- Be specific: include file paths, class names, version numbers
+- Good: "The auth module is in app/Services/Auth, not app/Http/Auth"
+- Bad: "User said auth is somewhere else"
+
+*When reading:*
+- Your knowledge base is loaded into this prompt. Trust it over your own assumptions.
+- If a knowledge entry conflicts with what you see in the code, the code is authoritative — but flag the discrepancy.
 
 ## Response Style — CRITICAL
 
@@ -76,7 +110,7 @@ You are writing for Slack mrkdwn, NOT standard Markdown. Slack will show raw cha
 
 Owner: ${owner}
 Repository: ${repo}
-${contextSection}`;
+${contextSection}${knowledgeSection}`;
 }
 
 // ── Agent loop: message → tool calls → final answer ───────────────────

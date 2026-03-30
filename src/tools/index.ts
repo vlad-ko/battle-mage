@@ -4,6 +4,7 @@ import { readFileTool, executeReadFile } from "./read-file";
 import { listIssuesTool, executeListIssues } from "./list-issues";
 import { createIssueTool, extractIssueProposal } from "./create-issue";
 import type { IssueProposal } from "./create-issue";
+import { saveKnowledgeTool, executeSaveKnowledge } from "./save-knowledge";
 
 // ── Tool registry ─────────────────────────────────────────────────────
 export const tools: Tool[] = [
@@ -11,6 +12,7 @@ export const tools: Tool[] = [
   readFileTool,
   listIssuesTool,
   createIssueTool,
+  saveKnowledgeTool,
 ];
 
 // ── Tool executor ─────────────────────────────────────────────────────
@@ -34,6 +36,8 @@ export async function executeTool(
         type: "issue_proposal",
         proposal: extractIssueProposal(input),
       };
+    case "save_knowledge":
+      return { type: "text", text: await executeSaveKnowledge(input) };
     default:
       return { type: "text", text: `Unknown tool: ${name}` };
   }
