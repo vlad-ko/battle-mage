@@ -12,6 +12,8 @@ import { createIssue } from "@/lib/github";
 import { parseProposalFromMessage } from "@/tools/create-issue";
 import { storeQAContext, getQAContext, saveFeedback } from "@/lib/feedback";
 import { formatReferences } from "@/lib/references";
+import { getAllKnowledge, removeKnowledgeEntry } from "@/lib/knowledge";
+import { buildCorrectionActions } from "@/lib/auto-correct";
 
 // ── Convert GitHub-style markdown to Slack mrkdwn ────────────────────
 function toSlackMrkdwn(text: string): string {
@@ -329,12 +331,37 @@ export async function POST(request: NextRequest) {
           timestamp: new Date().toISOString().split("T")[0],
         });
 
-        // Ask the user what was wrong so they can provide a correction
         const threadTs = msg.thread_ts || messageTs;
+
+        // Auto-correction: check for stale KB entries and doc references
+        const kbEntries = await getAllKnowledge();
+        const actions = buildCorrectionActions(context.references, kbEntries);
+
+        const correctionNotes: string[] = [];
+
+        // Remove stale KB entries
+        for (const staleEntry of actions.kbEntriesToRemove) {
+          const removed = await removeKnowledgeEntry(staleEntry.entry);
+          if (removed) {
+            correctionNotes.push(`Removed stale KB entry: "${staleEntry.entry}"`);
+          }
+        }
+
+        // Propose doc fixes (inform user, don't auto-create issues)
+        if (actions.docsToProposeFix.length > 0) {
+          const docList = actions.docsToProposeFix.map((d) => `\`${d}\``).join(", ");
+          correctionNotes.push(`These docs may be outdated: ${docList} — reply *"create issue"* if you'd like me to propose a doc-fix issue`);
+        }
+
+        // Reply with corrections taken + ask for more context
+        const correctionText = correctionNotes.length > 0
+          ? `\n\n*Auto-corrections taken:*\n${correctionNotes.map((n) => `• ${n}`).join("\n")}`
+          : "";
+
         await replyInThread(
           channel,
           threadTs,
-          `:thinking_face: Thanks for the feedback. What was wrong with this answer? Reply here and I'll save the correction to my knowledge base.`,
+          `:thinking_face: Thanks for the feedback.${correctionText}\n\nWhat was wrong with this answer? Reply here and I'll save the correction to my knowledge base.`,
         );
       } catch (err) {
         console.error("Battle Mage 👎 handler error:", err instanceof Error ? err.message : err);

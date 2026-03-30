@@ -31,6 +31,28 @@ export async function saveKnowledgeEntry(entry: string): Promise<void> {
 }
 
 /**
+ * Remove a knowledge entry by matching its entry text.
+ * Returns true if the entry was found and removed.
+ */
+export async function removeKnowledgeEntry(entryText: string): Promise<boolean> {
+  const entries = await getAllKnowledge();
+  // Find the raw JSON member that matches this entry text
+  const raw = await kv.zrange(KNOWLEDGE_KEY, 0, -1);
+  for (const member of raw as string[]) {
+    try {
+      const parsed = JSON.parse(member) as KnowledgeEntry;
+      if (parsed.entry === entryText) {
+        await kv.zrem(KNOWLEDGE_KEY, member);
+        return true;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
+/**
  * Get all knowledge entries, newest first.
  */
 export async function getAllKnowledge(): Promise<KnowledgeEntry[]> {
