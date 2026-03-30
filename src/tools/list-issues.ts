@@ -4,7 +4,7 @@ import { listIssues, getIssue } from "@/lib/github";
 export const listIssuesTool: Tool = {
   name: "list_issues",
   description:
-    "List GitHub issues for the repository. Can filter by state and labels. Use this to understand current bugs, feature requests, and project status.",
+    "List GitHub issues sorted by most recently updated. Can filter by state and labels. Results include dates so you can assess recency.",
   input_schema: {
     type: "object" as const,
     properties: {
@@ -52,9 +52,10 @@ export async function executeListIssues(
   }
 
   return issues
-    .map(
-      (i) =>
-        `- **#${i.number}**: ${i.title} (${i.state}) ${i.labels.length ? `[${i.labels.join(", ")}]` : ""}`,
-    )
+    .map((i) => {
+      const updated = i.updated_at ? ` (updated: ${i.updated_at.split("T")[0]})` : "";
+      const labels = i.labels.length ? ` [${i.labels.join(", ")}]` : "";
+      return `- **#${i.number}**: ${i.title} (${i.state})${updated}${labels}`;
+    })
     .join("\n");
 }

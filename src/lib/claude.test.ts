@@ -165,6 +165,34 @@ describe("assembleSystemPrompt", () => {
     });
   });
 
+  describe("recency and brevity", () => {
+    it("includes today's date in the prompt", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      // Must contain a date in YYYY-MM-DD format
+      expect(prompt).toMatch(/\d{4}-\d{2}-\d{2}/);
+    });
+
+    it("instructs to prefer recent activity over historical", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      expect(prompt).toMatch(/recent.*first|most recent|last 30 days|newest first/i);
+    });
+
+    it("instructs to avoid archived/historical docs unless asked", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      expect(prompt).toMatch(/archive.*avoid|archive.*skip|archive.*only.*if.*asked|archive.*historical/i);
+    });
+
+    it("instructs to be concise and direct", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      expect(prompt).toMatch(/concise|brief|direct|short|15 lines|don.t editorialize/i);
+    });
+
+    it("instructs not to write marketing copy or brochure-style", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      expect(prompt).toMatch(/no.*brochure|no.*marketing|no.*editorial|skip.*what makes.*special/i);
+    });
+  });
+
   describe("hierarchy labels match context sections", () => {
     it("knowledge section warns it can become stale", () => {
       const prompt = assembleSystemPrompt({
