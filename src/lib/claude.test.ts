@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { assembleSystemPrompt } from "./claude";
+import { assembleSystemPrompt, MAX_TOOL_ROUNDS } from "./claude";
 
 describe("assembleSystemPrompt", () => {
   const baseArgs = {
@@ -110,6 +110,42 @@ describe("assembleSystemPrompt", () => {
       const prompt = assembleSystemPrompt(baseArgs);
       expect(prompt).toContain("acme");
       expect(prompt).toContain("backend");
+    });
+  });
+
+  describe("search strategy", () => {
+    it("includes search strategy section in the prompt", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      expect(prompt).toMatch(/search strategy/i);
+    });
+
+    it("instructs to use search_code before read_file", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      // search_code must be recommended as the first step
+      expect(prompt).toMatch(/search.*before.*read|search.*first|search_code.*before.*read_file/i);
+    });
+
+    it("instructs to synthesize early, not exhaust all rounds", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      // Must mention answering with what you have rather than exhausting tool calls
+      expect(prompt).toMatch(/synthesize|answer.*early|partial answer|don.t.*exhaust|budget/i);
+    });
+
+    it("instructs to suggest follow-ups for broad questions", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      expect(prompt).toMatch(/follow.up|narrow.*question|suggest.*specific|dig deeper/i);
+    });
+
+    it("mentions the tool round limit explicitly", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      // The agent should know how many rounds it has
+      expect(prompt).toContain(String(MAX_TOOL_ROUNDS));
+    });
+  });
+
+  describe("MAX_TOOL_ROUNDS", () => {
+    it("is set to 15", () => {
+      expect(MAX_TOOL_ROUNDS).toBe(15);
     });
   });
 
