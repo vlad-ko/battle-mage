@@ -5,6 +5,7 @@ import {
   replyInThread,
   fetchMessage,
   getBotUserId,
+  isBotInThread,
 } from "@/lib/slack";
 import { runAgent } from "@/lib/claude";
 import { createIssue } from "@/lib/github";
@@ -102,6 +103,72 @@ export async function POST(request: NextRequest) {
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
         console.error("Battle Mage error:", msg);
+        await replyInThread(
+          channel,
+          threadTs,
+          `Something went wrong while processing your request. Error: ${msg}`,
+        );
+      }
+    });
+
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── Handle thread follow-ups (no re-mention needed) ─────────────────
+  if (
+    event.type === "message" &&
+    !event.subtype &&
+    event.thread_ts &&
+    event.thread_ts !== event.ts // it's a reply, not the parent
+  ) {
+    // Skip messages that @mention the bot — already handled by app_mention
+    const botId = await getBotUserId();
+    if (botId && event.text?.includes(`<@${botId}>`)) {
+      return NextResponse.json({ ok: true });
+    }
+
+    const channel: string = event.channel;
+    const threadTs: string = event.thread_ts;
+    const userMessage: string = event.text;
+
+    after(async () => {
+      try {
+        // Only respond if the bot is already in this thread
+        const bid = botId || (await getBotUserId());
+        if (!bid || !(await isBotInThread(channel, threadTs, bid))) return;
+
+        await replyInThread(channel, threadTs, ":brain: Battle Mage is thinking... (this may take a minute, go grab some tea)");
+
+        const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
+        const result = await runAgent(cleanMessage);
+        const text = toSlackMrkdwn(result.text);
+
+        if (result.issueProposal) {
+          const proposal = result.issueProposal;
+          const labelsText = proposal.labels?.length
+            ? `\nLabels: ${proposal.labels.join(", ")}`
+            : "";
+
+          await replyInThread(
+            channel,
+            threadTs,
+            [
+              text,
+              "",
+              "───────────────────",
+              `*Proposed Issue:* ${proposal.title}${labelsText}`,
+              "",
+              proposal.body,
+              "",
+              "React with :white_check_mark: to create this issue, or ignore to cancel.",
+            ].join("\n"),
+          );
+        } else {
+          await replyInThread(channel, threadTs, text);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        console.error("Battle Mage thread follow-up error:", msg);
         await replyInThread(
           channel,
           threadTs,

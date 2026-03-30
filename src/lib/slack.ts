@@ -77,6 +77,24 @@ export async function fetchMessage(
   }
 }
 
+// ── Check if bot is participating in a thread ────────────────────────
+export async function isBotInThread(
+  channel: string,
+  threadTs: string,
+  botUserId: string,
+): Promise<boolean> {
+  try {
+    const result = await slack.conversations.replies({
+      channel,
+      ts: threadTs,
+      limit: 50,
+    });
+    return result.messages?.some((m) => m.user === botUserId) ?? false;
+  } catch {
+    return false;
+  }
+}
+
 // ── Get bot's own user ID (cached per cold start) ────────────────────
 let cachedBotUserId: string | undefined;
 
