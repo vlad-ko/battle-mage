@@ -55,7 +55,7 @@ The agent needs read access to your target repo (and write access to GitHub Issu
 
 | Permission | Level | Why |
 |-----------|-------|-----|
-| Contents | Read | Search code, read files |
+| Contents | Read & Write | Search code, read files, commit knowledge base corrections |
 | Issues | Read & Write | List GitHub issues, create new ones |
 | Pull requests | Read | Read PR details |
 | Metadata | Read | Required baseline (auto-selected) |
@@ -63,6 +63,8 @@ The agent needs read access to your target repo (and write access to GitHub Issu
 5. Set an expiration (90 days is reasonable) and **set a calendar reminder to rotate it** — expired PATs fail silently and the bot just stops being able to read your repo.
 
 > **Why fine-grained?** Classic PATs grant access to ALL your repos. Fine-grained PATs are scoped to specific repositories, which is much safer. If the token leaks, the blast radius is one repo, not your entire GitHub account.
+
+> **Why Contents: Write?** The knowledge base feature commits corrections to `.battle-mage/knowledge.md` in your repo. This requires write access. **Your branch protection rules are the safeguard** — if your repo requires PR approval for merges to `main` (which it should), the bot's commits go to a branch and create a PR that a human must review. The bot cannot modify `main` directly. If you don't use the knowledge base feature, you can leave Contents at Read-only.
 
 ### 4. Set environment variables
 
@@ -185,6 +187,8 @@ Bot:  Got it, I'll save that to the knowledge base.
 The bot commits a correction to `.battle-mage/knowledge.md` in your target repo. This file is loaded into every future conversation, so the bot won't make the same mistake again.
 
 You can review, edit, or delete entries in that file anytime — it's just a markdown file in your repo. Each entry is timestamped so you can see when it was learned.
+
+> **Security note:** The knowledge base requires Contents: Write on your GitHub PAT. The bot commits to a branch and opens a PR — it **cannot push directly to `main`** if you have branch protection enabled (which you should). This means every correction is reviewed by a human before it becomes part of the knowledge base. If you don't want the bot to write to your repo at all, set Contents to Read-only and the knowledge base feature will simply be disabled — the bot will still answer questions and create issues normally.
 
 ## Architecture
 
