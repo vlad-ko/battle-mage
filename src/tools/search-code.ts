@@ -34,15 +34,11 @@ export async function executeSearchCode(
     return { text: `No results found for "${query}".`, references: [] };
   }
 
-  // GitHub search html_url includes line-level anchors (e.g., #L42)
-  const references: Reference[] = results.map((r) => ({
-    label: r.path,
-    url: r.url,
-  }));
-
+  // Search results are discovery aids — don't add them as references.
+  // Only files the agent actually reads (via read_file) should be referenced.
   const text = results
     .map((r) => `- \`${r.path}\` (score: ${r.score}) — ${r.url}`)
     .join("\n");
 
-  return { text, references };
+  return { text, references: [] };
 }

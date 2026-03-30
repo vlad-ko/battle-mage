@@ -11,8 +11,7 @@ import { runAgent } from "@/lib/claude";
 import { createIssue } from "@/lib/github";
 import { parseProposalFromMessage } from "@/tools/create-issue";
 import { storeQAContext, getQAContext, saveFeedback } from "@/lib/feedback";
-
-import type { Reference } from "@/tools";
+import { formatReferences } from "@/lib/references";
 
 // ── Convert GitHub-style markdown to Slack mrkdwn ────────────────────
 function toSlackMrkdwn(text: string): string {
@@ -21,13 +20,6 @@ function toSlackMrkdwn(text: string): string {
     .replace(/^#{1,6}\s+(.+)$/gm, "*$1*")
     // **bold** → *bold*
     .replace(/\*\*(.+?)\*\*/g, "*$1*");
-}
-
-// ── Format references as a Slack footer ──────────────────────────────
-function formatReferences(refs: Reference[]): string {
-  if (refs.length === 0) return "";
-  const links = refs.map((r) => `<${r.url}|${r.label}>`).join("  ·  ");
-  return `\n\n───\n:link: ${links}`;
 }
 
 /**
