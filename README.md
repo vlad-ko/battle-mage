@@ -2,7 +2,7 @@
 
 A Slack agent powered by Claude AI that answers questions about your GitHub codebase. Mention `@bm` in any channel and ask about code, architecture, GitHub issues, or pull requests — the agent reads your repo in real time to give grounded answers.
 
-![Battle Mage icon](icon.png)
+<img src="icon.png" alt="Battle Mage icon" width="128">
 
 ## What It Does
 
@@ -271,6 +271,53 @@ ngrok http 3000
 # Copy the https URL and set it as your Slack Event Subscription URL
 # Remember to change it back to your Vercel URL when you're done
 ```
+
+## Contributing
+
+Contributions are welcome! Here's how the process works:
+
+1. **Fork the repo** — don't clone it directly. Direct pushes to `main` are blocked for everyone, including maintainers. All changes go through pull requests.
+
+2. **Create a feature branch** on your fork:
+   ```bash
+   git checkout -b feat/my-change
+   ```
+
+3. **Make your changes.** Before pushing, make sure everything passes:
+   ```bash
+   npm run typecheck   # TypeScript strict mode — no errors allowed
+   npm run build       # Full production build must succeed
+   ```
+
+4. **Open a pull request** against `main`. Include:
+   - A clear description of what you changed and why
+   - Steps to test it, if applicable
+   - Screenshots for UI changes
+
+5. **Wait for review.** PRs require at least one approving review before they can be merged. Stale approvals are dismissed automatically when new commits are pushed, so reviewers always see the latest code.
+
+### Branch protection
+
+The `main` branch has these protections enabled:
+
+- **No direct pushes** — everything goes through a PR
+- **1 approving review required** — for outside contributors
+- **Stale review dismissal** — pushing new commits resets previous approvals
+- **Linear history** — merge commits are not allowed; use rebase or squash
+- **No force pushes or branch deletion**
+
+### What makes a good contribution?
+
+- **Bug fixes** — especially around Slack formatting edge cases or error handling
+- **New tools** — adding new GitHub capabilities (e.g., reading commit history, browsing branches)
+- **Documentation** — if you hit a setup snag that isn't covered, add it to the troubleshooting section
+- **Tests** — the project currently has no test suite, so this is a great area to contribute
+
+### What to avoid
+
+- Don't add external dependencies without discussing it in an issue first
+- Don't change the core agent loop without a clear rationale
+- Don't add features that require new infrastructure (databases, queues, etc.) — the project is intentionally serverless and stateless
 
 ## License
 
