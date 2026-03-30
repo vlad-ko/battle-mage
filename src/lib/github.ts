@@ -111,53 +111,8 @@ export async function createIssue(
   };
 }
 
-// ── Append to knowledge base ──────────────────────────────────────────
-const KNOWLEDGE_PATH = ".battle-mage/knowledge.md";
-
-export async function appendKnowledge(entry: string): Promise<string> {
-  let existingContent = "";
-  let sha: string | undefined;
-
-  // Try to read existing file
-  try {
-    const { data } = await octokit.rest.repos.getContent({
-      owner: owner(),
-      repo: repo(),
-      path: KNOWLEDGE_PATH,
-    });
-    if ("content" in data && data.type === "file") {
-      existingContent = Buffer.from(data.content, "base64").toString("utf-8");
-      sha = data.sha;
-    }
-  } catch {
-    // File doesn't exist yet — will be created
-  }
-
-  const timestamp = new Date().toISOString().split("T")[0];
-  const newEntry = `\n- [${timestamp}] ${entry}\n`;
-  const updatedContent = existingContent
-    ? existingContent.trimEnd() + "\n" + newEntry
-    : `# Battle Mage Knowledge Base\n\nCorrections and learnings from Slack conversations.\n${newEntry}`;
-
-  const params: {
-    owner: string;
-    repo: string;
-    path: string;
-    message: string;
-    content: string;
-    sha?: string;
-  } = {
-    owner: owner(),
-    repo: repo(),
-    path: KNOWLEDGE_PATH,
-    message: `knowledge: ${entry.slice(0, 60)}`,
-    content: Buffer.from(updatedContent).toString("base64"),
-  };
-  if (sha) params.sha = sha;
-
-  await octokit.rest.repos.createOrUpdateFileContents(params);
-  return KNOWLEDGE_PATH;
-}
+// Knowledge base moved to Vercel KV — see src/lib/knowledge.ts
+// GitHub PAT no longer needs Contents: Write permission
 
 // ── Read PR details ───────────────────────────────────────────────────
 export async function getPullRequest(prNumber: number) {
