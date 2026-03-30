@@ -53,12 +53,16 @@ export async function listIssues(
     owner: string;
     repo: string;
     state: "open" | "closed" | "all";
+    sort: "updated";
+    direction: "desc";
     per_page: number;
     labels?: string;
   } = {
     owner: owner(),
     repo: repo(),
     state,
+    sort: "updated",
+    direction: "desc",
     per_page: 20,
   };
   if (labels) params.labels = labels;
@@ -71,6 +75,7 @@ export async function listIssues(
     labels: issue.labels.map((l) => (typeof l === "string" ? l : l.name)),
     url: issue.html_url,
     created_at: issue.created_at,
+    updated_at: issue.updated_at,
   }));
 }
 
