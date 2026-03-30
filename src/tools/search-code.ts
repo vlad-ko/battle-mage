@@ -1,5 +1,6 @@
 import type { Tool } from "@anthropic-ai/sdk/resources/messages";
 import { searchCode } from "@/lib/github";
+import type { Reference } from "@/tools";
 
 export const searchCodeTool: Tool = {
   name: "search_code",
@@ -18,17 +19,30 @@ export const searchCodeTool: Tool = {
   },
 };
 
+export interface SearchCodeResult {
+  text: string;
+  references: Reference[];
+}
+
 export async function executeSearchCode(
   input: Record<string, unknown>,
-): Promise<string> {
+): Promise<SearchCodeResult> {
   const query = input.query as string;
   const results = await searchCode(query);
 
   if (results.length === 0) {
-    return `No results found for "${query}".`;
+    return { text: `No results found for "${query}".`, references: [] };
   }
 
-  return results
+  // GitHub search html_url includes line-level anchors (e.g., #L42)
+  const references: Reference[] = results.map((r) => ({
+    label: r.path,
+    url: r.url,
+  }));
+
+  const text = results
     .map((r) => `- \`${r.path}\` (score: ${r.score}) — ${r.url}`)
     .join("\n");
+
+  return { text, references };
 }

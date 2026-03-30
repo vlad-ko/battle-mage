@@ -1,5 +1,6 @@
 import type { Tool } from "@anthropic-ai/sdk/resources/messages";
 import { readFile } from "@/lib/github";
+import type { Reference } from "@/tools";
 
 export const readFileTool: Tool = {
   name: "read_file",
@@ -22,16 +23,28 @@ export const readFileTool: Tool = {
   },
 };
 
+export interface ReadFileResult {
+  text: string;
+  references: Reference[];
+}
+
 export async function executeReadFile(
   input: Record<string, unknown>,
-): Promise<string> {
+): Promise<ReadFileResult> {
   const path = input.path as string;
   const ref = input.ref as string | undefined;
 
   const result = await readFile(path, ref);
 
   if ("content" in result && typeof result.content === "string") {
-    return `**${result.path}** (${result.size} bytes)\n\`\`\`\n${result.content}\n\`\`\``;
+    // Use the actual GitHub html_url (direct link to the file on GitHub)
+    const refs: Reference[] = result.url
+      ? [{ label: result.path, url: result.url }]
+      : [];
+    return {
+      text: `**${result.path}** (${result.size} bytes)\n\`\`\`\n${result.content}\n\`\`\``,
+      references: refs,
+    };
   }
 
   if ("entries" in result) {
@@ -40,11 +53,15 @@ export async function executeReadFile(
       type: string;
       path: string;
     }>;
-    return (
-      `**${result.path}/** (directory)\n` +
-      entries.map((e) => `- ${e.type === "dir" ? "📁" : "📄"} ${e.name}`).join("\n")
-    );
+    return {
+      text:
+        `**${result.path}/** (directory)\n` +
+        entries
+          .map((e) => `- ${e.type === "dir" ? "📁" : "📄"} ${e.name}`)
+          .join("\n"),
+      references: [],
+    };
   }
 
-  return "Unexpected response format.";
+  return { text: "Unexpected response format.", references: [] };
 }

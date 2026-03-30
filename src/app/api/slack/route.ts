@@ -11,6 +11,8 @@ import { runAgent } from "@/lib/claude";
 import { createIssue } from "@/lib/github";
 import { parseProposalFromMessage } from "@/tools/create-issue";
 
+import type { Reference } from "@/tools";
+
 // ── Convert GitHub-style markdown to Slack mrkdwn ────────────────────
 function toSlackMrkdwn(text: string): string {
   return text
@@ -18,6 +20,13 @@ function toSlackMrkdwn(text: string): string {
     .replace(/^#{1,6}\s+(.+)$/gm, "*$1*")
     // **bold** → *bold*
     .replace(/\*\*(.+?)\*\*/g, "*$1*");
+}
+
+// ── Format references as a Slack footer ──────────────────────────────
+function formatReferences(refs: Reference[]): string {
+  if (refs.length === 0) return "";
+  const links = refs.map((r) => `<${r.url}|${r.label}>`).join("  ·  ");
+  return `\n\n───\n:link: ${links}`;
 }
 
 /**
@@ -76,6 +85,7 @@ export async function POST(request: NextRequest) {
         const result = await runAgent(cleanMessage);
 
         const text = toSlackMrkdwn(result.text);
+        const refsFooter = formatReferences(result.references);
 
         if (result.issueProposal) {
           const proposal = result.issueProposal;
@@ -95,10 +105,10 @@ export async function POST(request: NextRequest) {
               proposal.body,
               "",
               "React with :white_check_mark: to create this issue, or ignore to cancel.",
-            ].join("\n"),
+            ].join("\n") + refsFooter,
           );
         } else {
-          await replyInThread(channel, threadTs, text);
+          await replyInThread(channel, threadTs, text + refsFooter);
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
@@ -142,6 +152,7 @@ export async function POST(request: NextRequest) {
         const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
         const result = await runAgent(cleanMessage);
         const text = toSlackMrkdwn(result.text);
+        const refsFooter = formatReferences(result.references);
 
         if (result.issueProposal) {
           const proposal = result.issueProposal;
@@ -161,10 +172,10 @@ export async function POST(request: NextRequest) {
               proposal.body,
               "",
               "React with :white_check_mark: to create this issue, or ignore to cancel.",
-            ].join("\n"),
+            ].join("\n") + refsFooter,
           );
         } else {
-          await replyInThread(channel, threadTs, text);
+          await replyInThread(channel, threadTs, text + refsFooter);
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";

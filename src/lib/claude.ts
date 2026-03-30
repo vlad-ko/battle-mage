@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { tools, executeTool, type ToolResult } from "@/tools";
+import { tools, executeTool, type ToolResult, type Reference } from "@/tools";
 import type { IssueProposal } from "@/tools/create-issue";
 import { readFile } from "@/lib/github";
 import { getKnowledgeAsMarkdown } from "@/lib/knowledge";
@@ -119,6 +119,7 @@ ${contextSection}${knowledgeSection}`;
 export interface AgentResult {
   text: string;
   issueProposal?: IssueProposal;
+  references: Reference[];
 }
 
 export async function runAgent(userMessage: string): Promise<AgentResult> {
@@ -127,6 +128,7 @@ export async function runAgent(userMessage: string): Promise<AgentResult> {
   ];
 
   let issueProposal: IssueProposal | undefined;
+  const allReferences: Reference[] = [];
   const systemPrompt = await buildSystemPrompt();
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -138,6 +140,16 @@ export async function runAgent(userMessage: string): Promise<AgentResult> {
       messages,
     });
 
+    // Deduplicate references by URL
+    const dedupeRefs = () => {
+      const seen = new Set<string>();
+      return allReferences.filter((r) => {
+        if (seen.has(r.url)) return false;
+        seen.add(r.url);
+        return true;
+      });
+    };
+
     // If the response has no tool use, extract text and return
     if (response.stop_reason === "end_turn") {
       const textBlocks = response.content.filter(
@@ -147,7 +159,7 @@ export async function runAgent(userMessage: string): Promise<AgentResult> {
         if (b.type === "text") return b.text;
         return "";
       }).join("\n");
-      return { text, issueProposal };
+      return { text, issueProposal, references: dedupeRefs() };
     }
 
     // Process tool calls
@@ -162,7 +174,7 @@ export async function runAgent(userMessage: string): Promise<AgentResult> {
         if (b.type === "text") return b.text;
         return "";
       }).join("\n");
-      return { text: text || "I wasn't able to process that request.", issueProposal };
+      return { text: text || "I wasn't able to process that request.", issueProposal, references: dedupeRefs() };
     }
 
     // Add assistant message with all content blocks
@@ -179,6 +191,11 @@ export async function runAgent(userMessage: string): Promise<AgentResult> {
           block.name,
           block.input as Record<string, unknown>,
         );
+
+        // Collect references from tool results
+        if (result.references) {
+          allReferences.push(...result.references);
+        }
 
         if (result.type === "issue_proposal") {
           issueProposal = result.proposal;
@@ -209,8 +226,15 @@ export async function runAgent(userMessage: string): Promise<AgentResult> {
     messages.push({ role: "user", content: toolResults });
   }
 
+  const seen = new Set<string>();
+  const finalRefs = allReferences.filter((r) => {
+    if (seen.has(r.url)) return false;
+    seen.add(r.url);
+    return true;
+  });
   return {
     text: "I hit the maximum number of tool calls for this request. Here's what I found so far — please ask a more specific question if you need more detail.",
     issueProposal,
+    references: finalRefs,
   };
 }
