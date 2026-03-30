@@ -24,12 +24,6 @@ npm run dev
 
 Then configure your Slack app's Event Subscription URL to `https://your-domain/api/slack`.
 
-## Deploy to Vercel
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/your-org/battle-mage)
-
-Set environment variables in the Vercel dashboard (see `.env.example`).
-
 ## Environment Variables
 
 | Variable | Required | Description |
