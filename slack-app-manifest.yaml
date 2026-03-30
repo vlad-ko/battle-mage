@@ -19,7 +19,8 @@ oauth_config:
 
 settings:
   event_subscriptions:
-    request_url: https://battle-mage.vercel.app/api/slack
+    # Replace with your Vercel production URL after deploy
+    request_url: https://your-project.vercel.app/api/slack
     bot_events:
       - app_mention
       - message.channels
