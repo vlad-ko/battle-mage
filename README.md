@@ -2,7 +2,7 @@
 
 A Slack agent powered by Claude AI that answers questions about your GitHub codebase. Mention `@bm` in any channel and ask about code, architecture, GitHub issues, or pull requests — the agent reads your repo in real time to give grounded answers.
 
-![Battle Mage icon](icon.png)
+<img src="icon.png" alt="Battle Mage icon" width="128">
 
 ## What It Does
 
