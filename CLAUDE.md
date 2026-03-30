@@ -53,6 +53,25 @@ src/
     save-knowledge.ts     — Knowledge base save (Vercel KV)
 ```
 
+## Testing (TDD Required)
+
+All new features must use test-driven development:
+
+1. **RED** — Write failing tests first
+2. **GREEN** — Implement minimum code to pass
+3. **REFACTOR** — Clean up while keeping tests green
+
+Rules:
+- Test files colocated: `foo.ts` → `foo.test.ts`
+- Tests run via `npm test` (Vitest)
+- CI blocks merge on test failure (GitHub Actions)
+- Extract pure functions for testability — keep side effects in the handler layer
+
+```bash
+npm test              # Run all tests once
+npm run test:watch    # Watch mode for development
+```
+
 ## Environment Variables
 
 | Variable | Description |

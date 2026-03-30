@@ -17,15 +17,7 @@ import { formatReferences } from "@/lib/references";
 import { getAllKnowledge, removeKnowledgeEntry } from "@/lib/knowledge";
 import { buildCorrectionActions } from "@/lib/auto-correct";
 import { formatProgressMessage } from "@/lib/progress";
-
-// ── Convert GitHub-style markdown to Slack mrkdwn ────────────────────
-function toSlackMrkdwn(text: string): string {
-  return text
-    // ## Heading → *Heading* (bold line)
-    .replace(/^#{1,6}\s+(.+)$/gm, "*$1*")
-    // **bold** → *bold*
-    .replace(/\*\*(.+?)\*\*/g, "*$1*");
-}
+import { toSlackMrkdwn } from "@/lib/mrkdwn";
 
 /**
  * Slack Events API webhook handler.
