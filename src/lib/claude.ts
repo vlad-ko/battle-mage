@@ -184,7 +184,12 @@ export interface AgentResult {
   references: Reference[];
 }
 
-export async function runAgent(userMessage: string): Promise<AgentResult> {
+export type ProgressCallback = (toolName: string, input: Record<string, unknown>) => void | Promise<void>;
+
+export async function runAgent(
+  userMessage: string,
+  onProgress?: ProgressCallback,
+): Promise<AgentResult> {
   const messages: Anthropic.MessageParam[] = [
     { role: "user", content: userMessage },
   ];
@@ -249,6 +254,11 @@ export async function runAgent(userMessage: string): Promise<AgentResult> {
       if (block.type !== "tool_use") continue;
 
       try {
+        // Fire progress callback before executing the tool
+        if (onProgress) {
+          await onProgress(block.name, block.input as Record<string, unknown>);
+        }
+
         const result: ToolResult = await executeTool(
           block.name,
           block.input as Record<string, unknown>,

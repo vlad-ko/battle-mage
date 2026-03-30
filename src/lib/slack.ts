@@ -56,6 +56,27 @@ export async function replyInThread(
   return result.ts; // message timestamp — used to track Q&A context for feedback
 }
 
+// ── Update a message in place ─────────────────────────────────────────
+export async function updateMessage(
+  channel: string,
+  ts: string,
+  text: string,
+): Promise<void> {
+  await slack.chat.update({ channel, ts, text });
+}
+
+// ── Delete a message ──────────────────────────────────────────────────
+export async function deleteMessage(
+  channel: string,
+  ts: string,
+): Promise<void> {
+  try {
+    await slack.chat.delete({ channel, ts });
+  } catch {
+    // Best-effort — message may already be deleted or bot may lack permission
+  }
+}
+
 // ── Fetch a single message by channel + ts ───────────────────────────
 // Works for both thread parents and threaded replies.
 // Uses conversations.replies which accepts any message ts in a thread.

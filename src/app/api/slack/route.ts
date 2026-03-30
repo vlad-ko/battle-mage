@@ -6,6 +6,8 @@ import {
   fetchMessage,
   getBotUserId,
   isBotInThread,
+  updateMessage,
+  deleteMessage,
 } from "@/lib/slack";
 import { runAgent } from "@/lib/claude";
 import { createIssue } from "@/lib/github";
@@ -14,6 +16,7 @@ import { storeQAContext, getQAContext, saveFeedback } from "@/lib/feedback";
 import { formatReferences } from "@/lib/references";
 import { getAllKnowledge, removeKnowledgeEntry } from "@/lib/knowledge";
 import { buildCorrectionActions } from "@/lib/auto-correct";
+import { formatProgressMessage } from "@/lib/progress";
 
 // ── Convert GitHub-style markdown to Slack mrkdwn ────────────────────
 function toSlackMrkdwn(text: string): string {
@@ -73,14 +76,31 @@ export async function POST(request: NextRequest) {
     // Ack now, process after response is sent (Vercel keeps fn alive)
     after(async () => {
       try {
-        // Immediate feedback so the user knows the bot is working
-        await replyInThread(channel, threadTs, ":brain: Battle Mage is thinking... (this may take a minute, go grab some tea)");
+        // Post thinking message and capture its ts for live updates
+        const thinkingTs = await replyInThread(
+          channel, threadTs,
+          formatProgressMessage("thinking", {}),
+        );
 
         const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
-        const result = await runAgent(cleanMessage);
+        const result = await runAgent(cleanMessage, async (toolName, input) => {
+          if (thinkingTs) {
+            await updateMessage(channel, thinkingTs, formatProgressMessage(toolName, input));
+          }
+        });
+
+        // Update thinking message to "composing" before posting answer
+        if (thinkingTs) {
+          await updateMessage(channel, thinkingTs, formatProgressMessage("composing", {}));
+        }
 
         const text = toSlackMrkdwn(result.text);
         const refsFooter = formatReferences(result.references);
+
+        // Delete thinking message — the answer replaces it
+        if (thinkingTs) {
+          await deleteMessage(channel, thinkingTs);
+        }
 
         if (result.issueProposal) {
           const proposal = result.issueProposal;
@@ -151,12 +171,28 @@ export async function POST(request: NextRequest) {
         const bid = botId || (await getBotUserId());
         if (!bid || !(await isBotInThread(channel, threadTs, bid))) return;
 
-        await replyInThread(channel, threadTs, ":brain: Battle Mage is thinking... (this may take a minute, go grab some tea)");
+        const thinkTs = await replyInThread(
+          channel, threadTs,
+          formatProgressMessage("thinking", {}),
+        );
 
         const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
-        const result = await runAgent(cleanMessage);
+        const result = await runAgent(cleanMessage, async (toolName, input) => {
+          if (thinkTs) {
+            await updateMessage(channel, thinkTs, formatProgressMessage(toolName, input));
+          }
+        });
+
+        if (thinkTs) {
+          await updateMessage(channel, thinkTs, formatProgressMessage("composing", {}));
+        }
+
         const text = toSlackMrkdwn(result.text);
         const refsFooter = formatReferences(result.references);
+
+        if (thinkTs) {
+          await deleteMessage(channel, thinkTs);
+        }
 
         if (result.issueProposal) {
           const proposal = result.issueProposal;
