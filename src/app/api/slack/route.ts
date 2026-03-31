@@ -13,7 +13,7 @@ import { runAgent } from "@/lib/claude";
 import { createIssue } from "@/lib/github";
 import { parseProposalFromMessage } from "@/tools/create-issue";
 import { storeQAContext, getQAContext, saveFeedback } from "@/lib/feedback";
-import { formatReferences } from "@/lib/references";
+import { formatReferences, rankReferences } from "@/lib/references";
 import { getAllKnowledge } from "@/lib/knowledge";
 import { buildCorrectionActions } from "@/lib/auto-correct";
 import { buildThinkingMessage, THINKING_HEADER } from "@/lib/progress";
@@ -87,7 +87,8 @@ export async function POST(request: NextRequest) {
         }
 
         const text = toSlackMrkdwn(result.text);
-        const refsFooter = formatReferences(result.references);
+        const rankedRefs = rankReferences(result.references, result.text);
+        const refsFooter = formatReferences(rankedRefs);
 
         // Delete thinking message — the answer replaces it
         if (thinkingTs) {
@@ -210,7 +211,8 @@ export async function POST(request: NextRequest) {
         }
 
         const text = toSlackMrkdwn(result.text);
-        const refsFooter = formatReferences(result.references);
+        const rankedRefs = rankReferences(result.references, result.text);
+        const refsFooter = formatReferences(rankedRefs);
 
         if (thinkTs) {
           await deleteMessage(channel, thinkTs);

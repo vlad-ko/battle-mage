@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatReferences, MAX_REFERENCES } from "./references";
+import { formatReferences, rankReferences, MAX_REFERENCES } from "./references";
 
 describe("formatReferences", () => {
   it("returns empty string when no refs", () => {
@@ -80,8 +80,8 @@ describe("formatReferences", () => {
     expect(result).not.toContain("more");
   });
 
-  it("MAX_REFERENCES is 10", () => {
-    expect(MAX_REFERENCES).toBe(10);
+  it("MAX_REFERENCES is 7", () => {
+    expect(MAX_REFERENCES).toBe(7);
   });
 
   it("includes feedback hint after references", () => {
@@ -94,5 +94,72 @@ describe("formatReferences", () => {
 
   it("no feedback hint when no references", () => {
     expect(formatReferences([])).toBe("");
+  });
+});
+
+describe("rankReferences", () => {
+  it("ranks source code files above docs", () => {
+    const refs = [
+      { label: "docs/setup.md", url: "https://example.com/docs", type: "doc" as const },
+      { label: "src/auth.ts", url: "https://example.com/auth", type: "file" as const },
+    ];
+    const ranked = rankReferences(refs, "some answer");
+    expect(ranked[0].label).toBe("src/auth.ts");
+    expect(ranked[1].label).toBe("docs/setup.md");
+  });
+
+  it("ranks test files above docs but below source code", () => {
+    const refs = [
+      { label: "docs/setup.md", url: "https://example.com/docs", type: "doc" as const },
+      { label: "tests/auth.test.ts", url: "https://example.com/test", type: "file" as const },
+      { label: "src/auth.ts", url: "https://example.com/auth", type: "file" as const },
+    ];
+    const ranked = rankReferences(refs, "some answer");
+    expect(ranked[0].label).toBe("src/auth.ts");
+    expect(ranked[1].label).toBe("tests/auth.test.ts");
+    expect(ranked[2].label).toBe("docs/setup.md");
+  });
+
+  it("boosts refs cited in the answer text", () => {
+    const refs = [
+      { label: "#100 Uncited issue", url: "https://example.com/100", type: "issue" as const },
+      { label: "#200 Cited issue", url: "https://example.com/200", type: "issue" as const },
+    ];
+    const ranked = rankReferences(refs, "As seen in #200, the fix was applied");
+    expect(ranked[0].label).toContain("#200");
+  });
+
+  it("ranks uncited issues/PRs/commits last", () => {
+    const refs = [
+      { label: "#50 Random issue", url: "https://example.com/50", type: "issue" as const },
+      { label: "src/index.ts", url: "https://example.com/src", type: "file" as const },
+      { label: "#99 Another issue", url: "https://example.com/99", type: "issue" as const },
+    ];
+    const ranked = rankReferences(refs, "some answer about index.ts");
+    expect(ranked[0].type).toBe("file");
+    expect(ranked[ranked.length - 1].type).toBe("issue");
+  });
+
+  it("returns empty array for empty input", () => {
+    expect(rankReferences([], "answer")).toEqual([]);
+  });
+
+  it("maintains order within same tier", () => {
+    const refs = [
+      { label: "src/a.ts", url: "https://example.com/a", type: "file" as const },
+      { label: "src/b.ts", url: "https://example.com/b", type: "file" as const },
+      { label: "src/c.ts", url: "https://example.com/c", type: "file" as const },
+    ];
+    const ranked = rankReferences(refs, "answer");
+    expect(ranked.map((r) => r.label)).toEqual(["src/a.ts", "src/b.ts", "src/c.ts"]);
+  });
+
+  it("cited doc ranks above uncited doc", () => {
+    const refs = [
+      { label: "docs/old.md", url: "https://example.com/old", type: "doc" as const },
+      { label: "docs/cited.md", url: "https://example.com/cited", type: "doc" as const },
+    ];
+    const ranked = rankReferences(refs, "as documented in docs/cited.md");
+    expect(ranked[0].label).toBe("docs/cited.md");
   });
 });
