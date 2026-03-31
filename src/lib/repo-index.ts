@@ -1,4 +1,10 @@
 import { kv } from "@vercel/kv";
+import {
+  type BattleMageConfig,
+  parseBattleMageConfig,
+  getAnnotation,
+  filterPathsByAnnotation,
+} from "./config";
 
 // ── Topic classification rules ───────────────────────────────────────
 // Each rule: [topic, pattern that matches against file path (case-insensitive)]
@@ -14,19 +20,40 @@ const TOPIC_RULES: [string, RegExp][] = [
   ["configuration", /config\/|\.env|docker-compose|\.ya?ml$|\.json$/i],
 ];
 
-const IGNORED_PREFIXES = ["vendor/", "node_modules/", ".git/", "dist/", "build/"];
+// Fallback for repos without .battle-mage.json
+const DEFAULT_EXCLUDED_PREFIXES = ["vendor/", "node_modules/", ".git/", "dist/", "build/"];
 
 // ── Pure functions (exported for testing) ─────────────────────────────
 
 export type TopicMap = Record<string, string[]>;
 
-export function classifyTopics(paths: string[]): TopicMap {
+export function classifyTopics(
+  paths: string[],
+  config?: BattleMageConfig,
+): TopicMap {
   const topics: TopicMap = {};
 
-  for (const path of paths) {
-    // Skip vendored/generated files
-    if (IGNORED_PREFIXES.some((prefix) => path.startsWith(prefix))) continue;
+  // Filter out excluded paths using config or fallback
+  const filteredPaths = config
+    ? filterPathsByAnnotation(paths, config, ["excluded"])
+    : paths.filter((p) => !DEFAULT_EXCLUDED_PREFIXES.some((prefix) => p.startsWith(prefix)));
 
+  for (const path of filteredPaths) {
+    const annotation = config ? getAnnotation(path, config) : "current";
+
+    // Route historic and vendor paths to pseudo-topics
+    if (annotation === "historic") {
+      if (!topics["_historic"]) topics["_historic"] = [];
+      topics["_historic"].push(path);
+      continue;
+    }
+    if (annotation === "vendor") {
+      if (!topics["_vendor"]) topics["_vendor"] = [];
+      topics["_vendor"].push(path);
+      continue;
+    }
+
+    // Normal topic classification
     for (const [topic, pattern] of TOPIC_RULES) {
       if (pattern.test(path)) {
         if (!topics[topic]) topics[topic] = [];
@@ -47,9 +74,21 @@ export function isIndexStale(
 
 const MAX_PATHS_PER_TOPIC = 8;
 
+const PSEUDO_TOPIC_HINTS: Record<string, string> = {
+  _historic: "(use only for history questions)",
+  _vendor: "(use only for dependency questions)",
+};
+
 export function buildIndexSummary(topics: TopicMap): string {
   const entries = Object.entries(topics);
   if (entries.length === 0) return "";
+
+  // Sort: regular topics first, then pseudo-topics (_historic, _vendor) last
+  entries.sort((a, b) => {
+    const aIsPseudo = a[0].startsWith("_") ? 1 : 0;
+    const bIsPseudo = b[0].startsWith("_") ? 1 : 0;
+    return aIsPseudo - bIsPseudo;
+  });
 
   return entries
     .map(([topic, paths]) => {
@@ -57,7 +96,9 @@ export function buildIndexSummary(topics: TopicMap): string {
       const overflow = paths.length - capped.length;
       const pathList = capped.join(", ");
       const suffix = overflow > 0 ? ` (+${overflow} more)` : "";
-      return `- *${topic}*: ${pathList}${suffix}`;
+      const hint = PSEUDO_TOPIC_HINTS[topic] || "";
+      const label = topic.startsWith("_") ? topic.slice(1) : topic;
+      return `- *${label}*${hint ? " " + hint : ""}: ${pathList}${suffix}`;
     })
     .join("\n");
 }
@@ -89,6 +130,22 @@ async function fetchHeadSha(): Promise<string> {
   return getHeadSha();
 }
 
+// ── Config loading ───────────────────────────────────────────────────
+const INDEX_CONFIG_KEY = "index:config";
+
+async function fetchBattleMageConfig(): Promise<BattleMageConfig> {
+  try {
+    const { readFile } = await import("@/lib/github");
+    const result = await readFile(".battle-mage.json");
+    if ("content" in result && typeof result.content === "string") {
+      return parseBattleMageConfig(result.content);
+    }
+    return { paths: {} };
+  } catch {
+    return { paths: {} };
+  }
+}
+
 // ── Public API ───────────────────────────────────────────────────────
 
 export async function getOrRebuildIndex(): Promise<string> {
@@ -102,15 +159,17 @@ export async function getOrRebuildIndex(): Promise<string> {
       return summary ?? "";
     }
 
-    // Rebuild index
+    // Load config and rebuild index
+    const config = await fetchBattleMageConfig();
     const paths = await fetchRepoTree();
-    const topics = classifyTopics(paths);
+    const topics = classifyTopics(paths, config);
     const summary = buildIndexSummary(topics);
 
-    // Write to KV (pipeline for atomicity)
+    // Write to KV
     await kv.set(INDEX_SHA_KEY, currentSha);
     await kv.set(INDEX_TOPICS_KEY, JSON.stringify(topics));
     await kv.set(INDEX_SUMMARY_KEY, summary);
+    await kv.set(INDEX_CONFIG_KEY, JSON.stringify(config));
     await kv.set(INDEX_BUILT_AT_KEY, new Date().toISOString());
 
     return summary;
@@ -118,5 +177,21 @@ export async function getOrRebuildIndex(): Promise<string> {
     // If index build fails, return empty — agent falls back to search
     console.error("Repo index build failed:", err);
     return "";
+  }
+}
+
+/**
+ * Get the cached config from KV (loaded during last index build).
+ * Returns empty config if not yet built.
+ */
+export async function getCachedConfig(): Promise<BattleMageConfig> {
+  try {
+    const raw = await kv.get<string>(INDEX_CONFIG_KEY);
+    if (raw) {
+      return typeof raw === "string" ? JSON.parse(raw) : (raw as BattleMageConfig);
+    }
+    return { paths: {} };
+  } catch {
+    return { paths: {} };
   }
 }
