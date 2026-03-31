@@ -80,6 +80,18 @@ When a user thumbs-down an answer, the [auto-correction system](./auto-correctio
 
 This creates a self-correcting loop: the bot answers using KB + docs, the user signals the answer was wrong, and the system removes the lower-ranked sources that may have contributed to the bad answer.
 
+## Alignment with Reference Ranking
+
+The source-of-truth hierarchy is mirrored in how references are displayed to the user. The `rankReferences()` function in `src/lib/references.ts` scores each reference by its type:
+
+- Source code files: 50 points (highest — code is truth)
+- Test files: 40 points
+- Any ref cited in the answer text: +20 bonus
+- Documentation: 10 points
+- Uncited list results: 0 points
+
+This means the user sees source code at the top of the reference list and uncited issues at the bottom — reinforcing which sources the answer is grounded in.
+
 ## Testing
 
 The hierarchy behavior is tested in `src/lib/claude.test.ts`. Tests verify that:

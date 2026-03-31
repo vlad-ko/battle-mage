@@ -75,7 +75,7 @@ For the full architecture walkthrough, see [docs/architecture.md](docs/architect
 ## Testing
 
 ```bash
-npm test              # 103 tests across 7 files
+npm test              # 113 tests across 7 files
 npm run test:watch    # Watch mode
 npm run typecheck     # TypeScript strict
 ```
