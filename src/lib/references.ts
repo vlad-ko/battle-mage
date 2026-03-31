@@ -27,5 +27,6 @@ export function formatReferences(refs: Reference[]): string {
     lines.push(`  _...and ${overflow} more_`);
   }
 
-  return `\n\n───\n*References:*\n${lines.join("\n")}`;
+  const hint = "\n_React with 👍 or 👎 to help me give better answers in the future._";
+  return `\n\n───\n*References:*\n${lines.join("\n")}${hint}`;
 }

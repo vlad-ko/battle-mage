@@ -58,4 +58,26 @@ describe("formatReferences", () => {
   it("MAX_REFERENCES is 5", () => {
     expect(MAX_REFERENCES).toBe(5);
   });
+
+  it("includes feedback hint after references", () => {
+    const result = formatReferences([
+      { label: "a.ts", url: "https://example.com/a.ts" },
+    ]);
+    expect(result).toContain("👍");
+    expect(result).toContain("👎");
+    expect(result).toMatch(/better answers/i);
+  });
+
+  it("feedback hint is italic", () => {
+    const result = formatReferences([
+      { label: "a.ts", url: "https://example.com/a.ts" },
+    ]);
+    // The hint line should be wrapped in underscores (Slack italic)
+    expect(result).toMatch(/_.*👍.*👎.*_/);
+  });
+
+  it("no feedback hint when no references", () => {
+    const result = formatReferences([]);
+    expect(result).toBe("");
+  });
 });

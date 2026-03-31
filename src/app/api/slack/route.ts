@@ -14,7 +14,7 @@ import { createIssue } from "@/lib/github";
 import { parseProposalFromMessage } from "@/tools/create-issue";
 import { storeQAContext, getQAContext, saveFeedback } from "@/lib/feedback";
 import { formatReferences } from "@/lib/references";
-import { getAllKnowledge, removeKnowledgeEntry } from "@/lib/knowledge";
+import { getAllKnowledge } from "@/lib/knowledge";
 import { buildCorrectionActions } from "@/lib/auto-correct";
 import { buildThinkingMessage, THINKING_HEADER } from "@/lib/progress";
 import { toSlackMrkdwn } from "@/lib/mrkdwn";
@@ -159,6 +159,36 @@ export async function POST(request: NextRequest) {
 
     after(async () => {
       try {
+        // Check for pending correction (from a 👎 reaction)
+        const { kv } = await import("@vercel/kv");
+        const pendingKey = `pending-correction:${channel}:${threadTs}`;
+        const pendingRaw = await kv.get<string>(pendingKey);
+        if (pendingRaw) {
+          // This reply is a correction — save directly to KB
+          const pending = typeof pendingRaw === "string" ? JSON.parse(pendingRaw) : pendingRaw;
+          const { saveKnowledgeEntry } = await import("@/lib/knowledge");
+
+          await saveKnowledgeEntry(userMessage);
+
+          // Save the negative feedback NOW with the actual correction text
+          await saveFeedback({
+            type: "negative",
+            question: pending.question || "",
+            detail: `Correction: "${userMessage.slice(0, 200)}"`,
+            timestamp: new Date().toISOString().split("T")[0],
+          });
+
+          // Clear the pending state
+          await kv.del(pendingKey);
+
+          await replyInThread(
+            channel,
+            threadTs,
+            `:white_check_mark: Saved to knowledge base: _"${userMessage.slice(0, 100)}"_`,
+          );
+          return;
+        }
+
         // Only respond if the bot is already in this thread
         const bid = botId || (await getBotUserId());
         if (!bid || !(await isBotInThread(channel, threadTs, bid))) return;
@@ -315,7 +345,7 @@ export async function POST(request: NextRequest) {
         await saveFeedback({
           type: "positive",
           question: context.question,
-          detail: `Good answer approach. Referenced: ${context.references.join(", ") || "general knowledge"}`,
+          detail: `👍 for: "${context.question.slice(0, 80)}" — used: ${context.references.join(", ") || "general knowledge"}`,
           timestamp: new Date().toISOString().split("T")[0],
         });
 
@@ -351,45 +381,41 @@ export async function POST(request: NextRequest) {
         const context = await getQAContext(channel, messageTs);
         if (!context) return;
 
-        // Save immediate negative feedback
-        await saveFeedback({
-          type: "negative",
-          question: context.question,
-          detail: `Answer was thumbs-downed. Original answer used: ${context.references.join(", ") || "general knowledge"}. Review approach for this type of question.`,
-          timestamp: new Date().toISOString().split("T")[0],
-        });
-
         const threadTs = msg.thread_ts || messageTs;
 
-        // Auto-correction: check for stale KB entries and doc references
+        // Flag possibly related KB entries and docs (don't auto-remove)
         const kbEntries = await getAllKnowledge();
         const actions = buildCorrectionActions(context.references, kbEntries);
 
-        const correctionNotes: string[] = [];
+        const notes: string[] = [];
 
-        // Remove stale KB entries
-        for (const staleEntry of actions.kbEntriesToRemove) {
-          const removed = await removeKnowledgeEntry(staleEntry.entry);
-          if (removed) {
-            correctionNotes.push(`Removed stale KB entry: "${staleEntry.entry}"`);
+        if (actions.kbEntriesToFlag.length > 0) {
+          notes.push("*Possibly related KB entries* (reply to confirm removal):");
+          for (const entry of actions.kbEntriesToFlag) {
+            notes.push(`  • _"${entry.entry}"_`);
           }
         }
 
-        // Propose doc fixes (inform user, don't auto-create issues)
         if (actions.docsToProposeFix.length > 0) {
           const docList = actions.docsToProposeFix.map((d) => `\`${d}\``).join(", ");
-          correctionNotes.push(`These docs may be outdated: ${docList} — reply *"create issue"* if you'd like me to propose a doc-fix issue`);
+          notes.push(`*Docs referenced:* ${docList}`);
         }
 
-        // Reply with corrections taken + ask for more context
-        const correctionText = correctionNotes.length > 0
-          ? `\n\n*Auto-corrections taken:*\n${correctionNotes.map((n) => `• ${n}`).join("\n")}`
-          : "";
+        const flagText = notes.length > 0 ? `\n\n${notes.join("\n")}` : "";
+
+        // Store pending correction state so the next reply is saved as a KB correction
+        const pendingKey = `pending-correction:${channel}:${threadTs}`;
+        const { kv } = await import("@vercel/kv");
+        await kv.set(pendingKey, JSON.stringify({
+          question: context.question,
+          references: context.references,
+          flaggedKB: actions.kbEntriesToFlag.map((e) => e.entry),
+        }), { ex: 86400 }); // 24h TTL
 
         await replyInThread(
           channel,
           threadTs,
-          `:thinking_face: Thanks for the feedback.${correctionText}\n\nWhat was wrong with this answer? Reply here and I'll save the correction to my knowledge base.`,
+          `:thinking_face: Thanks for the feedback.${flagText}\n\nWhat was wrong? Reply here and I'll save the correction.`,
         );
       } catch (err) {
         console.error("Battle Mage 👎 handler error:", err instanceof Error ? err.message : err);
