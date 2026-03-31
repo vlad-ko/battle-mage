@@ -69,7 +69,7 @@ Clean up the implementation while keeping tests green. Run `npm test` after ever
 - **Colocated**: test files live next to source files (`foo.ts` -> `foo.test.ts`)
 - **Run all tests**: `npm test` (single run, CI mode)
 - **Watch mode**: `npm run test:watch` (re-runs on file changes)
-- **Current count**: 113 tests across 7 test files
+- **Current count**: 142 tests across 8 test files
 
 ### What to Test
 
