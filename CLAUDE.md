@@ -5,11 +5,14 @@ A Slack agent with Claude AI intelligence and GitHub repo access. Invoke via `@b
 ## Architecture
 
 - **Runtime**: Vercel (Next.js serverless functions)
-- **Slack**: Webhook mode via Next.js API route (`/api/slack`)
-- **AI**: Anthropic Claude API with tool use
-- **GitHub**: Octokit REST API (fine-grained PAT, read-only)
-- **Knowledge**: Vercel KV (corrections persist without GitHub write access)
-- **Context**: Project CLAUDE.md + wizard reasoning framework
+- **Slack**: Webhook mode via Next.js API route (`/api/slack`), ack-then-process via `after()`
+- **AI**: Anthropic Claude API with tool use (7 tools, 15-round budget)
+- **GitHub**: Octokit REST API (fine-grained PAT, read-only for code/PRs, read-write for issues)
+- **Knowledge**: Vercel KV (corrections, feedback, repo index cache)
+- **Context**: CLAUDE.md + KB + feedback + repo index + source hierarchy + search strategy + recency/brevity rules
+- **Progress**: Live thinking messages with contextual emoji, deleted on answer
+- **Formatting**: Markdown-to-Slack mrkdwn conversion, deduplicated references (capped at 5)
+- **Auto-correct**: Thumbs-down removes stale KB entries, flags outdated docs
 
 ## Development
 
@@ -42,15 +45,36 @@ src/
     page.tsx              — Landing page
   lib/
     slack.ts              — Slack client, signature verification, message helpers
-    claude.ts             — Anthropic client, system prompt, agent loop
-    github.ts             — Octokit client (search, read, issues, PRs — read-only)
-    knowledge.ts          — Knowledge base (Vercel KV — no GitHub write access)
+    claude.ts             — Anthropic client, system prompt assembly, agent loop
+    github.ts             — Octokit client (search, read, issues, PRs, commits, tree)
+    knowledge.ts          — Knowledge base (Vercel KV sorted set)
+    feedback.ts           — Feedback storage (Vercel KV) and Q&A context
+    repo-index.ts         — Repository topic index (lazy rebuild on SHA change)
+    auto-correct.ts       — Stale KB entry detection and doc reference flagging
+    progress.ts           — Progress message formatter (tool → emoji + status)
+    mrkdwn.ts             — Markdown → Slack mrkdwn converter
+    references.ts         — Reference deduplication, capping, and formatting
   tools/
+    index.ts              — Tool registry and executor
     search-code.ts        — GitHub code search tool
-    read-file.ts          — GitHub file read tool
+    read-file.ts          — GitHub file/directory read tool
     list-issues.ts        — GitHub issue list/lookup tool
+    list-commits.ts       — Recent commits on main (with dates)
+    list-prs.ts           — Recent pull requests (open/merged/closed)
     create-issue.ts       — GitHub issue proposal + parser
     save-knowledge.ts     — Knowledge base save (Vercel KV)
+docs/
+  setup.md                — Complete setup guide (Slack, GitHub, Vercel, KV)
+  usage.md                — How to use the bot day-to-day
+  architecture.md         — How the internals work (agent loop, prompt, tools)
+  contributing.md         — Contributing guide (TDD, CI, fork workflow)
+  troubleshooting.md      — Common issues and fixes
+  features/
+    repo-index.md         — Lazy-rebuilt topic map (KV-cached)
+    knowledge-base.md     — Vercel KV knowledge base
+    source-hierarchy.md   — Source-of-truth hierarchy (5 levels)
+    auto-correction.md    — Auto-correction on 👎 reactions
+    progress-ux.md        — Live progress updates (emoji + status)
 ```
 
 ## Testing (TDD Required)
