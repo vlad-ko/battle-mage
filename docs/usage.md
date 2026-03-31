@@ -1,6 +1,6 @@
 # Usage Guide
 
-Battle Mage is a Slack bot that answers questions about your GitHub codebase. Mention it with `@bm` to ask a question. It reads your code, searches for patterns, checks issues and PRs, and replies in-thread.
+Battle Mage is a Slack agent that reads your entire GitHub repo — source code, documentation, issues, pull requests, and recent commits — to answer questions, track activity, and create issues on request. Mention it with `@bm` to get started. It replies in-thread and follows up without needing another @mention.
 
 ## Asking Questions
 

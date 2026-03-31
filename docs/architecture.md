@@ -1,6 +1,6 @@
 # Architecture
 
-Battle Mage is a Slack bot that runs as a Next.js serverless function on Vercel. It receives webhook events from Slack, processes them with Claude AI and GitHub tools, and replies in-thread.
+Battle Mage is a Slack agent that runs as a Next.js serverless function on Vercel. It receives webhook events from Slack, processes them with Claude AI and 9 GitHub tools (code search, file read, issues, PRs, commits, issue creation, knowledge base), and replies in-thread with cited references.
 
 ## High-Level Flow
 

@@ -1,6 +1,6 @@
 # Battle Mage (@bm)
 
-A Slack agent powered by Claude AI that answers questions about your GitHub codebase. Mention `@bm` in any channel and ask about code, architecture, issues, or pull requests.
+A Slack agent powered by Claude AI that reads your GitHub repo in real time — code, docs, issues, PRs, commits — and answers questions, tracks recent activity, and creates issues on request. Mention `@bm` in any channel to get started.
 
 <img src="icon.png" alt="Battle Mage icon" width="128">
 
@@ -38,6 +38,7 @@ See the [full setup guide](docs/setup.md) for Slack app creation, GitHub PAT, Ve
 | [Usage](docs/usage.md) | Asking questions, threads, issues, corrections, feedback |
 | [Architecture](docs/architecture.md) | Agent loop, tools, system prompt, design decisions |
 | [Contributing](docs/contributing.md) | Fork workflow, TDD, CI, branch protection |
+| [Logging](docs/logging.md) | Structured JSON logs, event catalog, debugging |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues and fixes |
 
 ### Feature Deep-Dives
@@ -77,7 +78,7 @@ For the full architecture walkthrough, see [docs/architecture.md](docs/architect
 ## Testing
 
 ```bash
-npm test              # 142 tests across 8 files
+npm test              # 148 tests across 9 files
 npm run test:watch    # Watch mode
 npm run typecheck     # TypeScript strict
 ```
