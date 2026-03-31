@@ -88,8 +88,8 @@ describe("buildCorrectionActions", () => {
       ["src/services/auth/login.ts"],
       [{ entry: "Auth lives in src/services/auth", timestamp: "2026-03-28" }],
     );
-    expect(actions.kbEntriesToRemove).toHaveLength(1);
-    expect(actions.kbEntriesToRemove[0].entry).toContain("Auth");
+    expect(actions.kbEntriesToFlag).toHaveLength(1);
+    expect(actions.kbEntriesToFlag[0].entry).toContain("Auth");
   });
 
   it("returns doc fix proposals when doc references found", () => {
@@ -106,7 +106,7 @@ describe("buildCorrectionActions", () => {
       ["docs/deployment/setup.md", "src/services/auth/login.ts"],
       [{ entry: "Auth uses JWT", timestamp: "2026-03-28" }],
     );
-    expect(actions.kbEntriesToRemove.length).toBeGreaterThan(0);
+    expect(actions.kbEntriesToFlag.length).toBeGreaterThan(0);
     expect(actions.docsToProposeFix.length).toBeGreaterThan(0);
   });
 
@@ -115,7 +115,7 @@ describe("buildCorrectionActions", () => {
       ["src/models/User.ts"],
       [{ entry: "Redis TTL is 3600", timestamp: "2026-03-28" }],
     );
-    expect(actions.kbEntriesToRemove).toHaveLength(0);
+    expect(actions.kbEntriesToFlag).toHaveLength(0);
     expect(actions.docsToProposeFix).toHaveLength(0);
   });
 

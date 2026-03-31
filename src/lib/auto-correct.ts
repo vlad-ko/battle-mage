@@ -66,7 +66,7 @@ export function identifyStaleDocReferences(references: string[]): string[] {
 // Combines both analyses into a single action plan.
 
 export interface CorrectionActions {
-  kbEntriesToRemove: KnowledgeEntry[];
+  kbEntriesToFlag: KnowledgeEntry[];
   docsToProposeFix: string[];
   hasActions: boolean;
 }
@@ -75,12 +75,12 @@ export function buildCorrectionActions(
   references: string[],
   kbEntries: KnowledgeEntry[],
 ): CorrectionActions {
-  const kbEntriesToRemove = identifyStaleKBEntries(references, kbEntries);
+  const kbEntriesToFlag = identifyStaleKBEntries(references, kbEntries);
   const docsToProposeFix = identifyStaleDocReferences(references);
 
   return {
-    kbEntriesToRemove,
+    kbEntriesToFlag,
     docsToProposeFix,
-    hasActions: kbEntriesToRemove.length > 0 || docsToProposeFix.length > 0,
+    hasActions: kbEntriesToFlag.length > 0 || docsToProposeFix.length > 0,
   };
 }
