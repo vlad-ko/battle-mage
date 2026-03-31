@@ -4,7 +4,8 @@ import type { IssueProposal } from "@/tools/create-issue";
 import { readFile } from "@/lib/github";
 import { getKnowledgeAsMarkdown } from "@/lib/knowledge";
 import { getFeedbackAsMarkdown } from "@/lib/feedback";
-import { getOrRebuildIndex } from "@/lib/repo-index";
+import { getOrRebuildIndex, getCachedConfig } from "@/lib/repo-index";
+import type { BattleMageConfig } from "@/lib/config";
 
 // ── Anthropic client ──────────────────────────────────────────────────
 const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from env
@@ -48,10 +49,43 @@ export interface PromptInputs {
   knowledge: string | null;
   feedback: string | null;
   repoIndex: string | null;
+  pathAnnotations: BattleMageConfig | null;
+}
+
+function buildAnnotationsSection(config: BattleMageConfig | null): string {
+  if (!config || Object.keys(config.paths).length === 0) return "";
+
+  const entries = Object.entries(config.paths);
+  const grouped: Record<string, string[]> = {};
+  for (const [path, annotation] of entries) {
+    if (annotation === "excluded") continue; // Don't tell agent about excluded paths
+    if (!grouped[annotation]) grouped[annotation] = [];
+    grouped[annotation].push(path);
+  }
+
+  if (Object.keys(grouped).length === 0) return "";
+
+  const lines = ["\n## Path Annotations (from .battle-mage.json)\n"];
+  lines.push("The team has annotated paths in this repo with trust levels:\n");
+
+  for (const [annotation, paths] of Object.entries(grouped)) {
+    lines.push(`- *${annotation}*: ${paths.join(", ")}`);
+  }
+
+  lines.push("");
+  lines.push("*Rules:*");
+  lines.push("- Prefer *core* paths as primary evidence — read these first");
+  lines.push("- *current* paths have normal trust — standard behavior");
+  lines.push("- Skip *historic* paths unless the question is about history or past decisions. When citing historic content, always qualify as \"historically...\" or \"in the archived docs...\"");
+  lines.push("- Skip *vendor* paths unless the question is about dependencies or third-party libraries. When citing vendor code, qualify as third-party");
+  lines.push("- Never read or reference excluded paths (they are not shown here)");
+  lines.push("");
+
+  return lines.join("\n");
 }
 
 export function assembleSystemPrompt(inputs: PromptInputs): string {
-  const { owner, repo, claudeMd, knowledge, feedback, repoIndex } = inputs;
+  const { owner, repo, claudeMd, knowledge, feedback, repoIndex, pathAnnotations } = inputs;
 
   const contextSection = claudeMd
     ? `\n## Project Context (from CLAUDE.md)\n\n${claudeMd}\n`
@@ -65,6 +99,7 @@ export function assembleSystemPrompt(inputs: PromptInputs): string {
   const repoIndexSection = repoIndex
     ? `\n## Repository Map (auto-generated index)\n\nThis map shows the key areas of the repo. Use it to jump directly to relevant files with \`read_file\` instead of searching blind. The map is rebuilt automatically when the repo changes.\n\n${repoIndex}\n`
     : "";
+  const annotationsSection = buildAnnotationsSection(pathAnnotations);
 
   const today = new Date().toISOString().split("T")[0];
 
@@ -187,18 +222,21 @@ You are writing for Slack mrkdwn, NOT standard Markdown. Slack will show raw cha
 
 Owner: ${owner}
 Repository: ${repo}
-${contextSection}${repoIndexSection}${knowledgeSection}${feedbackSection}`;
+${contextSection}${repoIndexSection}${annotationsSection}${knowledgeSection}${feedbackSection}`;
 }
 
 // ── Async wrapper that fetches data then assembles ────────────────────
 async function buildSystemPrompt(): Promise<string> {
+  const repoIndex = await getOrRebuildIndex();
+  const config = await getCachedConfig();
   return assembleSystemPrompt({
     owner: process.env.GITHUB_OWNER,
     repo: process.env.GITHUB_REPO,
     claudeMd: await getClaudeMd(),
     knowledge: await getKnowledge(),
     feedback: await getFeedbackAsMarkdown(),
-    repoIndex: await getOrRebuildIndex(),
+    repoIndex,
+    pathAnnotations: Object.keys(config.paths).length > 0 ? config : null,
   });
 }
 

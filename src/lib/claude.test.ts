@@ -9,6 +9,7 @@ describe("assembleSystemPrompt", () => {
     knowledge: null,
     feedback: null,
     repoIndex: null,
+    pathAnnotations: null,
   };
 
   describe("source-of-truth hierarchy", () => {
@@ -190,6 +191,59 @@ describe("assembleSystemPrompt", () => {
     it("instructs not to write marketing copy or brochure-style", () => {
       const prompt = assembleSystemPrompt(baseArgs);
       expect(prompt).toMatch(/no.*brochure|no.*marketing|no.*editorial|skip.*what makes.*special/i);
+    });
+  });
+
+  describe("path annotations", () => {
+    it("injects annotation guidance when config provided", () => {
+      const prompt = assembleSystemPrompt({
+        ...baseArgs,
+        pathAnnotations: {
+          paths: {
+            "src/": "core",
+            "docs/archive/": "historic",
+            "vendor/": "vendor",
+          },
+        },
+      });
+      expect(prompt).toContain("Path Annotations");
+      expect(prompt).toContain("core");
+      expect(prompt).toContain("historic");
+      expect(prompt).toContain("vendor");
+    });
+
+    it("instructs to qualify historic content", () => {
+      const prompt = assembleSystemPrompt({
+        ...baseArgs,
+        pathAnnotations: {
+          paths: { "docs/archive/": "historic" },
+        },
+      });
+      expect(prompt).toMatch(/historic.*qualify|historic.*historically/i);
+    });
+
+    it("instructs to skip historic/vendor by default", () => {
+      const prompt = assembleSystemPrompt({
+        ...baseArgs,
+        pathAnnotations: {
+          paths: { "docs/archive/": "historic", "vendor/": "vendor" },
+        },
+      });
+      expect(prompt).toMatch(/skip.*historic|avoid.*historic|historic.*only.*when/i);
+      expect(prompt).toMatch(/skip.*vendor|avoid.*vendor|vendor.*only.*when/i);
+    });
+
+    it("omits annotation section when config is null", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      expect(prompt).not.toContain("Path Annotations");
+    });
+
+    it("omits annotation section when config has empty paths", () => {
+      const prompt = assembleSystemPrompt({
+        ...baseArgs,
+        pathAnnotations: { paths: {} },
+      });
+      expect(prompt).not.toContain("Path Annotations");
     });
   });
 

@@ -162,4 +162,32 @@ describe("rankReferences", () => {
     const ranked = rankReferences(refs, "as documented in docs/cited.md");
     expect(ranked[0].label).toBe("docs/cited.md");
   });
+
+  it("boosts core-annotated files when config provided", () => {
+    const config = { paths: { "src/": "core" as const, "lib/": "current" as const } };
+    const refs = [
+      { label: "lib/util.ts", url: "https://example.com/lib", type: "file" as const },
+      { label: "src/auth.ts", url: "https://example.com/src", type: "file" as const },
+    ];
+    const ranked = rankReferences(refs, "answer", config);
+    expect(ranked[0].label).toBe("src/auth.ts");
+  });
+
+  it("penalizes historic-annotated files when config provided", () => {
+    const config = { paths: { "docs/": "current" as const, "docs/archive/": "historic" as const } };
+    const refs = [
+      { label: "docs/archive/old.md", url: "https://example.com/old", type: "doc" as const },
+      { label: "docs/setup.md", url: "https://example.com/setup", type: "doc" as const },
+    ];
+    const ranked = rankReferences(refs, "answer", config);
+    expect(ranked[0].label).toBe("docs/setup.md");
+  });
+
+  it("works without config (backwards compatible)", () => {
+    const refs = [
+      { label: "src/auth.ts", url: "https://example.com/auth", type: "file" as const },
+    ];
+    const ranked = rankReferences(refs, "answer");
+    expect(ranked).toHaveLength(1);
+  });
 });
