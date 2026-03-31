@@ -21,8 +21,9 @@ export const tools: Tool[] = [
 
 // ── References ────────────────────────────────────────────────────────
 export interface Reference {
-  label: string; // e.g. "app/Models/User.php" or "Issue #42"
-  url: string; // GitHub URL (html_url — includes line anchors for search results)
+  label: string; // e.g. "src/auth.ts" or "#42 Fix login bug"
+  url: string; // GitHub URL
+  type: "issue" | "pr" | "commit" | "file" | "doc";
 }
 
 // ── Tool executor ─────────────────────────────────────────────────────
@@ -52,23 +53,59 @@ export async function executeTool(
       return { type: "text", text: result.text, references: result.references };
     }
     case "list_issues": {
-      const text = await executeListIssues(input);
+      const result = await executeListIssues(input);
       const refs: Reference[] = [];
       if (input.issue_number) {
         const num = input.issue_number as number;
-        refs.push({ label: `Issue #${num}`, url: issueUrl(num) });
+        // Extract title from the result text (first line has "**#N: Title**")
+        const titleMatch = result.match(/\*\*#\d+:\s*(.+?)\*\*/);
+        const title = titleMatch ? titleMatch[1] : `Issue #${num}`;
+        refs.push({ label: `#${num} ${title}`, url: issueUrl(num), type: "issue" });
       } else {
-        // Extract issue numbers from list output
-        const issuePattern = /#(\d+)/g;
+        // Extract issue numbers and titles from list output
+        const issuePattern = /\*\*#(\d+)\*\*:\s*(.+?)\s*\(/g;
         let match;
-        while ((match = issuePattern.exec(text)) !== null) {
+        while ((match = issuePattern.exec(result)) !== null) {
           const num = parseInt(match[1], 10);
-          if (!refs.some((r) => r.label === `#${num}`)) {
-            refs.push({ label: `#${num}`, url: issueUrl(num) });
+          const title = match[2].trim();
+          if (!refs.some((r) => r.label.startsWith(`#${num}`))) {
+            refs.push({ label: `#${num} ${title}`, url: issueUrl(num), type: "issue" });
           }
         }
       }
-      return { type: "text", text, references: refs };
+      return { type: "text", text: result, references: refs };
+    }
+    case "list_commits": {
+      const result = await executeListCommits(input);
+      const refs: Reference[] = [];
+      const commitPattern = /`([a-f0-9]{7})`\s+\(\d{4}-\d{2}-\d{2}\)\s+(.+)/g;
+      let match;
+      while ((match = commitPattern.exec(result)) !== null) {
+        const sha = match[1];
+        const msg = match[2].slice(0, 60);
+        refs.push({
+          label: `${sha} ${msg}`,
+          url: `https://github.com/${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}/commit/${sha}`,
+          type: "commit",
+        });
+      }
+      return { type: "text", text: result, references: refs };
+    }
+    case "list_prs": {
+      const result = await executeListPRs(input);
+      const refs: Reference[] = [];
+      const prPattern = /\*\*#(\d+)\*\*:\s*(.+?)\s*\(/g;
+      let match;
+      while ((match = prPattern.exec(result)) !== null) {
+        const num = parseInt(match[1], 10);
+        const title = match[2].trim();
+        refs.push({
+          label: `#${num} ${title}`,
+          url: `https://github.com/${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}/pull/${num}`,
+          type: "pr",
+        });
+      }
+      return { type: "text", text: result, references: refs };
     }
     case "create_issue":
       return {
@@ -77,10 +114,6 @@ export async function executeTool(
       };
     case "save_knowledge":
       return { type: "text", text: await executeSaveKnowledge(input) };
-    case "list_commits":
-      return { type: "text", text: await executeListCommits(input) };
-    case "list_prs":
-      return { type: "text", text: await executeListPRs(input) };
     default:
       return { type: "text", text: `Unknown tool: ${name}` };
   }

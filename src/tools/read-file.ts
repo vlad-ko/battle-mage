@@ -39,7 +39,7 @@ export async function executeReadFile(
   if ("content" in result && typeof result.content === "string") {
     // Use the actual GitHub html_url (direct link to the file on GitHub)
     const refs: Reference[] = result.url
-      ? [{ label: result.path, url: result.url }]
+      ? [{ label: result.path, url: result.url, type: result.path.endsWith(".md") || result.path.startsWith("docs/") ? "doc" as const : "file" as const }]
       : [];
     return {
       text: `**${result.path}** (${result.size} bytes)\n\`\`\`\n${result.content}\n\`\`\``,

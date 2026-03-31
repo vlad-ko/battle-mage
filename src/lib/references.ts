@@ -1,10 +1,18 @@
 import type { Reference } from "@/tools";
 
 /**
- * Format references as a clean Slack footer.
- * Deduplicates, caps at a reasonable limit, and adds a clear header.
+ * Format references as a clean Slack footer with type labels.
+ * Deduplicates, caps at MAX_REFERENCES, and adds feedback hint.
  */
-export const MAX_REFERENCES = 5;
+export const MAX_REFERENCES = 10;
+
+const TYPE_EMOJI: Record<string, string> = {
+  issue: "🎫",
+  pr: "🔀",
+  commit: "📜",
+  file: "📄",
+  doc: "📖",
+};
 
 export function formatReferences(refs: Reference[]): string {
   if (refs.length === 0) return "";
@@ -18,11 +26,14 @@ export function formatReferences(refs: Reference[]): string {
     return true;
   });
 
-  // Cap at MAX_REFERENCES to keep it scannable
+  // Cap at MAX_REFERENCES
   const capped = unique.slice(0, MAX_REFERENCES);
   const overflow = unique.length - capped.length;
 
-  const lines = capped.map((r) => `  • <${r.url}|${r.label}>`);
+  const lines = capped.map((r) => {
+    const emoji = TYPE_EMOJI[r.type] || "🔗";
+    return `  • ${emoji} <${r.url}|${r.label}>`;
+  });
   if (overflow > 0) {
     lines.push(`  _...and ${overflow} more_`);
   }
