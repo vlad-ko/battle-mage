@@ -5,6 +5,7 @@ import { readFile } from "@/lib/github";
 import { getKnowledgeAsMarkdown } from "@/lib/knowledge";
 import { getFeedbackAsMarkdown } from "@/lib/feedback";
 import { getOrRebuildIndex, getCachedConfig } from "@/lib/repo-index";
+import { log } from "@/lib/logger";
 import type { BattleMageConfig } from "@/lib/config";
 
 // ── Anthropic client ──────────────────────────────────────────────────
@@ -260,7 +261,9 @@ export async function runAgent(
 
   let issueProposal: IssueProposal | undefined;
   const allReferences: Reference[] = [];
+  const startTime = Date.now();
   const systemPrompt = await buildSystemPrompt();
+  log("agent_start", { promptLength: systemPrompt.length, question: userMessage.slice(0, 100) });
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const response = await anthropic.messages.create({
@@ -290,6 +293,7 @@ export async function runAgent(
         if (b.type === "text") return b.text;
         return "";
       }).join("\n");
+      log("agent_complete", { rounds: round + 1, refCount: allReferences.length, hasProposal: !!issueProposal, duration_ms: Date.now() - startTime });
       return { text, issueProposal, references: dedupeRefs() };
     }
 
@@ -319,6 +323,7 @@ export async function runAgent(
 
       try {
         // Fire progress callback before executing the tool
+        log("agent_tool_call", { tool: block.name, round, input: JSON.stringify(block.input).slice(0, 200) });
         if (onProgress) {
           await onProgress(block.name, block.input as Record<string, unknown>);
         }
