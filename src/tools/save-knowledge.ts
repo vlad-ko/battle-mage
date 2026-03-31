@@ -11,7 +11,7 @@ export const saveKnowledgeTool: Tool = {
       entry: {
         type: "string",
         description:
-          "A concise factual statement to remember. Write it as a standalone fact, not a conversation snippet. E.g. 'The auth module lives in app/Services/Auth, not app/Http/Auth' or 'The Tradier API rate limit is 120 req/min, not 60'.",
+          "A concise factual statement to remember. Write it as a standalone fact, not a conversation snippet. E.g. 'The auth module lives in app/Services/Auth, not app/Http/Auth' or 'The API rate limit is 120 req/min, not 60'.",
       },
     },
     required: ["entry"],

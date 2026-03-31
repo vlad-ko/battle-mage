@@ -66,9 +66,9 @@ describe("assembleSystemPrompt", () => {
     it("includes CLAUDE.md when provided", () => {
       const prompt = assembleSystemPrompt({
         ...baseArgs,
-        claudeMd: "# My Project\nLaravel + GCP",
+        claudeMd: "# My Project\nNext.js + PostgreSQL",
       });
-      expect(prompt).toContain("Laravel + GCP");
+      expect(prompt).toContain("Next.js + PostgreSQL");
       expect(prompt).toContain("Project Context");
     });
 
