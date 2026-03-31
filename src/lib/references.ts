@@ -1,10 +1,12 @@
 import type { Reference } from "@/tools";
+import { type BattleMageConfig, getAnnotation } from "./config";
 
 /**
  * Reference ranking and formatting.
  *
  * References are ranked to mirror the source-of-truth hierarchy:
  *   code > tests > cited refs > docs > uncited list results
+ * Path annotations from .battle-mage.json adjust scores further.
  */
 export const MAX_REFERENCES = 7;
 
@@ -24,7 +26,11 @@ function isTestFile(label: string): boolean {
 }
 
 // ── Score a reference by source-of-truth hierarchy ───────────────────
-function scoreRef(ref: Reference, answerText: string): number {
+function scoreRef(
+  ref: Reference,
+  answerText: string,
+  config?: BattleMageConfig,
+): number {
   let score = 0;
 
   // Tier 1: Source code files (non-doc, non-test) — highest trust
@@ -38,7 +44,6 @@ function scoreRef(ref: Reference, answerText: string): number {
   }
 
   // Citation boost: ref mentioned in the answer text
-  // Check for label fragments: #number, file paths, SHA prefixes
   const labelParts = ref.label.split(/\s+/);
   for (const part of labelParts) {
     if (part.length > 2 && answerText.includes(part)) {
@@ -54,6 +59,14 @@ function scoreRef(ref: Reference, answerText: string): number {
 
   // Tier 5: Uncited issues/PRs/commits get base score of 0
 
+  // Annotation adjustments from .battle-mage.json
+  if (config) {
+    const annotation = getAnnotation(ref.label, config);
+    if (annotation === "core") score += 10;
+    if (annotation === "historic") score -= 20;
+    if (annotation === "vendor") score -= 20;
+  }
+
   return score;
 }
 
@@ -61,13 +74,14 @@ function scoreRef(ref: Reference, answerText: string): number {
 export function rankReferences(
   refs: Reference[],
   answerText: string,
+  config?: BattleMageConfig,
 ): Reference[] {
   if (refs.length === 0) return [];
 
   // Score each ref, then stable-sort descending
   const scored = refs.map((ref, index) => ({
     ref,
-    score: scoreRef(ref, answerText),
+    score: scoreRef(ref, answerText, config),
     originalIndex: index,
   }));
 
