@@ -11,8 +11,8 @@ A Slack agent with Claude AI intelligence and GitHub repo access. Invoke via `@b
 - **Knowledge**: Vercel KV (corrections, feedback, repo index cache)
 - **Context**: CLAUDE.md + KB + feedback + repo index + source hierarchy + search strategy + recency/brevity rules
 - **Progress**: Live thinking messages with contextual emoji, deleted on answer
-- **Formatting**: Markdown-to-Slack mrkdwn conversion, deduplicated references (capped at 5)
-- **Auto-correct**: Thumbs-down removes stale KB entries, flags outdated docs
+- **Formatting**: Markdown-to-Slack mrkdwn conversion, typed references with emoji (📄📖🎫🔀📜), ranked by source-of-truth hierarchy, capped at 7
+- **Auto-correct**: Thumbs-down flags stale KB entries for user confirmation, stores pending correction state
 
 ## Development
 
@@ -53,7 +53,7 @@ src/
     auto-correct.ts       — Stale KB entry detection and doc reference flagging
     progress.ts           — Progress message formatter (tool → emoji + status)
     mrkdwn.ts             — Markdown → Slack mrkdwn converter
-    references.ts         — Reference deduplication, capping, and formatting
+    references.ts         — Typed references: ranking, dedup, emoji formatting
   tools/
     index.ts              — Tool registry and executor
     search-code.ts        — GitHub code search tool

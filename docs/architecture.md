@@ -148,9 +148,9 @@ if loop exhausted:
 
 Key behaviors:
 
-- **References are collected from tool results**, not from Claude's text. Each tool that accesses a file or issue returns structured `Reference` objects with labels and GitHub URLs.
-- **References are deduplicated by URL** during collection and by label (case-insensitive) during formatting.
-- **References are capped at 5** in the final output to keep the footer scannable.
+- **References are collected from tool results**, not from Claude's text. Each tool that accesses a file or issue returns structured `Reference` objects with labels, URLs, and types (`file`, `doc`, `issue`, `pr`, `commit`).
+- **References are ranked** by the source-of-truth hierarchy before display: code files first, then tests, then cited refs, then docs, then uncited list results. This is done by `rankReferences()` in `references.ts`.
+- **References are deduplicated** by label (case-insensitive) during formatting and **capped at 7**.
 - **Issue proposals are extracted** from `create_issue` tool calls and attached to the result separately. They are formatted with a confirmation prompt in the Slack message.
 
 ## Tool System
@@ -160,10 +160,10 @@ Seven tools are registered with Claude's tool-use API:
 | Tool | GitHub API | Returns References? |
 |------|-----------|-------------------|
 | `search_code` | `search.code` | No (discovery only) |
-| `read_file` | `repos.getContent` | Yes (file path + URL) |
-| `list_issues` | `issues.listForRepo` / `issues.get` | Yes (issue numbers + URLs) |
-| `list_commits` | `repos.listCommits` | No |
-| `list_prs` | `pulls.list` | No |
+| `read_file` | `repos.getContent` | Yes — typed as `file` or `doc` |
+| `list_issues` | `issues.listForRepo` / `issues.get` | Yes — typed as `issue`, includes title |
+| `list_commits` | `repos.listCommits` | Yes — typed as `commit`, includes SHA + message |
+| `list_prs` | `pulls.list` | Yes — typed as `pr`, includes number + title |
 | `create_issue` | None (proposal only) | No |
 | `save_knowledge` | None (Vercel KV) | No |
 
@@ -182,25 +182,52 @@ This runs on every response before posting to Slack. Without it, users would see
 
 > **Known limitation**: The converter does not handle headings inside code blocks. A `## comment` inside triple backticks will be converted to `*comment*`. This rarely matters in practice since code blocks are fenced with triple backticks which Slack handles natively.
 
-## Reference Formatting
+## Reference Formatting and Ranking
 
-Every bot answer includes a footer with links to the files and issues that were accessed:
+Every bot answer includes a footer with links to the sources that were accessed, ranked by trustworthiness:
 
 ```
 ───
-References:
-  - src/middleware/auth.ts
-  - src/middleware/auth.test.ts
-  - #42
+*References:*
+  • 📄 src/middleware/auth.ts
+  • 📄 tests/auth.test.ts
+  • 🎫 #1446 Replace supervisor with s6-overlay
+  • 📖 docs/deployment/setup.md
+_React with 👍 or 👎 to help me give better answers in the future._
 ```
 
-References are:
-- **Deduplicated** by label (case-insensitive, first occurrence wins)
-- **Capped at 5** to keep the footer short
-- **Formatted as Slack links** (`<url|label>`) so they are clickable
-- **Only from files actually read** -- search results do not generate references (they are discovery aids)
+### Type labels
 
-If there are more than 5 unique references, the footer shows "...and N more".
+Each reference has a type with an emoji prefix:
+
+| Emoji | Type | Meaning |
+|-------|------|---------|
+| 📄 | `file` | Source code file the agent read |
+| 📖 | `doc` | Documentation file (.md or docs/) |
+| 🎫 | `issue` | GitHub issue (includes title) |
+| 🔀 | `pr` | Pull request (includes title) |
+| 📜 | `commit` | Commit (includes SHA + message) |
+
+### Ranking
+
+References are sorted by `rankReferences()` to mirror the source-of-truth hierarchy:
+
+| Tier | Score | Type | Rationale |
+|------|-------|------|-----------|
+| 1 | 50 | Source code files | Code is truth |
+| 2 | 40 | Test files | Encode expected behavior |
+| — | +20 | Any ref cited in answer | Agent explicitly mentioned it |
+| 4 | 10 | Documentation | Can drift from reality |
+| 5 | 0 | Uncited list results | Discovery artifacts |
+
+This ensures users see the most authoritative sources first.
+
+### Other behaviors
+
+- **Deduplicated** by label (case-insensitive, first occurrence wins)
+- **Capped at 7** -- fewer but higher-quality links
+- **Search results excluded** -- `search_code` does not generate references (discovery only)
+- **Feedback hint** appended after every answer's references
 
 ## Design Decisions
 
