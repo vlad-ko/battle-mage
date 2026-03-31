@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatProgressMessage } from "./progress";
+import { formatProgressMessage, buildThinkingMessage, THINKING_HEADER } from "./progress";
 
 describe("formatProgressMessage", () => {
   it("formats initial thinking step", () => {
@@ -66,7 +66,29 @@ describe("formatProgressMessage", () => {
     const msg = formatProgressMessage("read_file", {
       path: "very/deeply/nested/directory/structure/that/goes/on/forever/file.php",
     });
-    // Should not be absurdly long — capped somehow
     expect(msg.length).toBeLessThan(120);
+  });
+});
+
+describe("buildThinkingMessage", () => {
+  it("includes the fixed header on every message", () => {
+    const msg = buildThinkingMessage("search_code", { query: "auth" });
+    expect(msg).toContain(THINKING_HEADER);
+  });
+
+  it("includes the status line below the header", () => {
+    const msg = buildThinkingMessage("search_code", { query: "auth" });
+    const lines = msg.split("\n");
+    expect(lines[0]).toBe(THINKING_HEADER);
+    expect(lines[1]).toContain("🔍");
+    expect(lines[1]).toContain("auth");
+  });
+
+  it("header stays the same regardless of tool", () => {
+    const msg1 = buildThinkingMessage("search_code", { query: "x" });
+    const msg2 = buildThinkingMessage("read_file", { path: "y" });
+    const header1 = msg1.split("\n")[0];
+    const header2 = msg2.split("\n")[0];
+    expect(header1).toBe(header2);
   });
 });

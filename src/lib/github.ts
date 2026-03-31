@@ -67,7 +67,7 @@ export async function listIssues(
   };
   if (labels) params.labels = labels;
 
-  const { data } = await octokit.rest.issues.list(params);
+  const { data } = await octokit.rest.issues.listForRepo(params);
   return data.map((issue) => ({
     number: issue.number,
     title: issue.title,

@@ -16,7 +16,7 @@ import { storeQAContext, getQAContext, saveFeedback } from "@/lib/feedback";
 import { formatReferences } from "@/lib/references";
 import { getAllKnowledge, removeKnowledgeEntry } from "@/lib/knowledge";
 import { buildCorrectionActions } from "@/lib/auto-correct";
-import { formatProgressMessage } from "@/lib/progress";
+import { buildThinkingMessage, THINKING_HEADER } from "@/lib/progress";
 import { toSlackMrkdwn } from "@/lib/mrkdwn";
 
 /**
@@ -71,19 +71,19 @@ export async function POST(request: NextRequest) {
         // Post thinking message and capture its ts for live updates
         const thinkingTs = await replyInThread(
           channel, threadTs,
-          formatProgressMessage("thinking", {}),
+          THINKING_HEADER,
         );
 
         const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
         const result = await runAgent(cleanMessage, async (toolName, input) => {
           if (thinkingTs) {
-            await updateMessage(channel, thinkingTs, formatProgressMessage(toolName, input));
+            await updateMessage(channel, thinkingTs, buildThinkingMessage(toolName, input));
           }
         });
 
         // Update thinking message to "composing" before posting answer
         if (thinkingTs) {
-          await updateMessage(channel, thinkingTs, formatProgressMessage("composing", {}));
+          await updateMessage(channel, thinkingTs, buildThinkingMessage("composing", {}));
         }
 
         const text = toSlackMrkdwn(result.text);
@@ -165,18 +165,18 @@ export async function POST(request: NextRequest) {
 
         const thinkTs = await replyInThread(
           channel, threadTs,
-          formatProgressMessage("thinking", {}),
+          THINKING_HEADER,
         );
 
         const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
         const result = await runAgent(cleanMessage, async (toolName, input) => {
           if (thinkTs) {
-            await updateMessage(channel, thinkTs, formatProgressMessage(toolName, input));
+            await updateMessage(channel, thinkTs, buildThinkingMessage(toolName, input));
           }
         });
 
         if (thinkTs) {
-          await updateMessage(channel, thinkTs, formatProgressMessage("composing", {}));
+          await updateMessage(channel, thinkTs, buildThinkingMessage("composing", {}));
         }
 
         const text = toSlackMrkdwn(result.text);
