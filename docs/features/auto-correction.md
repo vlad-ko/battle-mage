@@ -1,6 +1,6 @@
 # Auto-Correction
 
-When a user reacts with :thumbsdown: to a bot answer, the auto-correction system analyzes the answer's context and takes corrective actions automatically.
+When a user reacts with :thumbsdown: to a bot answer, the auto-correction system analyzes the answer's context and guides the user through providing a correction.
 
 ## Overview
 
@@ -10,9 +10,12 @@ The flow:
 2. Route handler fetches the Q&A context (stored in KV when the answer was posted)
 3. Route handler fetches all current KB entries
 4. `buildCorrectionActions()` analyzes references and KB entries
-5. Stale KB entries are removed from KV
+5. Possibly related KB entries are **flagged** to the user (not auto-removed)
 6. Stale doc references are flagged to the user
-7. Bot replies asking what was wrong
+7. A pending correction state is stored in KV for this thread
+8. Bot replies listing flagged items and asks "What was wrong?"
+9. The user's next reply is saved directly to the knowledge base (not through the agent loop)
+10. Negative feedback entry is recorded with the actual correction text
 
 ## How Stale KB Entries Are Identified
 
@@ -23,8 +26,8 @@ The heuristic is keyword matching between the answer's references and KB entry t
 When the bot answered the question, it collected references -- the file paths it actually read. The auto-correction system extracts meaningful keywords from those paths:
 
 ```
-Reference: "app/Services/Auth/LoginService.php"
-Keywords:  ["app", "services", "auth", "login", "service", "php"]
+Reference: "src/services/auth/login.ts"
+Keywords:  ["src", "services", "auth", "login"]
 ```
 
 Keywords are extracted by:
@@ -36,36 +39,49 @@ Keywords are extracted by:
 
 ### Step 2: Match Against KB Entries
 
-Each KB entry's text is tokenized the same way. If any token in the KB entry matches a keyword from the references (excluding common stop words like "the", "is", "in", "not", "and"), the entry is flagged as potentially stale.
+Each KB entry's text is tokenized the same way. If any token in the KB entry matches a keyword from the references (excluding common stop words like "the", "is", "in", "not", "and"), the entry is flagged as possibly related.
 
 Example:
 
 ```
 References: ["src/controllers/AuthController.ts"]
-  -> keywords: ["app", "http", "controllers", "auth", "controller", "php"]
+  -> keywords: ["src", "controllers", "auth", "controller"]
 
 KB entry: "Auth uses JWT tokens, not session cookies"
   -> tokens: ["auth", "uses", "jwt", "tokens", "not", "session", "cookies"]
 
-Match: "auth" appears in both -> entry flagged as stale
+Match: "auth" appears in both -> entry flagged
 ```
 
-### Step 3: Remove Stale Entries
+### Step 3: Flag for User Review (NOT auto-remove)
 
-Flagged KB entries are removed from the Vercel KV sorted set via `removeKnowledgeEntry()`. This is an exact match on the entry text -- the function scans all members of the sorted set to find and remove the matching one.
+Flagged KB entries are shown to the user but **not automatically removed**. This is a deliberate design choice -- a thumbs-down might mean the answer was formatted badly, or the question was misunderstood, not necessarily that the KB entries are wrong.
+
+The user sees the flagged entries and can reply to confirm which (if any) should be removed.
 
 ## How Doc References Are Flagged
 
-If the answer referenced documentation files (paths ending in `.md` or starting with `docs/`), those are flagged as potentially outdated. The bot does not auto-create issues -- it informs the user:
+If the answer referenced documentation files (paths ending in `.md` or starting with `docs/`), those are flagged as potentially outdated:
 
 ```
-Auto-corrections taken:
-- Removed stale KB entry: "Auth uses JWT"
-- These docs may be outdated: `docs/auth.md` -- reply "create issue" if
-  you'd like me to propose a doc-fix issue
+Docs referenced: `docs/auth-guide.md`
 ```
 
-This gives the user the choice to file an issue for updating the documentation.
+## Pending Correction State
+
+When a 👎 is received, a `pending-correction` key is stored in KV with a 24-hour TTL:
+
+```json
+{
+  "question": "how does auth work?",
+  "references": ["src/services/auth/login.ts"],
+  "flaggedKB": ["Auth uses JWT tokens, not session cookies"]
+}
+```
+
+This state is checked in the thread follow-up handler. When detected, the user's next reply is saved directly to the knowledge base via `saveKnowledgeEntry()` -- it does NOT go through the full agent loop. This ensures corrections are captured as KB entries, not treated as new questions.
+
+After saving, the pending state is cleared and a negative feedback entry is written with the actual correction text.
 
 ## The Correction Actions Structure
 
@@ -73,9 +89,9 @@ This gives the user the choice to file an issue for updating the documentation.
 
 ```typescript
 interface CorrectionActions {
-  kbEntriesToRemove: KnowledgeEntry[];  // KB entries to delete
-  docsToProposeFix: string[];           // doc paths to flag
-  hasActions: boolean;                  // true if either array is non-empty
+  kbEntriesToFlag: KnowledgeEntry[];  // KB entries to show the user
+  docsToProposeFix: string[];         // doc paths to flag
+  hasActions: boolean;                // true if either array is non-empty
 }
 ```
 
@@ -88,31 +104,36 @@ When a user thumbs-down an answer that referenced auth files and the KB had a ma
 ```
 :thinking_face: Thanks for the feedback.
 
-Auto-corrections taken:
-- Removed stale KB entry: "Auth uses JWT, not session cookies"
-- These docs may be outdated: `docs/auth-guide.md` -- reply "create issue"
-  if you'd like me to propose a doc-fix issue
+Possibly related KB entries (reply to confirm removal):
+  • "Auth uses JWT tokens, not session cookies"
 
-What was wrong with this answer? Reply here and I'll save the correction
-to my knowledge base.
+Docs referenced: `docs/auth-guide.md`
+
+What was wrong? Reply here and I'll save the correction.
 ```
 
-If there are no auto-corrections to take (no matching KB entries, no doc references), the user sees a simpler message:
+The user replies with the correction:
+
+```
+User: Auth actually uses session cookies now, we switched in v4
+Bot: :white_check_mark: Saved to knowledge base: "Auth actually uses session cookies now, we switched in v4"
+```
+
+If there are no flagged items, the user sees a simpler message:
 
 ```
 :thinking_face: Thanks for the feedback.
 
-What was wrong with this answer? Reply here and I'll save the correction
-to my knowledge base.
+What was wrong? Reply here and I'll save the correction.
 ```
 
-## Limitations
+## Why Flag Instead of Auto-Remove?
 
 The keyword matching heuristic is deliberately broad. It can produce false positives:
 
-- A KB entry about "AuthController response format" would be flagged as stale if the answer referenced any auth file, even if the KB entry is still correct.
+- A KB entry about "AuthController response format" would be flagged if the answer referenced any auth file, even if the KB entry is still correct.
 
-This is by design. When a user signals an answer was wrong, it is better to be aggressive about removing potentially stale data. The user can re-teach the bot the correct information in the follow-up.
+Auto-removing on a false positive would destroy valid knowledge. By flagging instead, the user stays in control -- they confirm what's actually wrong, and the correction is specific and meaningful.
 
 ## Testing
 
@@ -122,5 +143,5 @@ The auto-correction logic is tested in `src/lib/auto-correct.test.ts`. All three
 - KB entries matching by topic keyword (not exact path)
 - No matches (empty actions)
 - Doc file references detected and flagged
-- Both KB removals and doc flags in the same correction
+- Both KB flags and doc flags in the same correction
 - The `hasActions` flag
