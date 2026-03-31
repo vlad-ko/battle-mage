@@ -27,6 +27,8 @@ const TOOL_FORMATS: Record<string, (input: ToolInput) => string> = {
     return `👓 _Reading ${path}..._`;
   },
   list_issues: () => "🎫 _Looking up issues..._",
+  list_commits: () => "📜 _Checking recent commits..._",
+  list_prs: () => "🔀 _Checking recent PRs..._",
   create_issue: () => "📝 _Drafting issue proposal..._",
   save_knowledge: () => "💾 _Saving to knowledge base..._",
   composing: () => "✏️ _Composing answer..._",

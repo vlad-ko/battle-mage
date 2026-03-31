@@ -141,6 +141,44 @@ export async function getPullRequest(prNumber: number) {
   };
 }
 
+// ── Recent commits ───────────────────────────────────────────────────
+export async function listRecentCommits(perPage: number = 10) {
+  const { data } = await octokit.rest.repos.listCommits({
+    owner: owner(),
+    repo: repo(),
+    per_page: perPage,
+  });
+  return data.map((c) => ({
+    sha: c.sha.slice(0, 7),
+    message: c.commit.message.split("\n")[0],
+    date: c.commit.author?.date?.split("T")[0] ?? "unknown",
+    url: c.html_url,
+  }));
+}
+
+// ── Recent PRs ───────────────────────────────────────────────────────
+export async function listRecentPRs(
+  state: "open" | "closed" | "all" = "all",
+  perPage: number = 10,
+) {
+  const { data } = await octokit.rest.pulls.list({
+    owner: owner(),
+    repo: repo(),
+    state,
+    sort: "updated",
+    direction: "desc",
+    per_page: perPage,
+  });
+  return data.map((pr) => ({
+    number: pr.number,
+    title: pr.title,
+    state: pr.state,
+    merged: pr.merged_at !== null,
+    updated_at: pr.updated_at?.split("T")[0] ?? "unknown",
+    url: pr.html_url,
+  }));
+}
+
 // ── Repo tree (for index building) ───────────────────────────────────
 export async function getRepoTree(): Promise<{ path: string; type: string }[]> {
   const sha = await getHeadSha();

@@ -5,12 +5,16 @@ import { listIssuesTool, executeListIssues } from "./list-issues";
 import { createIssueTool, extractIssueProposal } from "./create-issue";
 import type { IssueProposal } from "./create-issue";
 import { saveKnowledgeTool, executeSaveKnowledge } from "./save-knowledge";
+import { listCommitsTool, executeListCommits } from "./list-commits";
+import { listPRsTool, executeListPRs } from "./list-prs";
 
 // ── Tool registry ─────────────────────────────────────────────────────
 export const tools: Tool[] = [
   searchCodeTool,
   readFileTool,
   listIssuesTool,
+  listCommitsTool,
+  listPRsTool,
   createIssueTool,
   saveKnowledgeTool,
 ];
@@ -73,6 +77,10 @@ export async function executeTool(
       };
     case "save_knowledge":
       return { type: "text", text: await executeSaveKnowledge(input) };
+    case "list_commits":
+      return { type: "text", text: await executeListCommits(input) };
+    case "list_prs":
+      return { type: "text", text: await executeListPRs(input) };
     default:
       return { type: "text", text: `Unknown tool: ${name}` };
   }

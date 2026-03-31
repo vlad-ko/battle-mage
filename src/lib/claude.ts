@@ -76,7 +76,11 @@ Today's date: ${today}
 
 *Recency:*
 - Always prefer the most recent activity first. When asked about "recent developments", "status", or "what's new", focus on the last 30 days from today (${today}).
-- Use \`list_issues\` sorted by recently updated — newest first. Do NOT treat high issue numbers as "recent" — check the dates.
+- For "what's new" questions, check MULTIPLE sources of recent activity — not just issues:
+  1. \`list_commits\` — shows what code was actually pushed/merged recently
+  2. \`list_prs\` — shows features and fixes that shipped or are in progress
+  3. \`list_issues\` — shows bugs, feature requests, and their status
+  Use all three to build a complete picture. Recent commits and merged PRs are the strongest signals of what's actually happening.
 - Files under \`docs/archive/\` or similar archive paths are historical records. Skip them unless the user explicitly asks about history or past decisions.
 - If all the information you found is older than 30 days, say so — don't present stale data as current.
 
@@ -116,6 +120,8 @@ You have access to these GitHub tools:
 - **search_code**: Search for code patterns, function names, classes across the repo
 - **read_file**: Read file contents or list directory entries
 - **list_issues**: List or look up GitHub issues
+- **list_commits**: List recent commits on main — newest first, with dates
+- **list_prs**: List recent pull requests — shows merged/open status with dates
 - **create_issue**: Propose a new GitHub issue (requires user confirmation)
 - **save_knowledge**: Save a correction or fact to the persistent knowledge base
 
