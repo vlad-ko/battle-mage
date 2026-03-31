@@ -18,6 +18,7 @@ import { getAllKnowledge } from "@/lib/knowledge";
 import { buildCorrectionActions } from "@/lib/auto-correct";
 import { buildThinkingMessage, THINKING_HEADER } from "@/lib/progress";
 import { toSlackMrkdwn } from "@/lib/mrkdwn";
+import { createRequestLogger } from "@/lib/logger";
 
 /**
  * Slack Events API webhook handler.
@@ -30,6 +31,8 @@ import { toSlackMrkdwn } from "@/lib/mrkdwn";
  * and process the AI + GitHub calls asynchronously via after().
  */
 export async function POST(request: NextRequest) {
+  const rlog = createRequestLogger();
+
   // Read raw body for signature verification, then parse
   const rawBody = await request.text();
   const body = JSON.parse(rawBody);
@@ -44,6 +47,7 @@ export async function POST(request: NextRequest) {
   const signature = request.headers.get("x-slack-signature");
 
   if (!verifySlackSignature(rawBody, timestamp, signature)) {
+    rlog("signature_rejected");
     return new NextResponse("Invalid signature", { status: 401 });
   }
 
@@ -64,6 +68,7 @@ export async function POST(request: NextRequest) {
     const channel: string = event.channel;
     const threadTs: string = event.thread_ts || event.ts;
     const userMessage: string = event.text;
+    rlog("mention_received", { channel, user: event.user, question: userMessage.slice(0, 100) });
 
     // Ack now, process after response is sent (Vercel keeps fn alive)
     after(async () => {
@@ -80,6 +85,7 @@ export async function POST(request: NextRequest) {
             await updateMessage(channel, thinkingTs, buildThinkingMessage(toolName, input));
           }
         });
+        rlog("agent_complete", { rounds: result.references.length, hasProposal: !!result.issueProposal, refCount: result.references.length });
 
         // Update thinking message to "composing" before posting answer
         if (thinkingTs) {
@@ -115,8 +121,10 @@ export async function POST(request: NextRequest) {
               "React with :white_check_mark: to create this issue, or ignore to cancel.",
             ].join("\n") + refsFooter,
           );
+          rlog("answer_posted", { channel, threadTs });
         } else {
           const replyTs = await replyInThread(channel, threadTs, text + refsFooter);
+          rlog("answer_posted", { channel, threadTs });
 
           // Store Q&A context so 👍/👎 reactions can reference it
           if (replyTs) {
@@ -129,7 +137,7 @@ export async function POST(request: NextRequest) {
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
-        console.error("Battle Mage error:", msg);
+        rlog("error", { flow: "mention", message: msg });
         await replyInThread(
           channel,
           threadTs,
@@ -157,6 +165,7 @@ export async function POST(request: NextRequest) {
     const channel: string = event.channel;
     const threadTs: string = event.thread_ts;
     const userMessage: string = event.text;
+    rlog("thread_followup", { channel, threadTs });
 
     after(async () => {
       try {
@@ -181,6 +190,7 @@ export async function POST(request: NextRequest) {
 
           // Clear the pending state
           await kv.del(pendingKey);
+          rlog("correction_saved", { entry: userMessage.slice(0, 100) });
 
           await replyInThread(
             channel,
@@ -193,6 +203,7 @@ export async function POST(request: NextRequest) {
         // Only respond if the bot is already in this thread
         const bid = botId || (await getBotUserId());
         if (!bid || !(await isBotInThread(channel, threadTs, bid))) return;
+        rlog("followup_agent_start", { channel, threadTs });
 
         const thinkTs = await replyInThread(
           channel, threadTs,
@@ -251,7 +262,7 @@ export async function POST(request: NextRequest) {
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
-        console.error("Battle Mage thread follow-up error:", msg);
+        rlog("error", { flow: "thread_followup", message: msg });
         await replyInThread(
           channel,
           threadTs,
@@ -271,6 +282,7 @@ export async function POST(request: NextRequest) {
     const channel: string = item.channel;
     const messageTs: string = item.ts;
     const reactingUser: string = event.user;
+    rlog("reaction_checkmark", { channel, messageTs });
 
     after(async () => {
       try {
@@ -296,6 +308,8 @@ export async function POST(request: NextRequest) {
           proposal.labels,
         );
 
+        rlog("issue_created", { number: issue.number });
+
         // Reply in the same thread with the new issue link
         const threadTs = msg.thread_ts || messageTs;
         await replyInThread(
@@ -305,7 +319,7 @@ export async function POST(request: NextRequest) {
         );
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : "Unknown error";
-        console.error("Battle Mage reaction handler error:", errMsg);
+        rlog("error", { flow: "reaction_checkmark", message: errMsg });
         // Best-effort reply — use thread_ts if available
         try {
           const msg = await fetchMessage(channel, messageTs);
@@ -331,6 +345,7 @@ export async function POST(request: NextRequest) {
 
     const channel: string = item.channel;
     const messageTs: string = item.ts;
+    rlog("reaction_thumbsup", { channel, messageTs });
 
     after(async () => {
       try {
@@ -350,6 +365,7 @@ export async function POST(request: NextRequest) {
           detail: `👍 for: "${context.question.slice(0, 80)}" — used: ${context.references.join(", ") || "general knowledge"}`,
           timestamp: new Date().toISOString().split("T")[0],
         });
+        rlog("feedback_positive", { question: context.question.slice(0, 80) });
 
         // Silent acknowledgment — just add a checkmark reaction
         try {
@@ -357,7 +373,7 @@ export async function POST(request: NextRequest) {
           await slack.reactions.add({ channel, name: "brain", timestamp: messageTs });
         } catch { /* already reacted or can't react — ignore */ }
       } catch (err) {
-        console.error("Battle Mage 👍 handler error:", err instanceof Error ? err.message : err);
+        rlog("error", { flow: "reaction_thumbsup", message: err instanceof Error ? err.message : String(err) });
       }
     });
 
@@ -371,6 +387,7 @@ export async function POST(request: NextRequest) {
 
     const channel: string = item.channel;
     const messageTs: string = item.ts;
+    rlog("reaction_thumbsdown", { channel, messageTs });
 
     after(async () => {
       try {
@@ -388,6 +405,7 @@ export async function POST(request: NextRequest) {
         // Flag possibly related KB entries and docs (don't auto-remove)
         const kbEntries = await getAllKnowledge();
         const actions = buildCorrectionActions(context.references, kbEntries);
+        rlog("feedback_negative", { kbFlagged: actions.kbEntriesToFlag.length, docsFlagged: actions.docsToProposeFix.length });
 
         const notes: string[] = [];
 
@@ -420,7 +438,7 @@ export async function POST(request: NextRequest) {
           `:thinking_face: Thanks for the feedback.${flagText}\n\nWhat was wrong? Reply here and I'll save the correction.`,
         );
       } catch (err) {
-        console.error("Battle Mage 👎 handler error:", err instanceof Error ? err.message : err);
+        rlog("error", { flow: "reaction_thumbsdown", message: err instanceof Error ? err.message : String(err) });
       }
     });
 

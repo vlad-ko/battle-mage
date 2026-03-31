@@ -1,4 +1,5 @@
 import { kv } from "@vercel/kv";
+import { log } from "@/lib/logger";
 import {
   type BattleMageConfig,
   parseBattleMageConfig,
@@ -154,13 +155,15 @@ export async function getOrRebuildIndex(): Promise<string> {
     const storedSha = await kv.get<string>(INDEX_SHA_KEY);
 
     if (!isIndexStale(currentSha, storedSha)) {
-      // Index is fresh — return cached summary
+      log("index_cache_hit", { sha: currentSha });
       const summary = await kv.get<string>(INDEX_SUMMARY_KEY);
       return summary ?? "";
     }
 
     // Load config and rebuild index
+    const startTime = Date.now();
     const config = await fetchBattleMageConfig();
+    log("config_loaded", { hasConfig: Object.keys(config.paths).length > 0, pathCount: Object.keys(config.paths).length });
     const paths = await fetchRepoTree();
     const topics = classifyTopics(paths, config);
     const summary = buildIndexSummary(topics);
@@ -172,10 +175,10 @@ export async function getOrRebuildIndex(): Promise<string> {
     await kv.set(INDEX_CONFIG_KEY, JSON.stringify(config));
     await kv.set(INDEX_BUILT_AT_KEY, new Date().toISOString());
 
+    log("index_rebuilt", { sha: currentSha, topicCount: Object.keys(topics).length, fileCount: paths.length, duration_ms: Date.now() - startTime });
     return summary;
   } catch (err) {
-    // If index build fails, return empty — agent falls back to search
-    console.error("Repo index build failed:", err);
+    log("index_build_error", { message: err instanceof Error ? err.message : String(err) });
     return "";
   }
 }

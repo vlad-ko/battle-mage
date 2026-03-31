@@ -1,6 +1,6 @@
 # Battle Mage (@bm)
 
-A Slack agent with Claude AI intelligence and GitHub repo access. Invoke via `@bm` in Slack to ask questions about your codebase.
+A Slack agent with Claude AI intelligence and full GitHub repo access — reads code, docs, issues, PRs, and commits. Creates issues on request. Invoke via `@bm` in Slack.
 
 ## Architecture
 
@@ -54,6 +54,7 @@ src/
     auto-correct.ts       — Stale KB entry detection and doc reference flagging
     progress.ts           — Progress message formatter (tool → emoji + status)
     mrkdwn.ts             — Markdown → Slack mrkdwn converter
+    logger.ts             — Structured JSON logging with request correlation IDs
     references.ts         — Typed references: ranking, dedup, emoji formatting
   tools/
     index.ts              — Tool registry and executor
