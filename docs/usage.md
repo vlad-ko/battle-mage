@@ -130,20 +130,30 @@ The bot uses the `save_knowledge` tool to persist the correction in Vercel KV. F
 
 React with :thumbsdown: to the bot's answer. The bot will:
 
-1. Record negative feedback
-2. Check for stale knowledge base entries related to the answer and remove them
-3. Check if the answer referenced documentation files that may be outdated
+1. Flag any KB entries that might be related to the bad answer (shown to you for review, not auto-removed)
+2. Flag any documentation files that were referenced
+3. Store a pending correction state for this thread
 4. Reply asking what was wrong
 
-Then explain the issue in the thread, and the bot will save the correction.
+Then reply with the correction -- your reply is saved directly to the knowledge base (it does NOT go through the agent loop). The bot confirms the save.
+
+## Feedback Hint
+
+Every bot answer includes a subtle hint below the references:
+
+```
+_React with 👍 or 👎 to help me give better answers in the future._
+```
+
+This teaches new users that the feedback mechanism exists.
 
 ## Feedback Reactions
 
 React to any bot answer with:
 
-- **:thumbsup:** -- The bot records positive feedback silently (adds a :brain: reaction to acknowledge). Over time, positive feedback helps the bot understand what answer style works well for your team.
+- **:thumbsup:** -- The bot records positive feedback silently (adds a :brain: reaction to acknowledge). The feedback includes the question text so the system prompt can reference what answer patterns work well.
 
-- **:thumbsdown:** -- The bot takes corrective action (see above) and asks for more detail.
+- **:thumbsdown:** -- The bot flags possibly related KB entries and docs, asks what was wrong, and saves your correction directly to the knowledge base when you reply. See [auto-correction](features/auto-correction.md) for the full flow.
 
 Feedback is stored in Vercel KV and injected into the system prompt. The bot sees a summary of what worked and what did not when composing future answers.
 
