@@ -52,6 +52,37 @@ describe("classifyTopics", () => {
     expect(topics["api"]).toContain("src/controllers/UserController.ts");
   });
 
+  it("classifies security scanning files", () => {
+    const paths = [
+      ".github/workflows/security-scan.yml",
+      "app/Security/IpBlocker.ts",
+      "infra/scc-sync.tf",
+    ];
+    const topics = classifyTopics(paths);
+    expect(topics["security"]).toContain(".github/workflows/security-scan.yml");
+    expect(topics["security"]).toContain("app/Security/IpBlocker.ts");
+    expect(topics["security"]).toContain("infra/scc-sync.tf");
+  });
+
+  it("classifies CI security tools by name", () => {
+    const paths = [
+      ".github/workflows/gitguardian.yml",
+      ".github/workflows/checkov-scan.yml",
+      ".github/workflows/trivy.yml",
+    ];
+    const topics = classifyTopics(paths);
+    expect(topics["security"]).toContain(".github/workflows/gitguardian.yml");
+    expect(topics["security"]).toContain(".github/workflows/checkov-scan.yml");
+    expect(topics["security"]).toContain(".github/workflows/trivy.yml");
+  });
+
+  it("security files can also appear in ci-cd topic", () => {
+    const paths = [".github/workflows/security-scan.yml"];
+    const topics = classifyTopics(paths);
+    expect(topics["security"]).toContain(".github/workflows/security-scan.yml");
+    expect(topics["ci-cd"]).toContain(".github/workflows/security-scan.yml");
+  });
+
   it("classifies configuration files", () => {
     const paths = ["config/app.json", ".env.example", "docker-compose.yml"];
     const topics = classifyTopics(paths);

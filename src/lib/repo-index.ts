@@ -18,6 +18,7 @@ const TOPIC_RULES: [string, RegExp][] = [
   ["documentation", /\.md$|docs?\//i],
   ["ci-cd", /\.github\/workflows\/|\.circleci|\.gitlab-ci|jenkinsfile|buildkite/i],
   ["api", /routes?\b|controller|endpoint|api\//i],
+  ["security", /security|firewall|waf|ip.?block|rate.?limit|encrypt|cipher|tls|ssl|audit|compliance|soc2|gitguardian|ggshield|checkov|bridgecrew|snyk|trivy|grype|codeql|semgrep|scc|vulnerability|pentest/i],
   ["configuration", /config\/|\.env|docker-compose|\.ya?ml$|\.json$/i],
 ];
 
