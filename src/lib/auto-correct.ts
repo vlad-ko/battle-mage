@@ -14,7 +14,7 @@ import type { KnowledgeEntry } from "./knowledge";
 // ── Identify stale KB entries ────────────────────────────────────────
 // A KB entry is "stale" if it mentions the same files or topics as the
 // answer's references. This is a heuristic — it catches entries like
-// "Auth uses Sanctum" when the answer referenced auth files.
+// "Auth uses JWT" when the answer referenced auth files.
 
 function extractKeywords(path: string): string[] {
   // Extract meaningful words from a file path, splitting camelCase/PascalCase
