@@ -236,8 +236,15 @@ If the bot does not respond, check the [Troubleshooting Guide](./troubleshooting
 - All environment variables should be set in Vercel's encrypted environment variable store, not committed to the repo.
 - The `.env.local` file is in `.gitignore` and should never be committed.
 
+## Optional: Configure Path Annotations
+
+Add a `.battle-mage.json` file to the root of your **target repo** to tell the agent which areas to prioritize, deprioritize, or ignore. This is optional — the agent works fine without it, but annotations make it smarter about your specific codebase.
+
+See [Path Annotations](./features/config.md) for the full guide.
+
 ## Next Steps
 
 - [Usage Guide](./usage.md) -- how to use the bot day-to-day
 - [Architecture](./architecture.md) -- how the internals work
+- [Path Annotations](./features/config.md) -- configure trust levels per path
 - [Troubleshooting](./troubleshooting.md) -- common issues and fixes

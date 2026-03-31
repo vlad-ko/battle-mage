@@ -16,6 +16,7 @@ A Slack agent powered by Claude AI that answers questions about your GitHub code
 - **Auto-correction** — removes stale knowledge entries when answers get 👎
 - **Live progress** — shows what the agent is doing step by step with contextual emoji
 - **Recency-first** — prefers recent commits, PRs, and issues over historical data
+- **Configurable trust** — `.battle-mage.json` in your repo lets you annotate paths as core, historic, vendor, or excluded
 
 ## Quick Start
 
@@ -48,6 +49,7 @@ See the [full setup guide](docs/setup.md) for Slack app creation, GitHub PAT, Ve
 | Source-of-Truth Hierarchy | [docs/features/source-hierarchy.md](docs/features/source-hierarchy.md) |
 | Auto-Correction on 👎 | [docs/features/auto-correction.md](docs/features/auto-correction.md) |
 | Live Progress Updates | [docs/features/progress-ux.md](docs/features/progress-ux.md) |
+| Path Annotations (.battle-mage.json) | [docs/features/config.md](docs/features/config.md) |
 
 ## Environment Variables
 
@@ -75,7 +77,7 @@ For the full architecture walkthrough, see [docs/architecture.md](docs/architect
 ## Testing
 
 ```bash
-npm test              # 113 tests across 7 files
+npm test              # 142 tests across 8 files
 npm run test:watch    # Watch mode
 npm run typecheck     # TypeScript strict
 ```

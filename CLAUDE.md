@@ -49,6 +49,7 @@ src/
     github.ts             — Octokit client (search, read, issues, PRs, commits, tree)
     knowledge.ts          — Knowledge base (Vercel KV sorted set)
     feedback.ts           — Feedback storage (Vercel KV) and Q&A context
+    config.ts             — .battle-mage.json loader (path annotations with graduated trust)
     repo-index.ts         — Repository topic index (lazy rebuild on SHA change)
     auto-correct.ts       — Stale KB entry detection and doc reference flagging
     progress.ts           — Progress message formatter (tool → emoji + status)
