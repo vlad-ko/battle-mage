@@ -6,6 +6,7 @@ import { getKnowledgeAsMarkdown } from "@/lib/knowledge";
 import { getFeedbackAsMarkdown } from "@/lib/feedback";
 import { getOrRebuildIndex, getCachedConfig } from "@/lib/repo-index";
 import { log } from "@/lib/logger";
+import { shouldWarnBudget, shouldForceStop } from "@/lib/time-budget";
 import type { BattleMageConfig } from "@/lib/config";
 
 // ── Anthropic client ──────────────────────────────────────────────────
@@ -265,7 +266,25 @@ export async function runAgent(
   const systemPrompt = await buildSystemPrompt();
   log("agent_start", { promptLength: systemPrompt.length, question: userMessage.slice(0, 100) });
 
+  let warned = false;
+
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    // Time budget check — force-stop if over 5 minutes
+    if (shouldForceStop(startTime)) {
+      log("agent_timeout", { rounds: round, duration_ms: Date.now() - startTime });
+      const seen = new Set<string>();
+      const finalRefs = allReferences.filter((r) => {
+        if (seen.has(r.url)) return false;
+        seen.add(r.url);
+        return true;
+      });
+      return {
+        text: "I've been working on this for a while and want to give you what I have so far rather than keep you waiting. Here's my answer based on what I've found:\n\n_I ran out of time before completing a thorough analysis. Ask a follow-up question if you need more detail on a specific area._",
+        issueProposal,
+        references: finalRefs,
+      };
+    }
+
     const response = await anthropic.messages.create({
       model: MODEL,
       max_tokens: 4096,
@@ -362,6 +381,17 @@ export async function runAgent(
           is_error: true,
         });
       }
+    }
+
+    // Inject time budget warning at 80% — tell Claude to wrap up
+    if (!warned && shouldWarnBudget(startTime)) {
+      warned = true;
+      log("agent_budget_warning", { round, elapsed_ms: Date.now() - startTime });
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: toolResults[toolResults.length - 1]?.tool_use_id || "system",
+        content: "[SYSTEM] You are running low on time. Synthesize your answer NOW with what you have. Do not make more tool calls unless absolutely critical.",
+      } as Anthropic.ToolResultBlockParam);
     }
 
     messages.push({ role: "user", content: toolResults });
