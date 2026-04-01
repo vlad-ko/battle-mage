@@ -19,6 +19,8 @@ import { buildCorrectionActions } from "@/lib/auto-correct";
 import { buildThinkingMessage, THINKING_HEADER } from "@/lib/progress";
 import { toSlackMrkdwn } from "@/lib/mrkdwn";
 import { createRequestLogger } from "@/lib/logger";
+import { getCachedTopics } from "@/lib/repo-index";
+import { matchTopicsToQuestion, buildQuestionHints } from "@/lib/topic-match";
 
 /**
  * Slack Events API webhook handler.
@@ -80,7 +82,16 @@ export async function POST(request: NextRequest) {
         );
 
         const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
-        const result = await runAgent(cleanMessage, async (toolName, input) => {
+
+        // Pre-match question against topic index for concrete file hints
+        const topics = await getCachedTopics();
+        const topicMatches = matchTopicsToQuestion(cleanMessage, topics);
+        const augmentedMessage = buildQuestionHints(cleanMessage, topicMatches);
+        if (topicMatches.length > 0) {
+          rlog("topic_hints_injected", { topics: topicMatches.map((m) => m.topic), fileCount: topicMatches.reduce((s, m) => s + m.paths.length, 0) });
+        }
+
+        const result = await runAgent(augmentedMessage, async (toolName, input) => {
           if (thinkingTs) {
             await updateMessage(channel, thinkingTs, buildThinkingMessage(toolName, input));
           }
@@ -211,7 +222,13 @@ export async function POST(request: NextRequest) {
         );
 
         const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
-        const result = await runAgent(cleanMessage, async (toolName, input) => {
+
+        // Pre-match for thread follow-ups too
+        const followupTopics = await getCachedTopics();
+        const followupMatches = matchTopicsToQuestion(cleanMessage, followupTopics);
+        const followupMessage = buildQuestionHints(cleanMessage, followupMatches);
+
+        const result = await runAgent(followupMessage, async (toolName, input) => {
           if (thinkTs) {
             await updateMessage(channel, thinkTs, buildThinkingMessage(toolName, input));
           }
