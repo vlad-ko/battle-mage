@@ -59,7 +59,7 @@ describe("formatReferences", () => {
     expect(bullets?.length).toBe(1);
   });
 
-  it("caps at MAX_REFERENCES and shows overflow count", () => {
+  it("caps at MAX_REFERENCES silently — no overflow message", () => {
     const refs = Array.from({ length: 18 }, (_, i) => ({
       label: `file${i}.ts`,
       url: `https://github.com/a/b/blob/main/file${i}.ts`,
@@ -68,15 +68,6 @@ describe("formatReferences", () => {
     const result = formatReferences(refs);
     const bullets = result.match(/•/g);
     expect(bullets?.length).toBe(MAX_REFERENCES);
-    expect(result).toMatch(/and \d+ more/);
-  });
-
-  it("does not show overflow when refs fit within limit", () => {
-    const refs = [
-      { label: "a.ts", url: "https://example.com/a.ts", type: "file" as const },
-      { label: "b.ts", url: "https://example.com/b.ts", type: "file" as const },
-    ];
-    const result = formatReferences(refs);
     expect(result).not.toContain("more");
   });
 

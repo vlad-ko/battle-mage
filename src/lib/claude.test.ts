@@ -118,9 +118,11 @@ describe("assembleSystemPrompt", () => {
       expect(prompt).toContain("Dockerfile");
     });
 
-    it("omits repo index section when null", () => {
+    it("omits repo index data section when null", () => {
       const prompt = assembleSystemPrompt(baseArgs);
-      expect(prompt).not.toContain("Repository Map");
+      // The search strategy always mentions "Repository Map" as a concept.
+      // But the actual data section with topic listings should be absent.
+      expect(prompt).not.toContain("auto-generated index");
     });
 
     it("includes owner and repo in prompt", () => {
