@@ -188,6 +188,18 @@ export async function getOrRebuildIndex(): Promise<string> {
  * Get the cached config from KV (loaded during last index build).
  * Returns empty config if not yet built.
  */
+export async function getCachedTopics(): Promise<TopicMap> {
+  try {
+    const raw = await kv.get<string>(INDEX_TOPICS_KEY);
+    if (raw) {
+      return typeof raw === "string" ? JSON.parse(raw) : (raw as TopicMap);
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
 export async function getCachedConfig(): Promise<BattleMageConfig> {
   try {
     const raw = await kv.get<string>(INDEX_CONFIG_KEY);
