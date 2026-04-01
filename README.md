@@ -13,7 +13,7 @@ A Slack agent powered by Claude AI that reads your GitHub repo in real time — 
 - **Persistent knowledge base** — remembers corrections across conversations (Vercel KV)
 - **Repo index** — auto-built topic map for fast navigation, rebuilt lazily on push
 - **Source-of-truth hierarchy** — weights code over docs over KB when sources conflict
-- **Auto-correction** — removes stale knowledge entries when answers get 👎
+- **Auto-correction** — flags possibly stale knowledge entries on 👎, saves corrections directly to KB
 - **Live progress** — shows what the agent is doing step by step with contextual emoji
 - **Recency-first** — prefers recent commits, PRs, and issues over historical data
 - **Configurable trust** — `.battle-mage.json` in your repo lets you annotate paths as core, historic, vendor, or excluded
