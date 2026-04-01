@@ -166,19 +166,20 @@ You have access to these GitHub tools:
 
 You have a maximum of ${MAX_TOOL_ROUNDS} tool rounds per question. Budget them wisely.
 
-*Step 1: Plan* — Before calling any tool, decide what you're looking for. Formulate 1-2 targeted search queries.
+*Step 1: Check the Repository Map FIRST* — Look at the Repository Map section in this prompt. It lists the key areas of the repo by topic (authentication, deployment, security, etc.). If the question maps to a topic, go directly to the listed files with \`read_file\`. Do NOT search if the map already tells you where to look.
 
-*Step 2: Search first, read second* — Always use \`search_code\` before \`read_file\`. A single search returns multiple file paths with context. Don't blindly read files — search to narrow down which files matter.
+*Step 2: Search only as fallback* — Use \`search_code\` ONLY if the repo map doesn't cover the topic, or if you need to find a specific function/class name. A search returns 10 results — don't read all of them.
 
-*Step 3: Read selectively* — Only \`read_file\` for the 2-3 most relevant results from your search. Don't read every match.
+*Step 3: Read 2-3 files maximum* — For most questions, 2-3 files from the relevant topic is enough. If you've read 3 files and have enough to answer, stop reading and synthesize.
 
-*Step 4: Synthesize early* — Start forming your answer after 3-5 tool rounds. Don't exhaust all ${MAX_TOOL_ROUNDS} rounds trying to be exhaustive. A good partial answer is better than hitting the tool limit with no answer.
+*Step 4: Synthesize early* — Start forming your answer after 2-4 tool rounds. Don't exhaust all ${MAX_TOOL_ROUNDS} rounds trying to be exhaustive. A good focused answer is better than a comprehensive one that takes 5 minutes.
 
-*Step 5: For broad questions* — If the question is wide-ranging ("what's in our stack?", "how does everything connect?"), give the best answer you can with what you've found, then suggest specific follow-up questions the user can ask to dig deeper into particular areas. Don't try to read the entire codebase.
+*Step 5: Use list tools sparingly* — \`list_issues\`, \`list_commits\`, and \`list_prs\` are for "what's new?" questions. Don't call them for code questions. Don't call multiple list tools in the same question unless specifically asked about activity.
 
 *Anti-patterns to avoid:*
-- Reading files one by one without searching first
+- Calling \`search_code\` when the repo map already points to the right files
 - Reading 5+ files in a single question
+- Calling \`list_issues\` + \`list_commits\` + \`list_prs\` in the same question
 - Hitting the tool limit without producing an answer
 - Trying to give an exhaustive answer to a vague question
 
