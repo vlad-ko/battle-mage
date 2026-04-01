@@ -285,13 +285,24 @@ export async function runAgent(
       };
     }
 
-    const response = await anthropic.messages.create({
-      model: MODEL,
-      max_tokens: 4096,
-      system: systemPrompt,
-      tools,
-      messages,
-    });
+    let response;
+    try {
+      response = await anthropic.messages.create({
+        model: MODEL,
+        max_tokens: 4096,
+        system: systemPrompt,
+        tools,
+        messages,
+      });
+    } catch (apiErr) {
+      const msg = apiErr instanceof Error ? apiErr.message : String(apiErr);
+      log("agent_api_error", { round, message: msg.slice(0, 200) });
+      return {
+        text: "I ran into a technical issue processing this request. Try asking a simpler or more specific question.",
+        issueProposal,
+        references: [],
+      };
+    }
 
     // Deduplicate references by URL
     const dedupeRefs = () => {
@@ -383,15 +394,13 @@ export async function runAgent(
       }
     }
 
-    // Inject time budget warning at 80% — tell Claude to wrap up
-    if (!warned && shouldWarnBudget(startTime)) {
+    // Inject time budget warning by appending to the last tool result
+    if (!warned && shouldWarnBudget(startTime) && toolResults.length > 0) {
       warned = true;
       log("agent_budget_warning", { round, elapsed_ms: Date.now() - startTime });
-      toolResults.push({
-        type: "tool_result",
-        tool_use_id: toolResults[toolResults.length - 1]?.tool_use_id || "system",
-        content: "[SYSTEM] You are running low on time. Synthesize your answer NOW with what you have. Do not make more tool calls unless absolutely critical.",
-      } as Anthropic.ToolResultBlockParam);
+      const lastResult = toolResults[toolResults.length - 1];
+      const existingContent = typeof lastResult.content === "string" ? lastResult.content : "";
+      lastResult.content = existingContent + "\n\n[SYSTEM] You are running low on time. Synthesize your answer NOW with what you have. Do not make more tool calls unless absolutely critical.";
     }
 
     messages.push({ role: "user", content: toolResults });
