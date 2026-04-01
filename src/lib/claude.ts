@@ -192,7 +192,7 @@ You have a persistent knowledge base stored in Vercel KV (not in the GitHub repo
 - A user says "remember this" or similar
 
 *How to save:*
-- Use the \`save_knowledge\` tool immediately when corrected — don't wait
+- Use the \`save_knowledge\` tool IMMEDIATELY — do NOT search the repo first. When a user says "remember this", "memorize", "save to KB", or provides a correction, call save_knowledge as your very first action. No research needed.
 - Write entries as standalone facts, not conversation snippets
 - Be specific: include file paths, class names, version numbers
 - Good: "The auth module is in app/Services/Auth, not app/Http/Auth"
