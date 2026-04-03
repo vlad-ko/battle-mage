@@ -16,8 +16,9 @@ describe("isAddressedToOtherUser", () => {
     expect(isAddressedToOtherUser("<@B001> what's up?", botId)).toBe(false);
   });
 
-  it("returns true when message @mentions both bot and another user", () => {
-    expect(isAddressedToOtherUser("<@B001> <@U456> what do you think?", botId)).toBe(true);
+  it("returns false when bot is also mentioned alongside another user", () => {
+    // "@bm can you answer @cole's question?" — bot explicitly invoked, let app_mention handle it
+    expect(isAddressedToOtherUser("<@B001> <@U456> what do you think?", botId)).toBe(false);
   });
 
   it("returns true when message starts with @mention (direct address)", () => {

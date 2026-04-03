@@ -7,8 +7,9 @@
 const MENTION_RE = /<@([A-Z0-9]+)>/g;
 
 /**
- * Returns true if the message @mentions a specific user who is NOT the bot.
- * When a user writes "@vlad can you check this?", BM should stay silent.
+ * Returns true if the message @mentions a specific user who is NOT the bot,
+ * AND does NOT also @mention the bot. If the bot is mentioned too
+ * (e.g. "@bm can you answer @cole's question?"), let app_mention handle it.
  */
 export function isAddressedToOtherUser(
   text: string,
@@ -19,7 +20,11 @@ export function isAddressedToOtherUser(
   const mentions = [...text.matchAll(MENTION_RE)].map((m) => m[1]);
   if (mentions.length === 0) return false;
 
-  return mentions.some((id) => id !== botUserId);
+  const mentionsBot = mentions.includes(botUserId);
+  const mentionsOther = mentions.some((id) => id !== botUserId);
+
+  // Only skip if someone else is mentioned AND the bot is NOT
+  return mentionsOther && !mentionsBot;
 }
 
 // ── Conversation history builder ────────────────────────────────────
