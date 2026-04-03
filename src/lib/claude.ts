@@ -253,11 +253,19 @@ export interface AgentResult {
 
 export type ProgressCallback = (toolName: string, input: Record<string, unknown>) => void | Promise<void>;
 
+export interface ConversationTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export async function runAgent(
   userMessage: string,
   onProgress?: ProgressCallback,
+  conversationHistory?: ConversationTurn[],
 ): Promise<AgentResult> {
+  // Build messages: optional history + current user message
   const messages: Anthropic.MessageParam[] = [
+    ...(conversationHistory ?? []),
     { role: "user", content: userMessage },
   ];
 

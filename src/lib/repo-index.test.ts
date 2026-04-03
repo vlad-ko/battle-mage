@@ -105,6 +105,15 @@ describe("classifyTopics", () => {
     expect(allPaths).toContain("src/auth.ts");
   });
 
+  it("ignores .claude/ tooling paths", () => {
+    const paths = [".claude/skills/wizard/SKILL.md", ".claude/settings.json", "src/auth.ts"];
+    const topics = classifyTopics(paths);
+    const allPaths = Object.values(topics).flat();
+    expect(allPaths).not.toContain(".claude/skills/wizard/SKILL.md");
+    expect(allPaths).not.toContain(".claude/settings.json");
+    expect(allPaths).toContain("src/auth.ts");
+  });
+
   it("a file can appear in multiple topics", () => {
     const paths = ["tests/auth/login.test.ts"];
     const topics = classifyTopics(paths);

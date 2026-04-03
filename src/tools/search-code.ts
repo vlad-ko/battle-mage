@@ -1,6 +1,7 @@
 import type { Tool } from "@anthropic-ai/sdk/resources/messages";
 import { searchCode } from "@/lib/github";
 import type { Reference } from "@/tools";
+import { isToolingPath } from "@/lib/path-filter";
 
 export const searchCodeTool: Tool = {
   name: "search_code",
@@ -30,13 +31,16 @@ export async function executeSearchCode(
   const query = input.query as string;
   const results = await searchCode(query);
 
-  if (results.length === 0) {
+  // Filter out tooling paths (.claude/ etc.) — not project code
+  const filtered = results.filter((r) => !isToolingPath(r.path));
+
+  if (filtered.length === 0) {
     return { text: `No results found for "${query}".`, references: [] };
   }
 
   // Search results are discovery aids — don't add them as references.
   // Only files the agent actually reads (via read_file) should be referenced.
-  const text = results
+  const text = filtered
     .map((r) => `- \`${r.path}\` (score: ${r.score}) — ${r.url}`)
     .join("\n");
 

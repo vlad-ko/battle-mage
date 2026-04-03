@@ -5,7 +5,7 @@ import {
   replyInThread,
   fetchMessage,
   getBotUserId,
-  isBotInThread,
+  fetchThreadMessages,
   updateMessage,
   deleteMessage,
 } from "@/lib/slack";
@@ -21,6 +21,7 @@ import { toSlackMrkdwn } from "@/lib/mrkdwn";
 import { createRequestLogger } from "@/lib/logger";
 import { getCachedTopics } from "@/lib/repo-index";
 import { matchTopicsToQuestion, buildQuestionHints } from "@/lib/topic-match";
+import { isAddressedToOtherUser, buildConversationHistory } from "@/lib/thread-filter";
 
 /**
  * Slack Events API webhook handler.
@@ -74,14 +75,27 @@ export async function POST(request: NextRequest) {
 
     // Ack now, process after response is sent (Vercel keeps fn alive)
     after(async () => {
+      // Hoist thinkingTs so finally can always clean it up
+      let thinkingTs: string | undefined;
       try {
         // Post thinking message and capture its ts for live updates
-        const thinkingTs = await replyInThread(
+        thinkingTs = await replyInThread(
           channel, threadTs,
           THINKING_HEADER,
         );
 
         const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
+
+        // If this is a re-mention inside a thread, fetch history for context
+        // (fresh top-level mentions have no thread_ts — no history needed)
+        let mentionHistory: { role: "user" | "assistant"; content: string }[] | undefined;
+        if (event.thread_ts) {
+          const botId = await getBotUserId();
+          if (botId) {
+            const threadMsgs = await fetchThreadMessages(channel, threadTs);
+            mentionHistory = buildConversationHistory(threadMsgs, botId);
+          }
+        }
 
         // Pre-match question against topic index for concrete file hints
         const topics = await getCachedTopics();
@@ -95,7 +109,7 @@ export async function POST(request: NextRequest) {
           if (thinkingTs) {
             await updateMessage(channel, thinkingTs, buildThinkingMessage(toolName, input));
           }
-        });
+        }, mentionHistory);
         rlog("agent_complete", { rounds: result.references.length, hasProposal: !!result.issueProposal, refCount: result.references.length });
 
         // Update thinking message to "composing" before posting answer
@@ -110,6 +124,7 @@ export async function POST(request: NextRequest) {
         // Delete thinking message — the answer replaces it
         if (thinkingTs) {
           await deleteMessage(channel, thinkingTs);
+          thinkingTs = undefined; // Mark as cleaned up
         }
 
         if (result.issueProposal) {
@@ -154,6 +169,11 @@ export async function POST(request: NextRequest) {
           threadTs,
           `Something went wrong while processing your request. Error: ${msg}`,
         );
+      } finally {
+        // Safety net: delete thinking message if it wasn't cleaned up
+        if (thinkingTs) {
+          await deleteMessage(channel, thinkingTs);
+        }
       }
     });
 
@@ -173,12 +193,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
+    // Skip messages addressed to a specific non-bot user (e.g. "@vlad can you check?")
+    if (isAddressedToOtherUser(event.text ?? "", botId)) {
+      rlog("thread_skip_addressed_to_other", { channel: event.channel, threadTs: event.thread_ts });
+      return NextResponse.json({ ok: true });
+    }
+
     const channel: string = event.channel;
     const threadTs: string = event.thread_ts;
     const userMessage: string = event.text;
     rlog("thread_followup", { channel, threadTs });
 
     after(async () => {
+      let thinkTs: string | undefined;
       try {
         // Check for pending correction (from a 👎 reaction)
         const { kv } = await import("@vercel/kv");
@@ -211,17 +238,23 @@ export async function POST(request: NextRequest) {
           return;
         }
 
-        // Only respond if the bot is already in this thread
+        // Fetch thread messages — used for both participation check and context
         const bid = botId || (await getBotUserId());
-        if (!bid || !(await isBotInThread(channel, threadTs, bid))) return;
+        const threadMessages = await fetchThreadMessages(channel, threadTs);
+        const botInThread = bid ? threadMessages.some((m) => m.user === bid) : false;
+        if (!bid || !botInThread) return;
         rlog("followup_agent_start", { channel, threadTs });
 
-        const thinkTs = await replyInThread(
+        thinkTs = await replyInThread(
           channel, threadTs,
           THINKING_HEADER,
         );
 
         const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
+
+        // Build proper multi-turn conversation history from thread
+        // (uses Anthropic's native message format, not string hacking)
+        const history = buildConversationHistory(threadMessages, bid);
 
         // Pre-match for thread follow-ups too
         const followupTopics = await getCachedTopics();
@@ -232,7 +265,7 @@ export async function POST(request: NextRequest) {
           if (thinkTs) {
             await updateMessage(channel, thinkTs, buildThinkingMessage(toolName, input));
           }
-        });
+        }, history);
 
         if (thinkTs) {
           await updateMessage(channel, thinkTs, buildThinkingMessage("composing", {}));
@@ -244,6 +277,7 @@ export async function POST(request: NextRequest) {
 
         if (thinkTs) {
           await deleteMessage(channel, thinkTs);
+          thinkTs = undefined; // Mark as cleaned up
         }
 
         if (result.issueProposal) {
@@ -285,6 +319,11 @@ export async function POST(request: NextRequest) {
           threadTs,
           `Something went wrong while processing your request. Error: ${msg}`,
         );
+      } finally {
+        // Safety net: delete thinking message if it wasn't cleaned up
+        if (thinkTs) {
+          await deleteMessage(channel, thinkTs);
+        }
       }
     });
 
