@@ -86,6 +86,17 @@ export async function POST(request: NextRequest) {
 
         const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
 
+        // If this is a re-mention inside a thread, fetch history for context
+        // (fresh top-level mentions have no thread_ts — no history needed)
+        let mentionHistory: { role: "user" | "assistant"; content: string }[] | undefined;
+        if (event.thread_ts) {
+          const botId = await getBotUserId();
+          if (botId) {
+            const threadMsgs = await fetchThreadMessages(channel, threadTs);
+            mentionHistory = buildConversationHistory(threadMsgs, botId);
+          }
+        }
+
         // Pre-match question against topic index for concrete file hints
         const topics = await getCachedTopics();
         const topicMatches = matchTopicsToQuestion(cleanMessage, topics);
@@ -98,7 +109,7 @@ export async function POST(request: NextRequest) {
           if (thinkingTs) {
             await updateMessage(channel, thinkingTs, buildThinkingMessage(toolName, input));
           }
-        });
+        }, mentionHistory);
         rlog("agent_complete", { rounds: result.references.length, hasProposal: !!result.issueProposal, refCount: result.references.length });
 
         // Update thinking message to "composing" before posting answer
