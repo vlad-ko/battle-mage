@@ -23,7 +23,7 @@ const TOPIC_RULES: [string, RegExp][] = [
 ];
 
 // Fallback for repos without .battle-mage.json
-const DEFAULT_EXCLUDED_PREFIXES = ["vendor/", "node_modules/", ".git/", "dist/", "build/"];
+const DEFAULT_EXCLUDED_PREFIXES = ["vendor/", "node_modules/", ".git/", ".claude/", "dist/", "build/"];
 
 // ── Pure functions (exported for testing) ─────────────────────────────
 

@@ -1,6 +1,7 @@
 import type { Tool } from "@anthropic-ai/sdk/resources/messages";
 import { readFile } from "@/lib/github";
 import type { Reference } from "@/tools";
+import { isToolingPath } from "@/lib/path-filter";
 
 export const readFileTool: Tool = {
   name: "read_file",
@@ -33,6 +34,11 @@ export async function executeReadFile(
 ): Promise<ReadFileResult> {
   const path = input.path as string;
   const ref = input.ref as string | undefined;
+
+  // Block reads of tooling paths (.claude/ etc.) — not project code
+  if (isToolingPath(path)) {
+    return { text: `Path "${path}" is a tooling/metadata directory and cannot be read.`, references: [] };
+  }
 
   const result = await readFile(path, ref);
 
