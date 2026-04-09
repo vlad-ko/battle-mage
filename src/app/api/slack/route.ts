@@ -57,8 +57,9 @@ export async function POST(request: NextRequest) {
   // ── Handle events ─────────────────────────────────────────────────
   const event = body.event;
 
-  // Ignore bot messages to prevent loops
-  if (!event || event.bot_id || event.subtype === "bot_message") {
+  // Ignore bot messages and echo events (message_changed, message_deleted, etc.)
+  // These fire when BM updates its own thinking messages — harmless but noisy
+  if (!event || event.bot_id || event.subtype) {
     return NextResponse.json({ ok: true });
   }
 
@@ -109,7 +110,7 @@ export async function POST(request: NextRequest) {
           if (thinkingTs) {
             await updateMessage(channel, thinkingTs, buildThinkingMessage(toolName, input));
           }
-        }, mentionHistory);
+        }, mentionHistory, rlog);
         rlog("agent_complete", { rounds: result.references.length, hasProposal: !!result.issueProposal, refCount: result.references.length });
 
         // Update thinking message to "composing" before posting answer
@@ -265,7 +266,7 @@ export async function POST(request: NextRequest) {
           if (thinkTs) {
             await updateMessage(channel, thinkTs, buildThinkingMessage(toolName, input));
           }
-        }, history);
+        }, history, rlog);
 
         if (thinkTs) {
           await updateMessage(channel, thinkTs, buildThinkingMessage("composing", {}));
