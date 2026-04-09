@@ -13,7 +13,7 @@ import type { BattleMageConfig } from "@/lib/config";
 // ── Anthropic client ──────────────────────────────────────────────────
 const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from env
 
-const MODEL = "claude-sonnet-4-20250514";
+const MODEL = "claude-sonnet-4-6";
 export const MAX_TOOL_ROUNDS = 15;
 
 // ── Fetch context files from target repo (cached per cold start) ─────
