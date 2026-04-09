@@ -5,7 +5,8 @@ import { readFile } from "@/lib/github";
 import { getKnowledgeAsMarkdown } from "@/lib/knowledge";
 import { getFeedbackAsMarkdown } from "@/lib/feedback";
 import { getOrRebuildIndex, getCachedConfig } from "@/lib/repo-index";
-import { log } from "@/lib/logger";
+import { log, type RequestLogger } from "@/lib/logger";
+import { classifyApiError, userErrorMessage } from "@/lib/api-error";
 import { shouldWarnBudget, shouldForceStop } from "@/lib/time-budget";
 import type { BattleMageConfig } from "@/lib/config";
 
@@ -262,7 +263,11 @@ export async function runAgent(
   userMessage: string,
   onProgress?: ProgressCallback,
   conversationHistory?: ConversationTurn[],
+  rlog?: RequestLogger,
 ): Promise<AgentResult> {
+  // Use request-scoped logger if provided, fall back to bare log
+  const _log: RequestLogger = rlog ?? log;
+
   // Build messages: optional history + current user message
   const messages: Anthropic.MessageParam[] = [
     ...(conversationHistory ?? []),
@@ -273,14 +278,14 @@ export async function runAgent(
   const allReferences: Reference[] = [];
   const startTime = Date.now();
   const systemPrompt = await buildSystemPrompt();
-  log("agent_start", { promptLength: systemPrompt.length, question: userMessage.slice(0, 100) });
+  _log("agent_start", { promptLength: systemPrompt.length, question: userMessage.slice(0, 100) });
 
   let warned = false;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     // Time budget check — force-stop if over 5 minutes
     if (shouldForceStop(startTime)) {
-      log("agent_timeout", { rounds: round, duration_ms: Date.now() - startTime });
+      _log("agent_timeout", { rounds: round, duration_ms: Date.now() - startTime });
       const seen = new Set<string>();
       const finalRefs = allReferences.filter((r) => {
         if (seen.has(r.url)) return false;
@@ -304,10 +309,16 @@ export async function runAgent(
         messages,
       });
     } catch (apiErr) {
-      const msg = apiErr instanceof Error ? apiErr.message : String(apiErr);
-      log("agent_api_error", { round, message: msg.slice(0, 200) });
+      const errInfo = classifyApiError(apiErr);
+      _log("agent_api_error", {
+        round,
+        status: errInfo.status,
+        type: errInfo.type,
+        category: errInfo.category,
+        message: errInfo.message,
+      });
       return {
-        text: "I ran into a technical issue processing this request. Try asking a simpler or more specific question.",
+        text: userErrorMessage(errInfo),
         issueProposal,
         references: [],
       };
@@ -332,7 +343,7 @@ export async function runAgent(
         if (b.type === "text") return b.text;
         return "";
       }).join("\n");
-      log("agent_complete", { rounds: round + 1, refCount: allReferences.length, hasProposal: !!issueProposal, duration_ms: Date.now() - startTime });
+      _log("agent_complete", { rounds: round + 1, refCount: allReferences.length, hasProposal: !!issueProposal, duration_ms: Date.now() - startTime });
       return { text, issueProposal, references: dedupeRefs() };
     }
 
@@ -362,7 +373,7 @@ export async function runAgent(
 
       try {
         // Fire progress callback before executing the tool
-        log("agent_tool_call", { tool: block.name, round, input: JSON.stringify(block.input).slice(0, 200) });
+        _log("agent_tool_call", { tool: block.name, round, input: JSON.stringify(block.input).slice(0, 200) });
         if (onProgress) {
           await onProgress(block.name, block.input as Record<string, unknown>);
         }
@@ -406,7 +417,7 @@ export async function runAgent(
     // Inject time budget warning by appending to the last tool result
     if (!warned && shouldWarnBudget(startTime) && toolResults.length > 0) {
       warned = true;
-      log("agent_budget_warning", { round, elapsed_ms: Date.now() - startTime });
+      _log("agent_budget_warning", { round, elapsed_ms: Date.now() - startTime });
       const lastResult = toolResults[toolResults.length - 1];
       const existingContent = typeof lastResult.content === "string" ? lastResult.content : "";
       lastResult.content = existingContent + "\n\n[SYSTEM] You are running low on time. Synthesize your answer NOW with what you have. Do not make more tool calls unless absolutely critical.";
