@@ -72,9 +72,12 @@ export async function POST(request: NextRequest) {
     const channel: string = event.channel;
     const threadTs: string = event.thread_ts || event.ts;
     const userMessage: string = event.text;
-    rlog("mention_received", { channel, user: event.user, question: userMessage.slice(0, 100) });
+    rlog("mention_start", { channel, user: event.user, thread: !!event.thread_ts, question: userMessage.slice(0, 100) });
 
     // Ack now, process after response is sent (Vercel keeps fn alive)
+    // NOTE: Logs inside after() are NOT visible in Vercel Hobby dashboard per-invocation view.
+    // The "mention_start" line above is the only one visible. Agent loop details
+    // are visible via `vercel logs --no-follow` CLI or on Vercel Pro.
     after(async () => {
       // Hoist thinkingTs so finally can always clean it up
       let thinkingTs: string | undefined;
@@ -203,7 +206,7 @@ export async function POST(request: NextRequest) {
     const channel: string = event.channel;
     const threadTs: string = event.thread_ts;
     const userMessage: string = event.text;
-    rlog("thread_followup", { channel, threadTs });
+    rlog("thread_followup_start", { channel, threadTs, user: event.user, question: userMessage.slice(0, 100) });
 
     after(async () => {
       let thinkTs: string | undefined;
