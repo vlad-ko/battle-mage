@@ -20,6 +20,31 @@ export const MAX_TOOL_ROUNDS = 15;
 export const MAX_ANSWER_LINES = 15;
 export const RECENCY_WINDOW_DAYS = 30;
 
+// Hard cap on any single tool_result before it is appended to the agent's
+// messages array. Prevents broad research prompts (list_issues, list_prs,
+// read_file of a large source file, etc.) from piling up enough content
+// to push the next messages.stream() call past the model's 200k context
+// window and crash the turn with msg_too_long. See #92.
+//
+// ~7.5k tokens (at ~4 chars/token). Conservative first pass — raise if we
+// see the truncation firing on typical reads.
+export const TOOL_RESULT_MAX_CHARS = 30_000;
+
+// Pure helper: truncates a tool_result to TOOL_RESULT_MAX_CHARS and appends
+// a tail suffix that tells the model the result was cut and how to recover.
+// Exported for unit testing.
+export function truncateToolResult(text: string): { text: string; truncated: boolean } {
+  if (text.length <= TOOL_RESULT_MAX_CHARS) {
+    return { text, truncated: false };
+  }
+  const head = text.slice(0, TOOL_RESULT_MAX_CHARS);
+  const tail =
+    `\n\n[tool result truncated — original length ${text.length} chars, ` +
+    `capped at ${TOOL_RESULT_MAX_CHARS}. If you need more of this content, ` +
+    `call the tool again with a narrower query or a specific line range.]`;
+  return { text: head + tail, truncated: true };
+}
+
 // ── Fetch context files from target repo (cached per cold start) ─────
 let cachedClaudeMd: string | null | undefined;
 // cachedKnowledge removed — now served by Vercel KV via @/lib/knowledge
@@ -529,10 +554,19 @@ export async function runAgent(
             content: `Issue proposed: "${result.proposal.title}". Awaiting user confirmation in Slack before creation.`,
           });
         } else {
+          const { text: capped, truncated } = truncateToolResult(result.text);
+          if (truncated) {
+            _log("tool_result_truncated", {
+              tool: block.name,
+              round,
+              original_chars: result.text.length,
+              capped_chars: capped.length,
+            });
+          }
           toolResults.push({
             type: "tool_result",
             tool_use_id: block.id,
-            content: result.text,
+            content: capped,
           });
         }
       } catch (err) {

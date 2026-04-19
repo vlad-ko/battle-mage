@@ -1,5 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
-import { assembleSystemPrompt, assembleSystemBlocks, safeInvokeTextDelta, MAX_TOOL_ROUNDS } from "./claude";
+import {
+  assembleSystemPrompt,
+  assembleSystemBlocks,
+  safeInvokeTextDelta,
+  truncateToolResult,
+  MAX_TOOL_ROUNDS,
+  TOOL_RESULT_MAX_CHARS,
+} from "./claude";
 
 describe("assembleSystemPrompt", () => {
   const baseArgs = {
@@ -519,5 +526,54 @@ describe("safeInvokeTextDelta — streaming callback safety", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(seen).toBe("async streamed");
+  });
+});
+
+describe("truncateToolResult — prevents msg_too_long crashes", () => {
+  it("passes through content shorter than the cap", () => {
+    const { text, truncated } = truncateToolResult("short content");
+    expect(text).toBe("short content");
+    expect(truncated).toBe(false);
+  });
+
+  it("passes through content exactly at the cap", () => {
+    const input = "a".repeat(TOOL_RESULT_MAX_CHARS);
+    const { text, truncated } = truncateToolResult(input);
+    expect(text).toBe(input);
+    expect(truncated).toBe(false);
+  });
+
+  it("truncates content longer than the cap", () => {
+    const input = "a".repeat(TOOL_RESULT_MAX_CHARS + 5000);
+    const { text, truncated } = truncateToolResult(input);
+    expect(truncated).toBe(true);
+    // Final output should be close to cap — some overhead for the tail suffix
+    expect(text.length).toBeLessThan(TOOL_RESULT_MAX_CHARS + 1000);
+    expect(text.length).toBeGreaterThan(TOOL_RESULT_MAX_CHARS - 1000);
+  });
+
+  it("appends a tail suffix that the model can understand", () => {
+    const input = "x".repeat(TOOL_RESULT_MAX_CHARS + 100);
+    const { text } = truncateToolResult(input);
+    // Must explicitly tell the model the result was cut and how to recover
+    expect(text.toLowerCase()).toContain("truncated");
+    expect(text).toContain(String(input.length));
+  });
+
+  it("reports original length in the tail suffix", () => {
+    const input = "b".repeat(TOOL_RESULT_MAX_CHARS + 12345);
+    const { text } = truncateToolResult(input);
+    expect(text).toContain(String(input.length));
+  });
+
+  it("is a no-op on empty string", () => {
+    const { text, truncated } = truncateToolResult("");
+    expect(text).toBe("");
+    expect(truncated).toBe(false);
+  });
+
+  it("exposes TOOL_RESULT_MAX_CHARS as a constant so callers can budget", () => {
+    expect(TOOL_RESULT_MAX_CHARS).toBeGreaterThan(1000);
+    expect(TOOL_RESULT_MAX_CHARS).toBeLessThan(200000);
   });
 });
