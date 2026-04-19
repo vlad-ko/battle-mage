@@ -1,7 +1,7 @@
 export interface ThrottledUpdater {
   update(text: string): void;
   flush(): Promise<void>;
-  cancel(): void;
+  cancel(): Promise<void>;
 }
 
 // Coalesces rapid update() calls into at most one flush per minIntervalMs,
@@ -92,12 +92,20 @@ export function createThrottledUpdater(
         }
       }
     },
-    cancel(): void {
+    async cancel(): Promise<void> {
+      // Drop the deferred timer and any pending text immediately.
       if (timer) {
         clearTimeout(timer);
         timer = null;
       }
       pendingText = null;
+      // If a fn() call is already running, await it so the caller can be
+      // sure no throttled Slack write will land after cancel() resolves —
+      // important for the route to avoid stale streamed text overwriting
+      // a fresh emoji progress update on the same message.
+      if (busy) {
+        await inFlight.catch(() => {});
+      }
     },
   };
 }

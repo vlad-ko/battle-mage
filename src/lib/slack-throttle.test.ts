@@ -171,7 +171,7 @@ describe("createThrottledUpdater", () => {
 
     // Queue a deferred update, then cancel — the timer must not fire
     throttle.update("pending");
-    throttle.cancel();
+    await throttle.cancel();
     await vi.advanceTimersByTimeAsync(5000);
     expect(fn).toHaveBeenCalledTimes(1); // still just "first"
 
@@ -180,5 +180,36 @@ describe("createThrottledUpdater", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(fn).toHaveBeenCalledTimes(2);
     expect(fn).toHaveBeenNthCalledWith(2, "after-cancel");
+  });
+
+  it("cancel() awaits an in-flight fn() — no stale writes can land after it resolves", async () => {
+    // Scenario: a slow streaming edit is still running when onProgress fires
+    // and calls cancel() before writing an emoji update. cancel() must block
+    // until the streamed write is done, otherwise the emoji could be
+    // overwritten by the delayed Slack response.
+    let completed = false;
+    const fn = vi.fn(async (_text: string) => {
+      await new Promise((r) => setTimeout(r, 2000));
+      completed = true;
+    });
+    const throttle = createThrottledUpdater(fn, 1000);
+
+    throttle.update("streamed"); // starts fn, takes 2000ms
+    await vi.advanceTimersByTimeAsync(0);
+    expect(completed).toBe(false);
+
+    // cancel() must NOT resolve before fn completes
+    const cancelDone = vi.fn();
+    const cancelPromise = throttle.cancel().then(cancelDone);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(completed).toBe(false);
+    expect(cancelDone).not.toHaveBeenCalled();
+
+    // Let fn finish
+    await vi.advanceTimersByTimeAsync(1000);
+    await cancelPromise;
+    expect(completed).toBe(true);
+    expect(cancelDone).toHaveBeenCalled();
   });
 });

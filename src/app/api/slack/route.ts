@@ -124,7 +124,7 @@ export async function POST(request: NextRequest) {
             // Progress emoji takes over — drop any pending streamed text that
             // was queued during the prior round, otherwise it could land and
             // overwrite the emoji after this call.
-            streamThrottle.cancel();
+            await streamThrottle.cancel();
             if (thinkingTs) {
               await updateMessage(channel, thinkingTs, buildThinkingMessage(toolName, input));
             }
@@ -300,7 +300,7 @@ export async function POST(request: NextRequest) {
           async (toolName, input) => {
             // See the mention handler: cancel pending streamed text so
             // the emoji progress isn't overwritten by a late flush.
-            followupThrottle.cancel();
+            await followupThrottle.cancel();
             if (thinkTs) {
               await updateMessage(channel, thinkTs, buildThinkingMessage(toolName, input));
             }
