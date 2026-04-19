@@ -19,7 +19,7 @@ import { buildCorrectionActions } from "@/lib/auto-correct";
 import { buildThinkingMessage, THINKING_HEADER } from "@/lib/progress";
 import { toSlackMrkdwn } from "@/lib/mrkdwn";
 import { createThrottledUpdater } from "@/lib/slack-throttle";
-import { createRequestLogger } from "@/lib/logger";
+import { createRequestLogger, flushLogs } from "@/lib/logger";
 import { getCachedTopics } from "@/lib/repo-index";
 import { matchTopicsToQuestion, buildQuestionHints } from "@/lib/topic-match";
 import { isAddressedToOtherUser, buildConversationHistory } from "@/lib/thread-filter";
@@ -76,9 +76,9 @@ export async function POST(request: NextRequest) {
     rlog("mention_start", { channel, user: event.user, thread: !!event.thread_ts, question: userMessage.slice(0, 100) });
 
     // Ack now, process after response is sent (Vercel keeps fn alive)
-    // NOTE: Logs inside after() are NOT visible in Vercel Hobby dashboard per-invocation view.
-    // The "mention_start" line above is the only one visible. Agent loop details
-    // are visible via `vercel logs --no-follow` CLI or on Vercel Pro.
+    // Logs inside after() need an explicit event-loop yield (flushLogs) to
+    // reach Vercel's log drain — see #90. Every after() block below ends
+    // with `await flushLogs(rlog, "<flow>")` inside its finally clause.
     after(async () => {
       // Hoist thinkingTs so finally can always clean it up
       let thinkingTs: string | undefined;
@@ -201,6 +201,8 @@ export async function POST(request: NextRequest) {
         if (thinkingTs) {
           await deleteMessage(channel, thinkingTs);
         }
+        // Yield so Vercel captures the after() block's logs — see #90.
+        await flushLogs(rlog, "mention");
       }
     });
 
@@ -370,6 +372,7 @@ export async function POST(request: NextRequest) {
         if (thinkTs) {
           await deleteMessage(channel, thinkTs);
         }
+        await flushLogs(rlog, "thread_followup");
       }
     });
 
@@ -434,6 +437,8 @@ export async function POST(request: NextRequest) {
         } catch {
           // Can't reply — just log
         }
+      } finally {
+        await flushLogs(rlog, "reaction_checkmark");
       }
     });
 
@@ -476,6 +481,8 @@ export async function POST(request: NextRequest) {
         } catch { /* already reacted or can't react — ignore */ }
       } catch (err) {
         rlog("error", { flow: "reaction_thumbsup", message: err instanceof Error ? err.message : String(err) });
+      } finally {
+        await flushLogs(rlog, "reaction_thumbsup");
       }
     });
 
@@ -541,6 +548,8 @@ export async function POST(request: NextRequest) {
         );
       } catch (err) {
         rlog("error", { flow: "reaction_thumbsdown", message: err instanceof Error ? err.message : String(err) });
+      } finally {
+        await flushLogs(rlog, "reaction_thumbsdown");
       }
     });
 
