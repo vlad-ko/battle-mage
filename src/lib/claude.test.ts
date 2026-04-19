@@ -267,4 +267,116 @@ describe("assembleSystemPrompt", () => {
       expect(prompt).toMatch(/weak|subjective|lowest|least.*authoritative/i);
     });
   });
+
+  describe("XML structure — stable zone", () => {
+    const stableTags = [
+      "identity",
+      "core-principles",
+      "source-hierarchy",
+      "tools",
+      "search-strategy",
+      "knowledge-base-usage",
+      "output-contract",
+    ];
+
+    it.each(stableTags)("wraps the %s section in matching open/close tags", (tag) => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      expect(prompt).toContain(`<${tag}>`);
+      expect(prompt).toContain(`</${tag}>`);
+    });
+
+    it("emits stable sections in canonical order", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      let last = -1;
+      for (const tag of stableTags) {
+        const idx = prompt.indexOf(`<${tag}>`);
+        expect(idx, `<${tag}> missing`).toBeGreaterThan(-1);
+        expect(idx, `<${tag}> out of order`).toBeGreaterThan(last);
+        last = idx;
+      }
+    });
+
+    it("emits the entire stable zone BEFORE any volatile data section", () => {
+      // Cache-breakpoint prerequisite: stable content must sit above volatile.
+      const prompt = assembleSystemPrompt({
+        ...baseArgs,
+        claudeMd: "CLAUDE_MARKER_123",
+        knowledge: "- [2026-01-01] KB_MARKER_456",
+        feedback: "- FEEDBACK_MARKER_789",
+        repoIndex: "- *marker*: REPO_INDEX_MARKER_000",
+      });
+      const contractEnd = prompt.indexOf("</output-contract>");
+      expect(contractEnd, "</output-contract> missing").toBeGreaterThan(-1);
+
+      const volatileMarkers = [
+        "CLAUDE_MARKER_123",
+        "KB_MARKER_456",
+        "FEEDBACK_MARKER_789",
+        "REPO_INDEX_MARKER_000",
+      ];
+      for (const marker of volatileMarkers) {
+        const idx = prompt.indexOf(marker);
+        expect(idx, `${marker} missing`).toBeGreaterThan(-1);
+        expect(
+          idx,
+          `${marker} appears before </output-contract> — breaks caching invariant`,
+        ).toBeGreaterThan(contractEnd);
+      }
+    });
+  });
+
+  describe("output contract — anti-narration and Slack mrkdwn constraints", () => {
+    it("explicitly bans the phrase 'let me check'", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      expect(prompt.toLowerCase()).toContain("let me check");
+    });
+
+    it("bans at least three narration patterns beyond 'let me check'", () => {
+      const prompt = assembleSystemPrompt(baseArgs).toLowerCase();
+      const banned = [
+        "i'll look",
+        "one moment",
+        "fetching now",
+        "hold on",
+        "looking into",
+        "let me look",
+      ];
+      const hits = banned.filter((p) => prompt.includes(p));
+      expect(
+        hits.length,
+        `output contract must list ≥3 banned narration phrases, found: ${hits.join(", ")}`,
+      ).toBeGreaterThanOrEqual(3);
+    });
+
+    it("forbids markdown tables", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      expect(prompt).toMatch(/no.*table|never.*table|tables.*break|tables.*broken|avoid.*table/i);
+    });
+
+    it("forbids [text](url) markdown link syntax", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      // The literal template "[text](url)" must appear in the ban list so the
+      // model sees exactly what NOT to emit.
+      expect(prompt).toContain("[text](url)");
+    });
+
+    it("instructs to prefer a single result-focused reply after tool work", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      expect(prompt).toMatch(
+        /single.*result.focused|result.focused.*reply|after tool.*complete|don.?t pre.?announce/i,
+      );
+    });
+
+    it("keeps the output contract inside the <output-contract> tag body", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      const start = prompt.indexOf("<output-contract>");
+      const end = prompt.indexOf("</output-contract>");
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      const body = prompt.slice(start, end).toLowerCase();
+      // Core contract content must live inside the tag, not floating elsewhere
+      expect(body).toContain("let me check");
+      expect(body).toContain("[text](url)");
+    });
+  });
 });

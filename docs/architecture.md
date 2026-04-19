@@ -99,30 +99,54 @@ When a user reacts with :white_check_mark: to a bot message containing an issue 
 
 ## System Prompt Assembly
 
-The system prompt is assembled from multiple sources every time the agent runs. The function `assembleSystemPrompt()` takes these inputs:
+The system prompt is assembled in two zones — a **stable zone** (cache-target, identical across turns in the same thread) followed by a **volatile zone** (per-turn data). Sections are wrapped in XML tags for model steerability and to let a future Anthropic `cache_control` breakpoint sit cleanly at the boundary.
 
-| Input | Source | Description |
-|-------|--------|-------------|
-| `owner` / `repo` | Environment variables | Target GitHub repository |
-| `claudeMd` | `CLAUDE.md` in the target repo | Project-specific context (cached per cold start) |
-| `knowledge` | Vercel KV | Knowledge base entries (corrections from users) |
-| `feedback` | Vercel KV | Recent thumbs up/down feedback summaries |
-| `repoIndex` | Vercel KV (lazy-rebuilt) | Auto-generated topic map of the repository |
+The function `assembleSystemPrompt()` takes these inputs:
 
-The assembled prompt includes these sections in order:
+| Input | Source | Description | Zone |
+|-------|--------|-------------|------|
+| `owner` / `repo` | Environment variables | Target GitHub repository | both |
+| `claudeMd` | `CLAUDE.md` in the target repo | Project-specific context (cached per cold start) | volatile |
+| `knowledge` | Vercel KV | Knowledge base entries (corrections from users) | volatile |
+| `feedback` | Vercel KV | Recent thumbs up/down feedback summaries | volatile |
+| `repoIndex` | Vercel KV (lazy-rebuilt) | Auto-generated topic map of the repository | volatile |
+| `pathAnnotations` | `.battle-mage.json` in target repo | Per-path trust annotations | volatile |
 
-1. **Identity and date** -- who the bot is, today's date
-2. **Recency and brevity rules** -- prefer recent activity, keep answers concise, no brochure copy
-3. **Source-of-truth hierarchy** -- code > tests > docs > KB > feedback (see [Source Hierarchy](./features/source-hierarchy.md))
-4. **Core principles** -- verify before asserting, cite specifically, thread-only replies
-5. **Available tools** -- descriptions of all 7 tools
-6. **Search strategy** -- budget tool rounds, search before read, synthesize early
-7. **Knowledge base instructions** -- when/how to save corrections
-8. **Response style** -- Slack mrkdwn rules (no `##` headings, no `**bold**`)
-9. **Repository context** -- owner, repo, CLAUDE.md content
-10. **Repository map** -- auto-generated topic index (if available)
-11. **Knowledge base entries** -- actual KB data with staleness warning
-12. **Feedback entries** -- positive/negative reaction summaries
+### Stable zone (XML-tagged, ordered)
+
+1. `<identity>` — who the bot is (Battle Mage), where it runs (Slack), which repo it reads
+2. `<core-principles>` — verify before asserting, cite specifically, thread-only, confirm issue creation
+3. `<source-hierarchy>` — code > tests > docs > KB > feedback, with conflict-detection rules (see [Source Hierarchy](./features/source-hierarchy.md))
+4. `<tools>` — canonical names of the 7 GitHub tools
+5. `<search-strategy>` — budget tool rounds, repo map first, read 2–3 files max, synthesize early
+6. `<knowledge-base-usage>` — when and how to save corrections via `save_knowledge`
+7. `<output-contract>` — Slack mrkdwn format, anti-narration bans, brevity, recency (see below)
+
+### Volatile zone (conditional, below the cache-breakpoint target)
+
+- `<repo-context>` — owner + repo literals
+- `## Project Context (from CLAUDE.md)` — the target repo's CLAUDE.md if present
+- `## Repository Map (auto-generated index)` — the topic index if rebuilt
+- `## Path Annotations (from .battle-mage.json)` — trust annotations if configured
+- `## Knowledge Base (learned corrections)` — KB entries from Vercel KV if non-empty
+- `## User Feedback (from 👍/👎 reactions)` — feedback summary if non-empty
+
+Each volatile section is omitted when its data is null, so a fresh repo with no KB/feedback/index produces a compact prompt.
+
+### Output contract (what makes replies Slack-native)
+
+The `<output-contract>` block is the single most important piece of prompt engineering for response quality. It mandates:
+
+- **Slack mrkdwn only** — `*bold*` (single asterisk), `_italic_`, `` `code` ``, `<url|text>` links. Bans `**double asterisks**`, `[text](url)` markdown links, `##` headings, and pipe-syntax tables.
+- **Anti-narration** — explicit list of banned phrases the model must not emit: "let me check", "i'll look into this", "one moment", "fetching now", "hold on while i...", "looking into that...". Replies are single result-focused messages after tool work, not step-by-step narration.
+- **Brevity** — direct answer in 2–3 sentences, target `MAX_ANSWER_LINES` (15), bullets over prose, no brochure/marketing copy.
+- **Recency** — prefer activity within `RECENCY_WINDOW_DAYS` (30) from today; skip `docs/archive/` unless asked; flag data older than the window rather than presenting as current.
+
+`MAX_ANSWER_LINES` and `RECENCY_WINDOW_DAYS` are exported constants from `src/lib/claude.ts`.
+
+### Why the stable/volatile split
+
+The zoning sets up a future Anthropic prompt-caching pass (tracked in #71): a single `cache_control: {type: "ephemeral"}` breakpoint placed at the end of the stable zone will keep ~80% of the system prompt in cache across turns, since only the volatile tail changes between a question and its follow-up. XML tags also give the model stronger steering signals than plain-text headings.
 
 ## The Agent Loop
 
