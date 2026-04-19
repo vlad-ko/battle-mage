@@ -121,6 +121,10 @@ export async function POST(request: NextRequest) {
         const result = await runAgent(
           augmentedMessage,
           async (toolName, input) => {
+            // Progress emoji takes over — drop any pending streamed text that
+            // was queued during the prior round, otherwise it could land and
+            // overwrite the emoji after this call.
+            streamThrottle.cancel();
             if (thinkingTs) {
               await updateMessage(channel, thinkingTs, buildThinkingMessage(toolName, input));
             }
@@ -131,7 +135,8 @@ export async function POST(request: NextRequest) {
         );
         // Drain any pending streamed edit so it doesn't race the final write
         await streamThrottle.flush();
-        rlog("agent_complete", { rounds: result.references.length, hasProposal: !!result.issueProposal, refCount: result.references.length });
+        // `agent_complete` is already emitted by runAgent with rounds, token
+        // usage, and cache metrics — don't duplicate it at the route level.
 
         const text = toSlackMrkdwn(result.text);
         const rankedRefs = rankReferences(result.references, result.text);
@@ -293,6 +298,9 @@ export async function POST(request: NextRequest) {
         const result = await runAgent(
           followupMessage,
           async (toolName, input) => {
+            // See the mention handler: cancel pending streamed text so
+            // the emoji progress isn't overwritten by a late flush.
+            followupThrottle.cancel();
             if (thinkTs) {
               await updateMessage(channel, thinkTs, buildThinkingMessage(toolName, input));
             }

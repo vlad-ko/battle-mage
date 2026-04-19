@@ -101,4 +101,84 @@ describe("createThrottledUpdater", () => {
 
     expect(fn).toHaveBeenCalledTimes(2);
   });
+
+  it("serializes fn() — never runs concurrently even when fn is slower than the interval", async () => {
+    let inflight = 0;
+    let maxInflight = 0;
+    const fn = vi.fn(async (_text: string) => {
+      inflight++;
+      maxInflight = Math.max(maxInflight, inflight);
+      await new Promise((r) => setTimeout(r, 2000)); // slow fn
+      inflight--;
+    });
+    const throttle = createThrottledUpdater(fn, 1000);
+
+    // t=0: fires immediately, fn("a") starts a 2000ms call
+    throttle.update("a");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(inflight).toBe(1);
+
+    // t=1500: interval has elapsed but "a" is still in flight — must NOT start "b"
+    await vi.advanceTimersByTimeAsync(1500);
+    throttle.update("b");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(
+      maxInflight,
+      "second fn() call started before first finished — concurrent writes",
+    ).toBe(1);
+
+    // Let "a" finish; "b" may then start (serialized)
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(maxInflight).toBe(1);
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it("flush() awaits an in-flight fn() before returning", async () => {
+    let completed = false;
+    const fn = vi.fn(async (_text: string) => {
+      await new Promise((r) => setTimeout(r, 2000));
+      completed = true;
+    });
+    const throttle = createThrottledUpdater(fn, 1000);
+
+    throttle.update("x");
+    await vi.advanceTimersByTimeAsync(0); // fn starts
+    expect(completed).toBe(false);
+
+    const flushDone = vi.fn();
+    const flushPromise = throttle.flush().then(flushDone);
+
+    // Before fn finishes: flush should NOT have resolved
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(completed).toBe(false);
+    expect(flushDone).not.toHaveBeenCalled();
+
+    // Let fn finish
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushPromise;
+    expect(completed).toBe(true);
+    expect(flushDone).toHaveBeenCalled();
+  });
+
+  it("cancel() drops pending text and clears the timer — no further fn() calls", async () => {
+    const fn = vi.fn(async (_text: string) => {});
+    const throttle = createThrottledUpdater(fn, 1000);
+
+    // First update fires immediately
+    throttle.update("first");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    // Queue a deferred update, then cancel — the timer must not fire
+    throttle.update("pending");
+    throttle.cancel();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fn).toHaveBeenCalledTimes(1); // still just "first"
+
+    // After cancel, update() still works for fresh calls
+    throttle.update("after-cancel");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(fn).toHaveBeenNthCalledWith(2, "after-cancel");
+  });
 });

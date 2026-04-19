@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { assembleSystemPrompt, assembleSystemBlocks, MAX_TOOL_ROUNDS } from "./claude";
+import { describe, it, expect, vi } from "vitest";
+import { assembleSystemPrompt, assembleSystemBlocks, safeInvokeTextDelta, MAX_TOOL_ROUNDS } from "./claude";
 
 describe("assembleSystemPrompt", () => {
   const baseArgs = {
@@ -458,5 +458,66 @@ describe("assembleSystemBlocks — prompt caching", () => {
     const fromBlocks = assembleSystemBlocks(inputs).map((b) => b.text).join("");
     const fromString = assembleSystemPrompt(inputs);
     expect(fromBlocks).toBe(fromString);
+  });
+});
+
+describe("safeInvokeTextDelta — streaming callback safety", () => {
+  it("invokes the callback with the snapshot", async () => {
+    const cb = vi.fn();
+    safeInvokeTextDelta(cb, "Hello world");
+    // Microtask-scheduled — flush the queue
+    await Promise.resolve();
+    expect(cb).toHaveBeenCalledOnce();
+    expect(cb).toHaveBeenCalledWith("Hello world");
+  });
+
+  it("is a no-op when the callback is undefined", () => {
+    expect(() => safeInvokeTextDelta(undefined, "anything")).not.toThrow();
+  });
+
+  it("swallows synchronous throws from the callback", async () => {
+    const cb = vi.fn(() => {
+      throw new Error("sync boom");
+    });
+    expect(() => safeInvokeTextDelta(cb, "x")).not.toThrow();
+    // Flush the microtask where the callback actually runs
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(cb).toHaveBeenCalled();
+  });
+
+  it("swallows async rejections from the callback (no unhandled promise rejection)", async () => {
+    const cb = vi.fn(async () => {
+      throw new Error("async boom");
+    });
+    safeInvokeTextDelta(cb, "y");
+    // Let the rejection + catch() propagate through the microtask queue
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(cb).toHaveBeenCalled();
+    // If the rejection were unhandled, vitest would fail the test here.
+  });
+
+  it("supports sync-returning callbacks", async () => {
+    let seen = "";
+    const cb = (snap: string): void => {
+      seen = snap;
+    };
+    safeInvokeTextDelta(cb, "streamed");
+    await Promise.resolve();
+    expect(seen).toBe("streamed");
+  });
+
+  it("supports async-returning callbacks", async () => {
+    let seen = "";
+    const cb = async (snap: string): Promise<void> => {
+      await Promise.resolve();
+      seen = snap;
+    };
+    safeInvokeTextDelta(cb, "async streamed");
+    // Two awaits for the inner await + the outer .then
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(seen).toBe("async streamed");
   });
 });

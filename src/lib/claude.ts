@@ -329,6 +329,19 @@ export interface AgentResult {
 export type ProgressCallback = (toolName: string, input: Record<string, unknown>) => void | Promise<void>;
 export type TextDeltaCallback = (snapshot: string) => void | Promise<void>;
 
+// Invokes an optional text-delta callback safely. Swallows both synchronous
+// throws and async rejections so a faulty handler cannot surface as an
+// unhandled rejection and destabilize the runtime. Exported for testing.
+export function safeInvokeTextDelta(
+  onTextDelta: TextDeltaCallback | undefined,
+  snapshot: string,
+): void {
+  if (!onTextDelta) return;
+  Promise.resolve()
+    .then(() => onTextDelta(snapshot))
+    .catch(() => {});
+}
+
 export interface ConversationTurn {
   role: "user" | "assistant";
   content: string;
@@ -342,12 +355,9 @@ async function anthropicCall(
 ): Promise<Anthropic.Message> {
   try {
     const stream = anthropic.messages.stream(params);
-    if (onTextDelta) {
-      stream.on("text", (_delta, snapshot) => {
-        // Fire-and-forget — the throttled updater handles its own errors.
-        void onTextDelta(snapshot);
-      });
-    }
+    stream.on("text", (_delta, snapshot) => {
+      safeInvokeTextDelta(onTextDelta, snapshot);
+    });
     return await stream.finalMessage();
   } catch (streamErr) {
     _log("agent_stream_fallback", {
