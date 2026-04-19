@@ -249,15 +249,10 @@ Repository: ${repo}
 </repo-context>`;
 }
 
-export function assembleSystemPrompt(inputs: PromptInputs): string {
-  const { owner, repo, claudeMd, knowledge, feedback, repoIndex, pathAnnotations } = inputs;
-
+function buildStableZone(inputs: PromptInputs): string {
   const today = new Date().toISOString().split("T")[0];
-
-  // Stable zone — ordered for cache-control alignment (identity first,
-  // output-contract last — future cache breakpoint goes after </output-contract>).
-  const stableZone = [
-    buildIdentitySection(owner, repo),
+  return [
+    buildIdentitySection(inputs.owner, inputs.repo),
     buildCorePrinciplesSection(),
     buildSourceHierarchySection(),
     buildToolsSection(),
@@ -265,8 +260,10 @@ export function assembleSystemPrompt(inputs: PromptInputs): string {
     buildKnowledgeBaseUsageSection(),
     buildOutputContractSection(today),
   ].join("\n\n");
+}
 
-  // Volatile zone — conditional data sections, headers retained for test invariants.
+function buildVolatileZone(inputs: PromptInputs): string {
+  const { owner, repo, claudeMd, knowledge, feedback, repoIndex, pathAnnotations } = inputs;
   const contextSection = claudeMd
     ? `\n## Project Context (from CLAUDE.md)\n\n${claudeMd}\n`
     : "";
@@ -281,17 +278,36 @@ export function assembleSystemPrompt(inputs: PromptInputs): string {
     : "";
   const annotationsSection = buildAnnotationsSection(pathAnnotations);
 
-  return `${stableZone}
+  return `\n\n${buildRepoContextSection(owner, repo)}\n${contextSection}${repoIndexSection}${annotationsSection}${knowledgeSection}${feedbackSection}`;
+}
 
-${buildRepoContextSection(owner, repo)}
-${contextSection}${repoIndexSection}${annotationsSection}${knowledgeSection}${feedbackSection}`;
+export function assembleSystemPrompt(inputs: PromptInputs): string {
+  return buildStableZone(inputs) + buildVolatileZone(inputs);
+}
+
+// Returns the system prompt split for Anthropic prompt caching. The stable
+// block carries an ephemeral cache_control breakpoint — Anthropic caches
+// every content block up through and including that marker, so the entire
+// stable zone is served from cache on subsequent turns in the same thread.
+export function assembleSystemBlocks(inputs: PromptInputs): Anthropic.TextBlockParam[] {
+  return [
+    {
+      type: "text",
+      text: buildStableZone(inputs),
+      cache_control: { type: "ephemeral" },
+    },
+    {
+      type: "text",
+      text: buildVolatileZone(inputs),
+    },
+  ];
 }
 
 // ── Async wrapper that fetches data then assembles ────────────────────
-async function buildSystemPrompt(): Promise<string> {
+async function buildSystemBlocks(): Promise<Anthropic.TextBlockParam[]> {
   const repoIndex = await getOrRebuildIndex();
   const config = await getCachedConfig();
-  return assembleSystemPrompt({
+  return assembleSystemBlocks({
     owner: process.env.GITHUB_OWNER,
     repo: process.env.GITHUB_REPO,
     claudeMd: await getClaudeMd(),
@@ -335,10 +351,15 @@ export async function runAgent(
   let issueProposal: IssueProposal | undefined;
   const allReferences: Reference[] = [];
   const startTime = Date.now();
-  const systemPrompt = await buildSystemPrompt();
-  _log("agent_start", { promptLength: systemPrompt.length, question: userMessage.slice(0, 100) });
+  const systemBlocks = await buildSystemBlocks();
+  const promptLength = systemBlocks.reduce((n, b) => n + b.text.length, 0);
+  _log("agent_start", { promptLength, question: userMessage.slice(0, 100) });
 
   let warned = false;
+  let totalCacheRead = 0;
+  let totalCacheCreation = 0;
+  let totalInput = 0;
+  let totalOutput = 0;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     // Time budget check — force-stop if over 5 minutes
@@ -362,10 +383,14 @@ export async function runAgent(
       response = await anthropic.messages.create({
         model: MODEL,
         max_tokens: 4096,
-        system: systemPrompt,
+        system: systemBlocks,
         tools,
         messages,
       });
+      totalInput += response.usage.input_tokens;
+      totalOutput += response.usage.output_tokens;
+      totalCacheRead += response.usage.cache_read_input_tokens ?? 0;
+      totalCacheCreation += response.usage.cache_creation_input_tokens ?? 0;
     } catch (apiErr) {
       const errInfo = classifyApiError(apiErr);
       _log("agent_api_error", {
@@ -401,7 +426,16 @@ export async function runAgent(
         if (b.type === "text") return b.text;
         return "";
       }).join("\n");
-      _log("agent_complete", { rounds: round + 1, refCount: allReferences.length, hasProposal: !!issueProposal, duration_ms: Date.now() - startTime });
+      _log("agent_complete", {
+        rounds: round + 1,
+        refCount: allReferences.length,
+        hasProposal: !!issueProposal,
+        duration_ms: Date.now() - startTime,
+        input_tokens: totalInput,
+        output_tokens: totalOutput,
+        cache_read_tokens: totalCacheRead,
+        cache_creation_tokens: totalCacheCreation,
+      });
       return { text, issueProposal, references: dedupeRefs() };
     }
 
