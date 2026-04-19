@@ -49,17 +49,23 @@ export function hasNoMarkdownLinks(text: string): RubricResult {
   return { pass: true };
 }
 
+// Non-greedy match — catches **a*b** and ***x*** where the old [^*]+ missed
+// any span containing a stray asterisk (e.g. literal code `**foo*bar**`).
+const DOUBLE_ASTERISK_REGEX = /\*\*[\s\S]+?\*\*/;
+
 export function hasNoDoubleAsterisks(text: string): RubricResult {
-  // Two asterisks surrounding content — Slack renders these literally.
-  if (/\*\*[^*]+\*\*/.test(text)) {
+  if (DOUBLE_ASTERISK_REGEX.test(text)) {
     return { pass: false, detail: "contains **double asterisks** — Slack uses single asterisks" };
   }
   return { pass: true };
 }
 
-// Detects markdown pipe-syntax tables: a header row followed by a separator
-// row of dashes and pipes. Single inline pipes in prose or code are allowed.
-const MARKDOWN_TABLE_REGEX = /^\s*\|.+\|\s*$\n^\s*\|[\s\-:|]+\|\s*$/m;
+// Detects markdown pipe-tables with OR without outer pipes. A table is
+// identified by a header line containing at least one `|`, immediately
+// followed by a separator line matching `---|---` (optionally with outer
+// pipes and alignment colons). Single inline pipes in prose/code are safe.
+const MARKDOWN_TABLE_REGEX =
+  /^[^\n]*\|[^\n]*\n^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/m;
 
 export function hasNoMarkdownTables(text: string): RubricResult {
   if (MARKDOWN_TABLE_REGEX.test(text)) {

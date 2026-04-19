@@ -71,6 +71,18 @@ describe("rubric scorers — pure, deterministic output-contract checks", () => 
       const r = hasNoDoubleAsterisks("The **important** bit.");
       expect(r.pass).toBe(false);
     });
+
+    it("fails on **bold containing *inner stars*** (regression for non-greedy match)", () => {
+      // The prior /\*\*[^*]+\*\*/ regex failed to detect this because the
+      // [^*] class rejected the stray asterisk between the ** markers.
+      const r = hasNoDoubleAsterisks("Note **this *emphasized* phrase**.");
+      expect(r.pass).toBe(false);
+    });
+
+    it("fails on ***bold-italic combo***", () => {
+      const r = hasNoDoubleAsterisks("See ***very important*** below.");
+      expect(r.pass).toBe(false);
+    });
   });
 
   describe("hasNoMarkdownTables", () => {
@@ -79,15 +91,38 @@ describe("rubric scorers — pure, deterministic output-contract checks", () => 
       expect(r.pass).toBe(true);
     });
 
-    it("fails on pipe-syntax tables", () => {
+    it("fails on pipe-tables with outer pipes", () => {
       const r = hasNoMarkdownTables(
         "| Column A | Column B |\n| --- | --- |\n| 1 | 2 |",
       );
       expect(r.pass).toBe(false);
     });
 
+    it("fails on GFM pipe-tables WITHOUT outer pipes (regression)", () => {
+      // GitHub-flavored markdown allows tables without leading/trailing
+      // pipes. The prior regex required outer pipes and missed this shape.
+      const r = hasNoMarkdownTables(
+        "Column A | Column B\n---|---\n1 | 2",
+      );
+      expect(r.pass).toBe(false);
+    });
+
+    it("fails on tables with alignment colons (:---:, ---:)", () => {
+      const r = hasNoMarkdownTables(
+        "| Name | Age |\n| :--- | ---: |\n| Alice | 30 |",
+      );
+      expect(r.pass).toBe(false);
+    });
+
     it("does not false-positive on a single pipe in prose", () => {
       const r = hasNoMarkdownTables("Use pipes like `ls | grep` for stdout.");
+      expect(r.pass).toBe(true);
+    });
+
+    it("does not false-positive on text with dashes on a separate line", () => {
+      const r = hasNoMarkdownTables(
+        "First line has | a pipe.\nSecond line is just prose.",
+      );
       expect(r.pass).toBe(true);
     });
   });

@@ -1,4 +1,5 @@
 import { runAgent, type AgentResult } from "@/lib/claude";
+import type { RequestLogger } from "@/lib/logger";
 
 function requireEnv(name: string): void {
   if (!process.env[name]) {
@@ -9,10 +10,21 @@ function requireEnv(name: string): void {
   }
 }
 
+// Drops all structured log events so eval runs don't pollute vitest output
+// with per-round agent JSON. Override by setting EVAL_VERBOSE=1 in the
+// environment when debugging a failing eval.
+const silentLog: RequestLogger =
+  process.env.EVAL_VERBOSE
+    ? (event, data) => {
+        // eslint-disable-next-line no-console
+        console.log(`[eval] ${event}`, data ?? "");
+      }
+    : () => {};
+
 // Runs runAgent() against the real Anthropic + GitHub APIs with no-op
-// progress/delta callbacks and a silent logger, so fixtures only see the
-// final AgentResult. Intentionally minimal — each fixture composes its own
-// rubric assertions on the returned result.
+// callbacks and a silent logger (see EVAL_VERBOSE above), so fixtures
+// only see the final AgentResult. Intentionally minimal — each fixture
+// composes its own rubric assertions on the returned result.
 export async function runEval(question: string): Promise<AgentResult> {
   requireEnv("ANTHROPIC_API_KEY");
   requireEnv("GITHUB_PAT_BM");
@@ -23,7 +35,7 @@ export async function runEval(question: string): Promise<AgentResult> {
     question,
     undefined, // onProgress: no-op
     undefined, // conversationHistory: none
-    undefined, // rlog: falls back to bare log, which we silence via console.log no-op below if needed
+    silentLog, // rlog: suppresses agent_start / agent_complete / agent_tool_call / ...
     undefined, // onTextDelta: no-op
   );
 }

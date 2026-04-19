@@ -8,7 +8,7 @@ import path from "path";
 export default defineConfig({
   test: {
     globals: true,
-    include: ["src/evals/**/*.eval.ts"],
+    include: ["src/evals/fixtures/**/*.test.ts"],
     testTimeout: 5 * 60 * 1000, // agent budget is 5 min per turn
     hookTimeout: 60 * 1000,
     sequence: {

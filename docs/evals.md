@@ -45,7 +45,7 @@ Each returns `{ pass: boolean, detail?: string }`. The `detail` is propagated in
 
 ## Adding a fixture
 
-1. Create `src/evals/fixtures/<name>.eval.ts`.
+1. Create `src/evals/fixtures/<name>.test.ts`. (Eval fixtures use the standard `.test.ts` suffix but live under `src/evals/fixtures/`, which the default `npm test` config excludes — they run only under `npm run eval`.)
 2. Import `runEval` and the rubric scorers you need.
 3. Write `it(...)` blocks that call `await runEval(question)` and assert rubric results.
 
