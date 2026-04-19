@@ -39,6 +39,7 @@ See the [full setup guide](docs/setup.md) for Slack app creation, GitHub PAT, Ve
 | [Architecture](docs/architecture.md) | Agent loop, tools, system prompt, design decisions |
 | [Contributing](docs/contributing.md) | Fork workflow, TDD, CI, branch protection |
 | [Logging](docs/logging.md) | Structured JSON logs, event catalog, debugging |
+| [Evals](docs/evals.md) | Judge-lite output-contract rubric harness |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues and fixes |
 
 ### Feature Deep-Dives
@@ -78,12 +79,14 @@ For the full architecture walkthrough, see [docs/architecture.md](docs/architect
 ## Testing
 
 ```bash
-npm test              # 148 tests across 9 files
+npm test              # Unit tests — fast, no API calls
 npm run test:watch    # Watch mode
 npm run typecheck     # TypeScript strict
+npm run eval          # Agent-quality evals against real APIs — see docs/evals.md
 ```
 
 TDD is mandatory for all new features. See [docs/contributing.md](docs/contributing.md).
+The eval harness runs pattern-based rubric checks (no narration, no markdown tables, length limits, reference accuracy) against live `runAgent` output — opt-in, requires API keys, costs a few cents per run.
 
 ## License
 
