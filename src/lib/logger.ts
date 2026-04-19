@@ -1,5 +1,5 @@
 /**
- * Structured Logger — JSON output for Vercel function logs.
+ * Structured Logger — JSON output for Vercel function logs + Sentry events.
  *
  * All log entries are JSON objects with:
  * - event: string — what happened
@@ -7,17 +7,39 @@
  * - requestId: string — correlates all events in one invocation
  * - ...data: additional context
  *
- * View in Vercel Dashboard > Project > Logs, or `vercel logs --prod`.
+ * Two sinks:
+ * 1. Stdout/stderr via console.log/error — visible in `vercel logs` CLI and
+ *    Vercel Dashboard > Project > Logs. Drops writes from inside `after()`
+ *    callbacks on Vercel (see #90) so this sink alone is unreliable.
+ * 2. Sentry.logger.info/error — first-class Sentry log events. Sentry's
+ *    Next.js SDK uses `vercelWaitUntil(Sentry.flush())` so `after()` events
+ *    arrive reliably. When SENTRY_DSN is unset, the SDK is a silent no-op
+ *    and this degrades to sink (1) only.
  */
+import * as Sentry from "@sentry/nextjs";
 
 export function log(event: string, data?: Record<string, unknown>): void {
-  const entry = JSON.stringify({ event, ...data, ts: Date.now() });
-  // Use console.error for error events — Vercel shows these at "error" level
-  // which makes them filterable and visually distinct in the log viewer
-  if (event.includes("error")) {
+  const payload = { event, ...data, ts: Date.now() };
+  const entry = JSON.stringify(payload);
+  const isError = event.includes("error");
+  if (isError) {
     console.error(entry);
   } else {
     console.log(entry);
+  }
+  // Dual-emit to Sentry so events survive Vercel's `after()` stdout drop.
+  // Wrapped defensively — a logging side-effect must never break the
+  // request flow. `Sentry.logger` is the v10 first-class log API.
+  try {
+    if (Sentry.logger) {
+      if (isError) {
+        Sentry.logger.error(event, payload);
+      } else {
+        Sentry.logger.info(event, payload);
+      }
+    }
+  } catch {
+    // Swallow — Sentry unavailable / misconfigured / SDK changed.
   }
 }
 

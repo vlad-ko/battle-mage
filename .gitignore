@@ -33,3 +33,6 @@ next-env.d.ts
 .DS_Store
 Thumbs.db
 .env*.local
+
+# Sentry Config File
+.env.sentry-build-plugin
