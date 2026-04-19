@@ -47,6 +47,54 @@ export function truncateToolResult(text: string): { text: string; truncated: boo
   return { text: head + tail, truncated: true };
 }
 
+// Cumulative budget for the messages array. TOOL_RESULT_MAX_CHARS caps a
+// single result; this caps the sum across all rounds. Chosen to leave
+// ~50k tokens of headroom for:
+//   - System prompt stable zone (~8k) + volatile zone (~3k)
+//   - Tool schemas (~2k)
+//   - max_tokens output (4096)
+//   - Safety margin for estimation error
+// Sonnet-4-6's context window is 200k; 150k keeps us safely under even
+// with a slightly oversized system prompt or a fluctuating volatile tail.
+export const MESSAGES_SAFE_BUDGET_TOKENS = 150_000;
+
+// Chars-per-token heuristic, biased low for safety (overestimates tokens).
+// Real Claude tokenization is closer to 3.5–4 chars/token for English +
+// code. Using 3 gives a ~15% buffer against surprise expansion.
+const CHARS_PER_TOKEN = 3;
+
+// Rough token estimator for an Anthropic messages array. Walks every
+// content block type the SDK can produce (string, text, tool_use,
+// tool_result) and sums char counts / CHARS_PER_TOKEN. Exported for
+// unit testing and for external pre-flight checks.
+export function estimateMessagesTokens(messages: Anthropic.MessageParam[]): number {
+  let chars = 0;
+  for (const m of messages) {
+    if (typeof m.content === "string") {
+      chars += m.content.length;
+      continue;
+    }
+    if (!Array.isArray(m.content)) continue;
+    for (const block of m.content) {
+      if (block.type === "text") {
+        chars += block.text.length;
+      } else if (block.type === "tool_use") {
+        chars += block.name.length;
+        chars += JSON.stringify(block.input ?? {}).length;
+      } else if (block.type === "tool_result") {
+        if (typeof block.content === "string") {
+          chars += block.content.length;
+        } else if (Array.isArray(block.content)) {
+          for (const inner of block.content) {
+            if (inner.type === "text") chars += inner.text.length;
+          }
+        }
+      }
+    }
+  }
+  return Math.ceil(chars / CHARS_PER_TOKEN);
+}
+
 // ── Fetch context files from target repo (cached per cold start) ─────
 let cachedClaudeMd: string | null | undefined;
 // cachedKnowledge removed — now served by Vercel KV via @/lib/knowledge
@@ -419,6 +467,7 @@ export async function runAgent(
   _log("agent_start", { promptLength, question: userMessage.slice(0, 100) });
 
   let warned = false;
+  let contextWarned = false;
   let totalCacheRead = 0;
   let totalCacheCreation = 0;
   let totalInput = 0;
@@ -522,6 +571,22 @@ export async function runAgent(
       return { text: text || "I wasn't able to process that request.", issueProposal, references: dedupeRefs() };
     }
 
+    // Context-budget exhaustion guard: if we already warned and the model
+    // still issued tool calls, force exit with whatever text it produced
+    // rather than running another round that would crash with msg_too_long.
+    if (contextWarned) {
+      _log("agent_context_exhausted", { round });
+      const textBlocks = response.content.filter((b) => b.type === "text");
+      const text = textBlocks.map((b) => (b.type === "text" ? b.text : "")).join("\n");
+      return {
+        text:
+          text ||
+          "I gathered a lot of context while researching this. Here's what I've found so far — please ask a narrower follow-up if you need more detail on a specific area.",
+        issueProposal,
+        references: dedupeRefs(),
+      };
+    }
+
     // Add assistant message with all content blocks
     messages.push({ role: "assistant", content: response.content });
 
@@ -593,6 +658,28 @@ export async function runAgent(
       const existingContent = typeof lastResult.content === "string" ? lastResult.content : "";
       const combined = existingContent + "\n\n[SYSTEM] You are running low on time. Synthesize your answer NOW with what you have. Do not make more tool calls unless absolutely critical.";
       lastResult.content = truncateToolResult(combined).text;
+    }
+
+    // Context-budget warning: if appending these tool results would push
+    // total messages tokens over MESSAGES_SAFE_BUDGET_TOKENS, inject a
+    // synthesis directive so the model exits on the next round instead of
+    // crashing with msg_too_long. Same shape as the time warning above.
+    if (!contextWarned && toolResults.length > 0) {
+      const projectedTokens = estimateMessagesTokens([
+        ...messages,
+        { role: "user", content: toolResults },
+      ]);
+      if (projectedTokens > MESSAGES_SAFE_BUDGET_TOKENS) {
+        contextWarned = true;
+        _log("agent_context_warning", { round, projected_tokens: projectedTokens });
+        const lastResult = toolResults[toolResults.length - 1];
+        const existingContent =
+          typeof lastResult.content === "string" ? lastResult.content : "";
+        const combined =
+          existingContent +
+          "\n\n[SYSTEM] Context window is nearly full. Synthesize your answer NOW with what you have. Do NOT call more tools.";
+        lastResult.content = truncateToolResult(combined).text;
+      }
     }
 
     messages.push({ role: "user", content: toolResults });

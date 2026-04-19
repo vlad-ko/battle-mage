@@ -4,9 +4,12 @@ import {
   assembleSystemBlocks,
   safeInvokeTextDelta,
   truncateToolResult,
+  estimateMessagesTokens,
   MAX_TOOL_ROUNDS,
   TOOL_RESULT_MAX_CHARS,
+  MESSAGES_SAFE_BUDGET_TOKENS,
 } from "./claude";
+import type Anthropic from "@anthropic-ai/sdk";
 
 describe("assembleSystemPrompt", () => {
   const baseArgs = {
@@ -584,5 +587,115 @@ describe("truncateToolResult — prevents msg_too_long crashes", () => {
   it("exposes TOOL_RESULT_MAX_CHARS as a constant so callers can budget", () => {
     expect(TOOL_RESULT_MAX_CHARS).toBeGreaterThan(1000);
     expect(TOOL_RESULT_MAX_CHARS).toBeLessThan(200000);
+  });
+});
+
+describe("estimateMessagesTokens — cumulative context budgeting", () => {
+  it("returns 0 for an empty messages array", () => {
+    expect(estimateMessagesTokens([])).toBe(0);
+  });
+
+  it("counts string-content messages", () => {
+    const msgs: Anthropic.MessageParam[] = [
+      { role: "user", content: "hello world" },
+    ];
+    const tokens = estimateMessagesTokens(msgs);
+    // Rough estimate — some positive number roughly proportional to char count
+    expect(tokens).toBeGreaterThan(0);
+    expect(tokens).toBeLessThanOrEqual("hello world".length);
+  });
+
+  it("counts text blocks in content arrays", () => {
+    const msgs: Anthropic.MessageParam[] = [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "answer text here" }],
+      },
+    ];
+    const tokens = estimateMessagesTokens(msgs);
+    expect(tokens).toBeGreaterThan(0);
+    expect(tokens).toBeLessThanOrEqual("answer text here".length);
+  });
+
+  it("counts tool_use blocks (name + serialized input)", () => {
+    const msgs: Anthropic.MessageParam[] = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "toolu_123",
+            name: "search_code",
+            input: { query: "middleware auth" },
+          },
+        ],
+      },
+    ];
+    expect(estimateMessagesTokens(msgs)).toBeGreaterThan(0);
+  });
+
+  it("counts tool_result blocks with string content", () => {
+    const msgs: Anthropic.MessageParam[] = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_123",
+            content: "a".repeat(3000),
+          },
+        ],
+      },
+    ];
+    // 3000 chars / 3 chars-per-token = 1000 tokens
+    const tokens = estimateMessagesTokens(msgs);
+    expect(tokens).toBeGreaterThan(900);
+    expect(tokens).toBeLessThan(1100);
+  });
+
+  it("sums across multiple messages", () => {
+    const msgs: Anthropic.MessageParam[] = [
+      { role: "user", content: "question" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "let me check" },
+          {
+            type: "tool_use",
+            id: "t1",
+            name: "read_file",
+            input: { path: "src/foo.ts" },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "t1",
+            content: "file content here",
+          },
+        ],
+      },
+    ];
+    // Non-zero, and the sum should include all parts
+    expect(estimateMessagesTokens(msgs)).toBeGreaterThan(0);
+  });
+
+  it("scales monotonically with content size", () => {
+    const small: Anthropic.MessageParam[] = [{ role: "user", content: "a" }];
+    const large: Anthropic.MessageParam[] = [
+      { role: "user", content: "a".repeat(10000) },
+    ];
+    expect(estimateMessagesTokens(large)).toBeGreaterThan(
+      estimateMessagesTokens(small) * 100,
+    );
+  });
+
+  it("exposes MESSAGES_SAFE_BUDGET_TOKENS — well under Sonnet's 200k window", () => {
+    expect(MESSAGES_SAFE_BUDGET_TOKENS).toBeGreaterThan(50_000);
+    // Must leave room for system prompt + tools + output + safety
+    expect(MESSAGES_SAFE_BUDGET_TOKENS).toBeLessThan(180_000);
   });
 });
