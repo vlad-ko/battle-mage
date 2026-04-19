@@ -9,6 +9,8 @@ import { listCommitsTool, executeListCommits } from "./list-commits";
 import { listPRsTool, executeListPRs } from "./list-prs";
 
 // ── Tool registry ─────────────────────────────────────────────────────
+// Anthropic caches every block up through the one marked with cache_control.
+// Marking only the LAST tool caches the entire tools array as one chunk.
 export const tools: Tool[] = [
   searchCodeTool,
   readFileTool,
@@ -16,7 +18,7 @@ export const tools: Tool[] = [
   listCommitsTool,
   listPRsTool,
   createIssueTool,
-  saveKnowledgeTool,
+  { ...saveKnowledgeTool, cache_control: { type: "ephemeral" } },
 ];
 
 // ── References ────────────────────────────────────────────────────────

@@ -146,7 +146,22 @@ The `<output-contract>` block is the single most important piece of prompt engin
 
 ### Why the stable/volatile split
 
-The zoning sets up a future Anthropic prompt-caching pass (tracked in #71): a single `cache_control: {type: "ephemeral"}` breakpoint placed at the end of the stable zone will keep ~80% of the system prompt in cache across turns, since only the volatile tail changes between a question and its follow-up. XML tags also give the model stronger steering signals than plain-text headings.
+The zoning enables Anthropic prompt caching. A single `cache_control: {type: "ephemeral"}` breakpoint sits at the end of the stable zone, so the entire stable prompt is cached and served from cache on subsequent turns in the same thread (5-minute TTL). The volatile tail (KB, feedback, repo-index) changes per turn and stays outside the cache. XML tags also give the model stronger steering signals than plain-text headings.
+
+### Prompt caching (active)
+
+`assembleSystemBlocks()` returns an `Anthropic.TextBlockParam[]` rather than a plain string. The first block carries `cache_control: {type: "ephemeral"}` — Anthropic caches every block up through that marker. The second block (volatile data) has no cache_control and is processed uncached on every turn.
+
+The `tools` array in `src/tools/index.ts` is similarly cached: the last tool (`save_knowledge`) carries the cache_control marker so all seven tool definitions cache together.
+
+Cache metrics are logged in the `agent_complete` event per turn:
+
+- `cache_read_tokens` — tokens served from cache (fast path)
+- `cache_creation_tokens` — tokens written to cache on a miss
+- `input_tokens` — uncached input (the volatile tail + messages)
+- `output_tokens` — model output
+
+A warm thread should see `cache_read_tokens` dominate after the first turn. A cold turn shows all input as `cache_creation_tokens` — expected on the first request and after any 5-minute idle period. Sonnet's minimum cacheable size is 1024 tokens; our stable zone is well above that.
 
 ## The Agent Loop
 

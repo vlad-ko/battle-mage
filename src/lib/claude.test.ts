@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { assembleSystemPrompt, MAX_TOOL_ROUNDS } from "./claude";
+import { assembleSystemPrompt, assembleSystemBlocks, MAX_TOOL_ROUNDS } from "./claude";
 
 describe("assembleSystemPrompt", () => {
   const baseArgs = {
@@ -378,5 +378,85 @@ describe("assembleSystemPrompt", () => {
       expect(body).toContain("let me check");
       expect(body).toContain("[text](url)");
     });
+  });
+});
+
+describe("assembleSystemBlocks — prompt caching", () => {
+  const baseArgs = {
+    owner: "acme",
+    repo: "backend",
+    claudeMd: null,
+    knowledge: null,
+    feedback: null,
+    repoIndex: null,
+    pathAnnotations: null,
+  };
+
+  it("returns an array of text content blocks", () => {
+    const blocks = assembleSystemBlocks(baseArgs);
+    expect(Array.isArray(blocks)).toBe(true);
+    expect(blocks.length).toBeGreaterThanOrEqual(2);
+    for (const block of blocks) {
+      expect(block.type).toBe("text");
+      expect(typeof block.text).toBe("string");
+      expect(block.text.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("marks ONLY the stable (first) block with ephemeral cache_control", () => {
+    const blocks = assembleSystemBlocks(baseArgs);
+    expect(blocks[0].cache_control).toEqual({ type: "ephemeral" });
+    for (let i = 1; i < blocks.length; i++) {
+      expect(
+        blocks[i].cache_control,
+        `block[${i}] must not be cached — it is the volatile zone`,
+      ).toBeUndefined();
+    }
+  });
+
+  it("stable block ends at </output-contract> — nothing volatile above the breakpoint", () => {
+    const blocks = assembleSystemBlocks({
+      ...baseArgs,
+      claudeMd: "CLAUDE_MARKER",
+      knowledge: "- KB_MARKER",
+      repoIndex: "- *x*: REPO_INDEX_MARKER",
+    });
+    const stable = blocks[0].text;
+    expect(stable).toContain("</output-contract>");
+    // None of the volatile markers may leak into the cached block
+    expect(stable).not.toContain("CLAUDE_MARKER");
+    expect(stable).not.toContain("KB_MARKER");
+    expect(stable).not.toContain("REPO_INDEX_MARKER");
+    expect(stable).not.toContain("Project Context");
+    expect(stable).not.toContain("learned corrections");
+  });
+
+  it("volatile block carries repo-context and conditional data", () => {
+    const blocks = assembleSystemBlocks({
+      ...baseArgs,
+      claudeMd: "CLAUDE_MARKER",
+      knowledge: "- KB_MARKER",
+    });
+    const volatile = blocks.slice(1).map((b) => b.text).join("\n");
+    expect(volatile).toContain("<repo-context>");
+    expect(volatile).toContain("acme");
+    expect(volatile).toContain("backend");
+    expect(volatile).toContain("CLAUDE_MARKER");
+    expect(volatile).toContain("KB_MARKER");
+  });
+
+  it("concatenated blocks match assembleSystemPrompt output byte-for-byte", () => {
+    // Invariant: the block-based API and the string API produce identical
+    // content — only the cache shape differs.
+    const inputs = {
+      ...baseArgs,
+      claudeMd: "# Project\nAll about widgets",
+      knowledge: "- a fact",
+      feedback: "- some feedback",
+      repoIndex: "- *topic*: src/foo.ts",
+    };
+    const fromBlocks = assembleSystemBlocks(inputs).map((b) => b.text).join("");
+    const fromString = assembleSystemPrompt(inputs);
+    expect(fromBlocks).toBe(fromString);
   });
 });
