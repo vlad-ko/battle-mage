@@ -1,15 +1,34 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { log, createRequestLogger } from "./logger";
 
+// Mock Sentry so we can assert the logger dual-emits without touching
+// the real SDK (which would be a no-op anyway without a DSN).
+const sentryLoggerInfo = vi.fn();
+const sentryLoggerError = vi.fn();
+vi.mock("@sentry/nextjs", () => ({
+  logger: {
+    info: (...args: unknown[]) => sentryLoggerInfo(...args),
+    error: (...args: unknown[]) => sentryLoggerError(...args),
+    // template tag used by Sentry v10 `logger.info\`...\`` calls — we
+    // don't use it but the SDK expects it to exist as a property.
+    fmt: (strings: TemplateStringsArray, ..._values: unknown[]) => strings.join(""),
+  },
+}));
+
 describe("log", () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    sentryLoggerInfo.mockClear();
+    sentryLoggerError.mockClear();
   });
 
   afterEach(() => {
     consoleSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
   });
 
   it("outputs valid JSON", () => {
@@ -34,6 +53,31 @@ describe("log", () => {
     const output = consoleSpy.mock.calls[0][0] as string;
     const parsed = JSON.parse(output);
     expect(parsed.event).toBe("simple_event");
+  });
+
+  it("dual-emits to Sentry.logger.info for non-error events", () => {
+    log("agent_complete", { rounds: 3, input_tokens: 1000 });
+    expect(sentryLoggerInfo).toHaveBeenCalledOnce();
+    // First arg is the event name; second is a context object with the data
+    const [eventArg, ctxArg] = sentryLoggerInfo.mock.calls[0];
+    expect(eventArg).toBe("agent_complete");
+    expect(ctxArg).toMatchObject({ rounds: 3, input_tokens: 1000 });
+    // Sentry.logger.error must NOT be called for non-error events
+    expect(sentryLoggerError).not.toHaveBeenCalled();
+  });
+
+  it("dual-emits to Sentry.logger.error for error events", () => {
+    log("agent_api_error", { status: 500 });
+    expect(sentryLoggerError).toHaveBeenCalledOnce();
+    expect(sentryLoggerInfo).not.toHaveBeenCalled();
+    const [eventArg, ctxArg] = sentryLoggerError.mock.calls[0];
+    expect(eventArg).toBe("agent_api_error");
+    expect(ctxArg).toMatchObject({ status: 500 });
+  });
+
+  it("dual-emits even when data is undefined", () => {
+    log("bare_event");
+    expect(sentryLoggerInfo).toHaveBeenCalledWith("bare_event", expect.any(Object));
   });
 });
 

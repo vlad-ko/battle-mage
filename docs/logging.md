@@ -14,6 +14,12 @@ vercel logs --prod --follow # Live tail
 
 **Retention:** 1 hour (Hobby), 1 day (Pro), 3 days (Enterprise). For longer retention, set up a [Log Drain](https://vercel.com/docs/observability/log-drains) to Datadog, Axiom, or similar.
 
+**Sentry (primary sink for production):** Vercel's `vercel logs` CLI drops writes made inside Next.js `after()` callbacks — a known serverless quirk. All of battle-mage's per-round agent logs (`agent_start`, `agent_tool_call`, `agent_complete` with cache + token metrics, `answer_posted`) happen inside `after()`, so they surface through Sentry, not the Vercel log drain.
+
+Set `SENTRY_DSN` in your Vercel project env vars (from your Sentry.io project). Without a DSN the SDK is a silent no-op — console.log is the only sink, which works fine for sync code but misses the `after()` path. With a DSN, every `log(...)` call dual-emits: once to stdout and once to `Sentry.logger.info` / `.error`. See [Sentry Next.js SDK docs](https://docs.sentry.io/platforms/javascript/guides/nextjs/) for setup.
+
+Why this works on Vercel when stdout doesn't: `@sentry/nextjs` internally calls `vercelWaitUntil(Sentry.flush())` to hold the function container open until events are transmitted. That's the same mechanism `getsentry/junior` uses on their Vercel-hosted Hono agent.
+
 ## Log Format
 
 Every log entry is a single JSON line:
@@ -128,4 +134,10 @@ rlog("step_two", { data: "..." });
 // Both entries have the same requestId
 ```
 
-The logger outputs to `console.log` with JSON serialization — Vercel captures this automatically. No external dependencies needed.
+Every call dual-emits:
+1. `console.log` (or `console.error` for events containing "error") with a JSON payload — surfaces in Vercel's log drain for sync code.
+2. `Sentry.logger.info` / `.error` — surfaces in Sentry.io for code running inside `after()` callbacks (where stdout is unreliable on Vercel).
+
+The Sentry path is a silent no-op when `SENTRY_DSN` is unset (local dev, CI, tests), so the logger works identically without Sentry configured.
+
+Sentry init lives in `sentry.server.config.ts` (project root) and is loaded via `instrumentation.ts` on the Node runtime. See those files for tunable options (`SENTRY_TRACES_SAMPLE_RATE`, etc.).
