@@ -18,6 +18,7 @@ import { getAllKnowledge } from "@/lib/knowledge";
 import { buildCorrectionActions } from "@/lib/auto-correct";
 import { buildThinkingMessage, THINKING_HEADER } from "@/lib/progress";
 import { toSlackMrkdwn } from "@/lib/mrkdwn";
+import { createThrottledUpdater } from "@/lib/slack-throttle";
 import { createRequestLogger } from "@/lib/logger";
 import { getCachedTopics } from "@/lib/repo-index";
 import { matchTopicsToQuestion, buildQuestionHints } from "@/lib/topic-match";
@@ -109,27 +110,32 @@ export async function POST(request: NextRequest) {
           rlog("topic_hints_injected", { topics: topicMatches.map((m) => m.topic), fileCount: topicMatches.reduce((s, m) => s + m.paths.length, 0) });
         }
 
-        const result = await runAgent(augmentedMessage, async (toolName, input) => {
+        // Throttle streaming text deltas into the thinking message. Slack's
+        // chat.update is ~1/sec per message; 1200ms keeps us safely under.
+        const streamThrottle = createThrottledUpdater(async (snapshot) => {
           if (thinkingTs) {
-            await updateMessage(channel, thinkingTs, buildThinkingMessage(toolName, input));
+            await updateMessage(channel, thinkingTs, toSlackMrkdwn(snapshot));
           }
-        }, mentionHistory, rlog);
-        rlog("agent_complete", { rounds: result.references.length, hasProposal: !!result.issueProposal, refCount: result.references.length });
+        }, 1200);
 
-        // Update thinking message to "composing" before posting answer
-        if (thinkingTs) {
-          await updateMessage(channel, thinkingTs, buildThinkingMessage("composing", {}));
-        }
+        const result = await runAgent(
+          augmentedMessage,
+          async (toolName, input) => {
+            if (thinkingTs) {
+              await updateMessage(channel, thinkingTs, buildThinkingMessage(toolName, input));
+            }
+          },
+          mentionHistory,
+          rlog,
+          (snapshot) => streamThrottle.update(snapshot),
+        );
+        // Drain any pending streamed edit so it doesn't race the final write
+        await streamThrottle.flush();
+        rlog("agent_complete", { rounds: result.references.length, hasProposal: !!result.issueProposal, refCount: result.references.length });
 
         const text = toSlackMrkdwn(result.text);
         const rankedRefs = rankReferences(result.references, result.text);
         const refsFooter = formatReferences(rankedRefs);
-
-        // Delete thinking message — the answer replaces it
-        if (thinkingTs) {
-          await deleteMessage(channel, thinkingTs);
-          thinkingTs = undefined; // Mark as cleaned up
-        }
 
         if (result.issueProposal) {
           const proposal = result.issueProposal;
@@ -137,23 +143,35 @@ export async function POST(request: NextRequest) {
             ? `\nLabels: ${proposal.labels.join(", ")}`
             : "";
 
-          await replyInThread(
-            channel,
-            threadTs,
-            [
-              text,
-              "",
-              "───────────────────",
-              `*Proposed Issue:* ${proposal.title}${labelsText}`,
-              "",
-              proposal.body,
-              "",
-              "React with :white_check_mark: to create this issue, or ignore to cancel.",
-            ].join("\n") + refsFooter,
-          );
+          const finalBody = [
+            text,
+            "",
+            "───────────────────",
+            `*Proposed Issue:* ${proposal.title}${labelsText}`,
+            "",
+            proposal.body,
+            "",
+            "React with :white_check_mark: to create this issue, or ignore to cancel.",
+          ].join("\n") + refsFooter;
+
+          if (thinkingTs) {
+            // Reuse the thinking/streamed message as the final answer.
+            await updateMessage(channel, thinkingTs, finalBody);
+            thinkingTs = undefined; // Mark as finalized — prevent finally-cleanup.
+          } else {
+            await replyInThread(channel, threadTs, finalBody);
+          }
           rlog("answer_posted", { channel, threadTs });
         } else {
-          const replyTs = await replyInThread(channel, threadTs, text + refsFooter);
+          const finalBody = text + refsFooter;
+          let replyTs: string | undefined;
+          if (thinkingTs) {
+            await updateMessage(channel, thinkingTs, finalBody);
+            replyTs = thinkingTs;
+            thinkingTs = undefined; // Mark as finalized.
+          } else {
+            replyTs = await replyInThread(channel, threadTs, finalBody);
+          }
           rlog("answer_posted", { channel, threadTs });
 
           // Store Q&A context so 👍/👎 reactions can reference it
@@ -265,24 +283,29 @@ export async function POST(request: NextRequest) {
         const followupMatches = matchTopicsToQuestion(cleanMessage, followupTopics);
         const followupMessage = buildQuestionHints(cleanMessage, followupMatches);
 
-        const result = await runAgent(followupMessage, async (toolName, input) => {
+        // Throttle streaming text deltas into the thinking message.
+        const followupThrottle = createThrottledUpdater(async (snapshot) => {
           if (thinkTs) {
-            await updateMessage(channel, thinkTs, buildThinkingMessage(toolName, input));
+            await updateMessage(channel, thinkTs, toSlackMrkdwn(snapshot));
           }
-        }, history, rlog);
+        }, 1200);
 
-        if (thinkTs) {
-          await updateMessage(channel, thinkTs, buildThinkingMessage("composing", {}));
-        }
+        const result = await runAgent(
+          followupMessage,
+          async (toolName, input) => {
+            if (thinkTs) {
+              await updateMessage(channel, thinkTs, buildThinkingMessage(toolName, input));
+            }
+          },
+          history,
+          rlog,
+          (snapshot) => followupThrottle.update(snapshot),
+        );
+        await followupThrottle.flush();
 
         const text = toSlackMrkdwn(result.text);
         const rankedRefs = rankReferences(result.references, result.text);
         const refsFooter = formatReferences(rankedRefs);
-
-        if (thinkTs) {
-          await deleteMessage(channel, thinkTs);
-          thinkTs = undefined; // Mark as cleaned up
-        }
 
         if (result.issueProposal) {
           const proposal = result.issueProposal;
@@ -290,22 +313,33 @@ export async function POST(request: NextRequest) {
             ? `\nLabels: ${proposal.labels.join(", ")}`
             : "";
 
-          await replyInThread(
-            channel,
-            threadTs,
-            [
-              text,
-              "",
-              "───────────────────",
-              `*Proposed Issue:* ${proposal.title}${labelsText}`,
-              "",
-              proposal.body,
-              "",
-              "React with :white_check_mark: to create this issue, or ignore to cancel.",
-            ].join("\n") + refsFooter,
-          );
+          const finalBody = [
+            text,
+            "",
+            "───────────────────",
+            `*Proposed Issue:* ${proposal.title}${labelsText}`,
+            "",
+            proposal.body,
+            "",
+            "React with :white_check_mark: to create this issue, or ignore to cancel.",
+          ].join("\n") + refsFooter;
+
+          if (thinkTs) {
+            await updateMessage(channel, thinkTs, finalBody);
+            thinkTs = undefined;
+          } else {
+            await replyInThread(channel, threadTs, finalBody);
+          }
         } else {
-          const replyTs = await replyInThread(channel, threadTs, text + refsFooter);
+          const finalBody = text + refsFooter;
+          let replyTs: string | undefined;
+          if (thinkTs) {
+            await updateMessage(channel, thinkTs, finalBody);
+            replyTs = thinkTs;
+            thinkTs = undefined;
+          } else {
+            replyTs = await replyInThread(channel, threadTs, finalBody);
+          }
 
           if (replyTs) {
             await storeQAContext(channel, replyTs, {

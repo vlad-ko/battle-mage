@@ -165,11 +165,13 @@ A warm thread should see `cache_read_tokens` dominate after the first turn. A co
 
 ## The Agent Loop
 
-The agent loop is a standard Claude tool-use loop with a hard cap of 15 rounds:
+The agent loop is a streaming Claude tool-use loop with a hard cap of 15 rounds:
 
 ```
 for round in 0..MAX_TOOL_ROUNDS:
-    response = claude.messages.create(system, tools, messages)
+    stream = claude.messages.stream(system, tools, messages)
+    stream.on("text", (_delta, snapshot) => onTextDelta(snapshot))   // Slack streaming
+    response = await stream.finalMessage()
 
     if response.stop_reason == "end_turn":
         return text + references
@@ -185,7 +187,34 @@ if loop exhausted:
     return "hit maximum tool calls" message
 ```
 
-Key behaviors:
+Every round uses `anthropic.messages.stream()` and subscribes to `text` events. On the final round — where Claude produces only text (no `tool_use`) — deltas flow through to Slack in near-real-time. On tool-use rounds, the text event typically doesn't fire (the model emits only tool_use blocks under the output contract), so progress emoji owns the message.
+
+On any streaming error (SDK transport blip), `runAgent` falls back transparently to `anthropic.messages.create()` for that round — the turn keeps going, just without live deltas.
+
+### Streaming into Slack
+
+Text deltas are coalesced by `createThrottledUpdater` in `src/lib/slack-throttle.ts`:
+
+- First update fires immediately.
+- Rapid subsequent updates within 1200 ms are coalesced and fire once with the latest accumulated snapshot — safely below Slack's ~1 edit/sec per-message rate limit.
+- `flush()` drains any pending edit before the final-answer write, preventing a race.
+
+Slack mrkdwn conversion (`toSlackMrkdwn`) runs on every streamed edit as a safety net — with the output contract in place, the model emits single-asterisk bold natively so conversion is near-idempotent.
+
+### One-message lifecycle
+
+The thinking message is created once and **reused as the final answer** — no delete-and-repost flicker. Sequence:
+
+1. Post thinking message: "Battle Mage is working…"
+2. Tool round: emoji + status via `onProgress` → `updateMessage(thinkingTs, ...)`
+3. Final round: text deltas via `onTextDelta` → throttled `updateMessage(thinkingTs, ...)`
+4. `runAgent` returns; `streamThrottle.flush()` drains pending edits
+5. Final edit: formatted text + references footer (and proposal block if present) → `updateMessage(thinkingTs, finalBody)`
+6. Store Q&A context using the former `thinkingTs` (now the answer `ts`)
+
+The `finally` block still deletes the thinking message as a safety net if the turn crashed mid-flight.
+
+### Other key behaviors
 
 - **References are collected from tool results**, not from Claude's text. Each tool that accesses a file or issue returns structured `Reference` objects with labels, URLs, and types (`file`, `doc`, `issue`, `pr`, `commit`).
 - **References are ranked** by the source-of-truth hierarchy before display: code files first, then tests, then cited refs, then docs, then uncited list results. This is done by `rankReferences()` in `references.ts`.
