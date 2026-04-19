@@ -1,4 +1,6 @@
-// Sentry initialization for the Node runtime. Loaded from instrumentation.ts.
+// This file configures the initialization of Sentry on the server.
+// Loaded from src/instrumentation.ts on the Node runtime.
+// https://docs.sentry.io/platforms/javascript/guides/nextjs/
 //
 // Why Sentry and not just console.log?
 // Logs emitted from inside Next.js `after()` callbacks are dropped by
@@ -6,17 +8,18 @@
 // quirk tracked in #90. Sentry's Next.js SDK internally calls
 // `vercelWaitUntil(Sentry.flush())` to keep the function alive until
 // events are transmitted, so after() events land reliably. Same
-// approach junior (getsentry/junior) uses.
+// approach getsentry/junior uses on the same stack.
 //
-// When SENTRY_DSN is not set (local dev, CI, tests), the SDK is a
-// silent no-op — no events sent, no network traffic.
+// When SENTRY_DSN is unset the SDK falls back to the hardcoded public
+// DSN below (which is safe — it's already in every client bundle).
+
 import * as Sentry from "@sentry/nextjs";
 
-// Parse SENTRY_TRACES_SAMPLE_RATE defensively. Non-numeric values (e.g.
-// the env var accidentally set to "true" or "full") would otherwise
-// become NaN and give Sentry undefined sampling behavior. Clamp to the
-// [0, 1] range the SDK expects; fall back to 1 (full sampling) on any
-// invalid input so a misconfigured env doesn't silently disable tracing.
+// Parse SENTRY_TRACES_SAMPLE_RATE defensively. Non-numeric values
+// (e.g. env var accidentally set to "true" or "full") would otherwise
+// become NaN and give Sentry undefined sampling behavior. Clamp to
+// [0, 1] and fall back to 1 (full sampling) on invalid input so a
+// misconfigured env never silently disables tracing.
 function parseTracesSampleRate(raw: string | undefined): number {
   if (raw === undefined || raw === "") return 1;
   const n = Number(raw);
@@ -25,35 +28,34 @@ function parseTracesSampleRate(raw: string | undefined): number {
 }
 
 Sentry.init({
-  dsn: process.env.SENTRY_DSN,
-  // Tag events with the environment they came from. Vercel sets
-  // VERCEL_ENV = "production" | "preview" | "development" automatically.
+  // Public DSN — appears in client bundles regardless. Hardcoded per the
+  // Sentry wizard's canonical pattern. SENTRY_DSN env var overrides.
+  dsn:
+    process.env.SENTRY_DSN ??
+    "https://ddaed8e7978f25625da4418ccb2633c5@o26192.ingest.us.sentry.io/4511249153851392",
+
+  // Tag events with the environment they came from.
   environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV,
-  // Vercel sets VERCEL_GIT_COMMIT_SHA on every build, so releases
-  // correlate with deploys with zero extra configuration.
+  // Vercel sets VERCEL_GIT_COMMIT_SHA on every build — releases correlate
+  // with deploys automatically.
   release: process.env.VERCEL_GIT_COMMIT_SHA,
-  // Full sampling by default — battle-mage volume is low and we want
-  // every turn traceable. Override with SENTRY_TRACES_SAMPLE_RATE if
-  // volume ever grows enough to need throttling.
+
+  // Full sampling by default; override with SENTRY_TRACES_SAMPLE_RATE.
   tracesSampleRate: parseTracesSampleRate(process.env.SENTRY_TRACES_SAMPLE_RATE),
-  // Disable entirely when no DSN is configured. Important for tests,
-  // local dev without Sentry, and CI — avoids accidental event sends.
-  enabled: Boolean(process.env.SENTRY_DSN),
+
   // v10 first-class log events. Pairs with Sentry.logger.info() calls
   // from src/lib/logger.ts so structured events reach Sentry.io instead
   // of (or in addition to) stdout.
   enableLogs: true,
-  // Off by default — we don't need IP / User-Agent on request errors.
-  // Our events come via Slack webhooks (bot-controlled), so the IP is
-  // Slack's and carries no debugging value. Operators who want it can
-  // toggle this on in a forked config.
+
+  // Off by default — we don't need IP/User-Agent. Events come from Slack
+  // webhooks where the IP is Slack's and carries no debugging value.
   sendDefaultPii: false,
-  // Auto-instruments Vercel AI SDK calls with gen_ai.* semantic-
-  // convention spans (invoke_agent, execute_tool, etc.). We're on the
-  // bare Anthropic SDK, not the Vercel AI SDK, so this is mostly
-  // dormant — but leaving it enabled means we get spans for free if
-  // we ever migrate.
+
   integrations: [
+    // Auto-instruments Vercel AI SDK calls with `gen_ai.*` semantic-
+    // convention spans. Mostly dormant — we use the bare Anthropic SDK
+    // today — but free once we migrate per #81.
     Sentry.vercelAIIntegration({
       recordInputs: true,
       recordOutputs: true,
