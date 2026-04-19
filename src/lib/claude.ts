@@ -327,10 +327,45 @@ export interface AgentResult {
 }
 
 export type ProgressCallback = (toolName: string, input: Record<string, unknown>) => void | Promise<void>;
+export type TextDeltaCallback = (snapshot: string) => void | Promise<void>;
+
+// Invokes an optional text-delta callback safely. Swallows both synchronous
+// throws and async rejections so a faulty handler cannot surface as an
+// unhandled rejection and destabilize the runtime. Exported for testing.
+export function safeInvokeTextDelta(
+  onTextDelta: TextDeltaCallback | undefined,
+  snapshot: string,
+): void {
+  if (!onTextDelta) return;
+  Promise.resolve()
+    .then(() => onTextDelta(snapshot))
+    .catch(() => {});
+}
 
 export interface ConversationTurn {
   role: "user" | "assistant";
   content: string;
+}
+
+async function anthropicCall(
+  params: Anthropic.MessageCreateParamsNonStreaming,
+  onTextDelta: TextDeltaCallback | undefined,
+  _log: RequestLogger,
+  round: number,
+): Promise<Anthropic.Message> {
+  try {
+    const stream = anthropic.messages.stream(params);
+    stream.on("text", (_delta, snapshot) => {
+      safeInvokeTextDelta(onTextDelta, snapshot);
+    });
+    return await stream.finalMessage();
+  } catch (streamErr) {
+    _log("agent_stream_fallback", {
+      round,
+      error: streamErr instanceof Error ? streamErr.message : String(streamErr),
+    });
+    return await anthropic.messages.create(params);
+  }
 }
 
 export async function runAgent(
@@ -338,6 +373,7 @@ export async function runAgent(
   onProgress?: ProgressCallback,
   conversationHistory?: ConversationTurn[],
   rlog?: RequestLogger,
+  onTextDelta?: TextDeltaCallback,
 ): Promise<AgentResult> {
   // Use request-scoped logger if provided, fall back to bare log
   const _log: RequestLogger = rlog ?? log;
@@ -380,13 +416,18 @@ export async function runAgent(
 
     let response;
     try {
-      response = await anthropic.messages.create({
-        model: MODEL,
-        max_tokens: 4096,
-        system: systemBlocks,
-        tools,
-        messages,
-      });
+      response = await anthropicCall(
+        {
+          model: MODEL,
+          max_tokens: 4096,
+          system: systemBlocks,
+          tools,
+          messages,
+        },
+        onTextDelta,
+        _log,
+        round,
+      );
       totalInput += response.usage.input_tokens;
       totalOutput += response.usage.output_tokens;
       totalCacheRead += response.usage.cache_read_input_tokens ?? 0;
