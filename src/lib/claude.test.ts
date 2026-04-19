@@ -543,13 +543,22 @@ describe("truncateToolResult — prevents msg_too_long crashes", () => {
     expect(truncated).toBe(false);
   });
 
-  it("truncates content longer than the cap", () => {
+  it("truncates content longer than the cap and respects TOOL_RESULT_MAX_CHARS as a HARD cap (head + tail ≤ cap)", () => {
     const input = "a".repeat(TOOL_RESULT_MAX_CHARS + 5000);
     const { text, truncated } = truncateToolResult(input);
     expect(truncated).toBe(true);
-    // Final output should be close to cap — some overhead for the tail suffix
-    expect(text.length).toBeLessThan(TOOL_RESULT_MAX_CHARS + 1000);
-    expect(text.length).toBeGreaterThan(TOOL_RESULT_MAX_CHARS - 1000);
+    // Hard cap: output must never exceed TOOL_RESULT_MAX_CHARS — the tail
+    // suffix is budgeted inside the cap, not added on top.
+    expect(text.length).toBeLessThanOrEqual(TOOL_RESULT_MAX_CHARS);
+    // And it should be close to the cap, not far under — we're using most
+    // of the available budget for the head.
+    expect(text.length).toBeGreaterThan(TOOL_RESULT_MAX_CHARS - 500);
+  });
+
+  it("produces output exactly equal to TOOL_RESULT_MAX_CHARS for any input well over the cap", () => {
+    const input = "x".repeat(TOOL_RESULT_MAX_CHARS * 2);
+    const { text } = truncateToolResult(input);
+    expect(text.length).toBe(TOOL_RESULT_MAX_CHARS);
   });
 
   it("appends a tail suffix that the model can understand", () => {

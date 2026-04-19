@@ -30,18 +30,20 @@ export const RECENCY_WINDOW_DAYS = 30;
 // see the truncation firing on typical reads.
 export const TOOL_RESULT_MAX_CHARS = 30_000;
 
-// Pure helper: truncates a tool_result to TOOL_RESULT_MAX_CHARS and appends
-// a tail suffix that tells the model the result was cut and how to recover.
-// Exported for unit testing.
+// Pure helper: truncates a tool_result to TOOL_RESULT_MAX_CHARS INCLUSIVE
+// of the tail suffix, so callers can budget against the constant as a
+// true hard cap. Exported for unit testing.
 export function truncateToolResult(text: string): { text: string; truncated: boolean } {
   if (text.length <= TOOL_RESULT_MAX_CHARS) {
     return { text, truncated: false };
   }
-  const head = text.slice(0, TOOL_RESULT_MAX_CHARS);
+  // Compose the tail first so we know the budget left for the head.
   const tail =
     `\n\n[tool result truncated — original length ${text.length} chars, ` +
     `capped at ${TOOL_RESULT_MAX_CHARS}. If you need more of this content, ` +
     `call the tool again with a narrower query or a specific line range.]`;
+  const headLen = Math.max(0, TOOL_RESULT_MAX_CHARS - tail.length);
+  const head = text.slice(0, headLen);
   return { text: head + tail, truncated: true };
 }
 
@@ -581,13 +583,16 @@ export async function runAgent(
       }
     }
 
-    // Inject time budget warning by appending to the last tool result
+    // Inject time budget warning by appending to the last tool result.
+    // Re-run truncateToolResult on the combined string so the cap stays
+    // honored even when appending to a result that is already at cap.
     if (!warned && shouldWarnBudget(startTime) && toolResults.length > 0) {
       warned = true;
       _log("agent_budget_warning", { round, elapsed_ms: Date.now() - startTime });
       const lastResult = toolResults[toolResults.length - 1];
       const existingContent = typeof lastResult.content === "string" ? lastResult.content : "";
-      lastResult.content = existingContent + "\n\n[SYSTEM] You are running low on time. Synthesize your answer NOW with what you have. Do not make more tool calls unless absolutely critical.";
+      const combined = existingContent + "\n\n[SYSTEM] You are running low on time. Synthesize your answer NOW with what you have. Do not make more tool calls unless absolutely critical.";
+      lastResult.content = truncateToolResult(combined).text;
     }
 
     messages.push({ role: "user", content: toolResults });
