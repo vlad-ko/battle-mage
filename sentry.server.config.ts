@@ -12,6 +12,18 @@
 // silent no-op — no events sent, no network traffic.
 import * as Sentry from "@sentry/nextjs";
 
+// Parse SENTRY_TRACES_SAMPLE_RATE defensively. Non-numeric values (e.g.
+// the env var accidentally set to "true" or "full") would otherwise
+// become NaN and give Sentry undefined sampling behavior. Clamp to the
+// [0, 1] range the SDK expects; fall back to 1 (full sampling) on any
+// invalid input so a misconfigured env doesn't silently disable tracing.
+function parseTracesSampleRate(raw: string | undefined): number {
+  if (raw === undefined || raw === "") return 1;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(1, Math.max(0, n));
+}
+
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
   // Tag events with the environment they came from. Vercel sets
@@ -23,7 +35,7 @@ Sentry.init({
   // Full sampling by default — battle-mage volume is low and we want
   // every turn traceable. Override with SENTRY_TRACES_SAMPLE_RATE if
   // volume ever grows enough to need throttling.
-  tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? "1"),
+  tracesSampleRate: parseTracesSampleRate(process.env.SENTRY_TRACES_SAMPLE_RATE),
   // Disable entirely when no DSN is configured. Important for tests,
   // local dev without Sentry, and CI — avoids accidental event sends.
   enabled: Boolean(process.env.SENTRY_DSN),
@@ -31,10 +43,11 @@ Sentry.init({
   // from src/lib/logger.ts so structured events reach Sentry.io instead
   // of (or in addition to) stdout.
   enableLogs: true,
-  // Attach Slack user IDs / GitHub repo info when available. Nothing
-  // here is PII in the classic sense, but sendDefaultPii = true also
-  // captures IP + user-agent on HTTP requests which helps debugging.
-  sendDefaultPii: true,
+  // Off by default — we don't need IP / User-Agent on request errors.
+  // Our events come via Slack webhooks (bot-controlled), so the IP is
+  // Slack's and carries no debugging value. Operators who want it can
+  // toggle this on in a forked config.
+  sendDefaultPii: false,
   // Auto-instruments Vercel AI SDK calls with gen_ai.* semantic-
   // convention spans (invoke_agent, execute_tool, etc.). We're on the
   // bare Anthropic SDK, not the Vercel AI SDK, so this is mostly

@@ -1,6 +1,11 @@
-# Logging
+# Observability
 
-Battle Mage uses structured JSON logging to trace every event from an @mention through the agent loop to the final response. Logs are captured automatically by Vercel's serverless function runtime.
+Battle Mage observability has two layers:
+
+1. **Structured logs** — every event (mention, tool call, agent completion, answer posted, errors) is emitted as a JSON line to stdout AND as a Sentry event. See "Log Format" and "Event Catalog" below.
+2. **Tracing** — planned. OpenTelemetry `gen_ai.*` spans via `vercelAIIntegration` (already wired in `sentry.server.config.ts`) will auto-capture agent loop spans once we migrate to the Vercel AI SDK. Tracked separately in [#81](https://github.com/vlad-ko/battle-mage/issues/81).
+
+The rest of this doc focuses on logs — traces will get their own section once spans are flowing.
 
 ## Viewing Logs
 
@@ -17,6 +22,8 @@ vercel logs --prod --follow # Live tail
 **Sentry (primary sink for production):** Vercel's `vercel logs` CLI drops writes made inside Next.js `after()` callbacks — a known serverless quirk. All of battle-mage's per-round agent logs (`agent_start`, `agent_tool_call`, `agent_complete` with cache + token metrics, `answer_posted`) happen inside `after()`, so they surface through Sentry, not the Vercel log drain.
 
 Set `SENTRY_DSN` in your Vercel project env vars (from your Sentry.io project). Without a DSN the SDK is a silent no-op — console.log is the only sink, which works fine for sync code but misses the `after()` path. With a DSN, every `log(...)` call dual-emits: once to stdout and once to `Sentry.logger.info` / `.error`. See [Sentry Next.js SDK docs](https://docs.sentry.io/platforms/javascript/guides/nextjs/) for setup.
+
+**Operator note — data that flows to Sentry.** Structured log payloads include Slack question snippets (first 100 chars), tool input parameters, and GitHub repo paths. `sendDefaultPii` is off by default so IP and user-agent are NOT attached. If your compliance posture forbids this data leaving your tenant, either (a) don't set `SENTRY_DSN` (degrades to stdout-only; `after()` logs will be missing per #90), (b) self-host Sentry via their on-prem offering, or (c) add a redaction layer inside `src/lib/logger.ts` before the `Sentry.logger.info` call.
 
 Why this works on Vercel when stdout doesn't: `@sentry/nextjs` internally calls `vercelWaitUntil(Sentry.flush())` to hold the function container open until events are transmitted. That's the same mechanism `getsentry/junior` uses on their Vercel-hosted Hono agent.
 
