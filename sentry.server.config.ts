@@ -30,9 +30,12 @@ function parseTracesSampleRate(raw: string | undefined): number {
 Sentry.init({
   // Public DSN — appears in client bundles regardless. Hardcoded per the
   // Sentry wizard's canonical pattern. SENTRY_DSN env var overrides.
+  // Project lives in the wealthbot Sentry org alongside sibling projects;
+  // previously targeted codecov but that org's Logs quota was zero and
+  // every log envelope 429'd with `log_byte_usage_exceeded` — see #90.
   dsn:
     process.env.SENTRY_DSN ??
-    "https://ddaed8e7978f25625da4418ccb2633c5@o26192.ingest.us.sentry.io/4511249153851392",
+    "https://df0990271471b52befc34026b304b57d@o4510931548831744.ingest.us.sentry.io/4511254221619200",
 
   // Tag events with the environment they came from.
   environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV,
@@ -43,9 +46,10 @@ Sentry.init({
   // Full sampling by default; override with SENTRY_TRACES_SAMPLE_RATE.
   tracesSampleRate: parseTracesSampleRate(process.env.SENTRY_TRACES_SAMPLE_RATE),
 
-  // v10 first-class log events. Pairs with Sentry.logger.info() calls
-  // from src/lib/logger.ts so structured events reach Sentry.io instead
-  // of (or in addition to) stdout.
+  // v10 first-class log events. Works in tandem with
+  // consoleLoggingIntegration below — our logger emits JSON via
+  // console.log on every event, and the integration ships each call to
+  // Sentry's Logs UI without any explicit Sentry.logger.* wiring.
   enableLogs: true,
 
   // Off by default — we don't need IP/User-Agent. Events come from Slack
@@ -61,11 +65,9 @@ Sentry.init({
       recordOutputs: true,
     }),
     // Auto-ships every console.log / .warn / .error as a Sentry Log.
-    // Complements the explicit Sentry.logger.info() path in logger.ts:
-    // our logger already emits JSON via console.log on every event, so
-    // this integration is a second, independent transport to Sentry's
-    // Logs UI. Was added after PR #95's canary proved events land but
-    // Sentry.logger.info() did not — see #90.
+    // Our logger.ts emits JSON via console.log on every event; this
+    // integration is the *only* transport from structured logs to
+    // Sentry's Logs UI — no explicit Sentry.logger.* calls needed.
     Sentry.consoleLoggingIntegration({ levels: ["log", "warn", "error"] }),
   ],
 });

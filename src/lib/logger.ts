@@ -1,45 +1,33 @@
 /**
- * Structured Logger — JSON output for Vercel function logs + Sentry events.
+ * Structured Logger — JSON output for Vercel function logs + Sentry Logs UI.
  *
- * All log entries are JSON objects with:
+ * Every entry is a single JSON line via console.log/error with:
  * - event: string — what happened
  * - ts: number — unix timestamp
  * - requestId: string — correlates all events in one invocation
  * - ...data: additional context
  *
- * Two sinks:
- * 1. Stdout/stderr via console.log/error — visible in `vercel logs` CLI and
- *    Vercel Dashboard > Project > Logs. Drops writes from inside `after()`
- *    callbacks on Vercel (see #90) so this sink alone is unreliable.
- * 2. Sentry.logger.info/error — first-class Sentry log events. Sentry's
- *    Next.js SDK uses `vercelWaitUntil(Sentry.flush())` so `after()` events
- *    arrive reliably. When SENTRY_DSN is unset, the SDK is a silent no-op
- *    and this degrades to sink (1) only.
+ * Single sink: stdout/stderr. Sentry's consoleLoggingIntegration
+ * (wired in sentry.server.config.ts) captures every console.* call and
+ * ships it to Sentry's Logs UI. Sentry's SDK internally calls
+ * `vercelWaitUntil(Sentry.flush())` so events emitted from inside
+ * `after()` callbacks arrive reliably despite Vercel's stdout drop.
+ *
+ * Note: `sentry.server.config.ts` falls back to a hardcoded public DSN
+ * when `SENTRY_DSN` is unset, so telemetry is ALWAYS shipped to Sentry
+ * when running code built from this repo. To truly disable Sentry,
+ * remove the hardcoded fallback (or comment out `Sentry.init`). In
+ * local dev / CI with no network path to sentry.io the SDK's transport
+ * silently fails and logs degrade to stdout only.
  */
-import * as Sentry from "@sentry/nextjs";
 
 export function log(event: string, data?: Record<string, unknown>): void {
   const payload = { event, ...data, ts: Date.now() };
   const entry = JSON.stringify(payload);
-  const isError = event.includes("error");
-  if (isError) {
+  if (event.includes("error")) {
     console.error(entry);
   } else {
     console.log(entry);
-  }
-  // Dual-emit to Sentry so events survive Vercel's `after()` stdout drop.
-  // Wrapped defensively — a logging side-effect must never break the
-  // request flow. `Sentry.logger` is the v10 first-class log API.
-  try {
-    if (Sentry.logger) {
-      if (isError) {
-        Sentry.logger.error(event, payload);
-      } else {
-        Sentry.logger.info(event, payload);
-      }
-    }
-  } catch {
-    // Swallow — Sentry unavailable / misconfigured / SDK changed.
   }
 }
 
@@ -59,13 +47,6 @@ export function createRequestLogger(): RequestLogger {
 /**
  * Emit a final `turn_end` log event and yield the Node event loop so
  * stdout drains before Vercel hibernates the function container.
- *
- * Fix for #90: logs emitted from inside Next.js `after()` callbacks were
- * being dropped in prod. The primary `mention_start` log (sync path)
- * reaches Vercel's log drain fine; all subsequent events inside the
- * async `after()` body (agent_start, agent_tool_call, agent_complete,
- * cache metrics, answer_posted…) disappeared. Giving Node one tick via
- * setImmediate lets stdout flush before the container shuts down.
  *
  * Place this as the last statement in every `after()` body — ideally
  * inside a `finally` block so it runs even on errors. The `turn_end`

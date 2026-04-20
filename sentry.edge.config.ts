@@ -20,7 +20,7 @@ function parseTracesSampleRate(raw: string | undefined): number {
 Sentry.init({
   dsn:
     process.env.SENTRY_DSN ??
-    "https://ddaed8e7978f25625da4418ccb2633c5@o26192.ingest.us.sentry.io/4511249153851392",
+    "https://df0990271471b52befc34026b304b57d@o4510931548831744.ingest.us.sentry.io/4511254221619200",
 
   environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV,
   release: process.env.VERCEL_GIT_COMMIT_SHA,

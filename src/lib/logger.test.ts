@@ -1,19 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { log, createRequestLogger } from "./logger";
-
-// Mock Sentry so we can assert the logger dual-emits without touching
-// the real SDK (which would be a no-op anyway without a DSN).
-const sentryLoggerInfo = vi.fn();
-const sentryLoggerError = vi.fn();
-vi.mock("@sentry/nextjs", () => ({
-  logger: {
-    info: (...args: unknown[]) => sentryLoggerInfo(...args),
-    error: (...args: unknown[]) => sentryLoggerError(...args),
-    // template tag used by Sentry v10 `logger.info\`...\`` calls — we
-    // don't use it but the SDK expects it to exist as a property.
-    fmt: (strings: TemplateStringsArray, ..._values: unknown[]) => strings.join(""),
-  },
-}));
+import { log, createRequestLogger, flushLogs } from "./logger";
 
 describe("log", () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -22,8 +8,6 @@ describe("log", () => {
   beforeEach(() => {
     consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    sentryLoggerInfo.mockClear();
-    sentryLoggerError.mockClear();
   });
 
   afterEach(() => {
@@ -55,29 +39,19 @@ describe("log", () => {
     expect(parsed.event).toBe("simple_event");
   });
 
-  it("dual-emits to Sentry.logger.info for non-error events", () => {
-    log("agent_complete", { rounds: 3, input_tokens: 1000 });
-    expect(sentryLoggerInfo).toHaveBeenCalledOnce();
-    // First arg is the event name; second is a context object with the data
-    const [eventArg, ctxArg] = sentryLoggerInfo.mock.calls[0];
-    expect(eventArg).toBe("agent_complete");
-    expect(ctxArg).toMatchObject({ rounds: 3, input_tokens: 1000 });
-    // Sentry.logger.error must NOT be called for non-error events
-    expect(sentryLoggerError).not.toHaveBeenCalled();
-  });
-
-  it("dual-emits to Sentry.logger.error for error events", () => {
+  it("routes error events to console.error", () => {
     log("agent_api_error", { status: 500 });
-    expect(sentryLoggerError).toHaveBeenCalledOnce();
-    expect(sentryLoggerInfo).not.toHaveBeenCalled();
-    const [eventArg, ctxArg] = sentryLoggerError.mock.calls[0];
-    expect(eventArg).toBe("agent_api_error");
-    expect(ctxArg).toMatchObject({ status: 500 });
+    expect(consoleErrorSpy).toHaveBeenCalledOnce();
+    expect(consoleSpy).not.toHaveBeenCalled();
+    const parsed = JSON.parse(consoleErrorSpy.mock.calls[0][0] as string);
+    expect(parsed.event).toBe("agent_api_error");
+    expect(parsed.status).toBe(500);
   });
 
-  it("dual-emits even when data is undefined", () => {
-    log("bare_event");
-    expect(sentryLoggerInfo).toHaveBeenCalledWith("bare_event", expect.any(Object));
+  it("routes non-error events to console.log", () => {
+    log("agent_complete", { rounds: 3 });
+    expect(consoleSpy).toHaveBeenCalledOnce();
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -124,5 +98,52 @@ describe("createRequestLogger", () => {
     const output = JSON.parse(consoleSpy.mock.calls[0][0] as string);
     expect(output.event).toBe("my_event");
     expect(output.foo).toBe("bar");
+  });
+});
+
+describe("flushLogs", () => {
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
+  });
+
+  it("emits a turn_end event tagged with the flow name", async () => {
+    const rlog = createRequestLogger();
+    await flushLogs(rlog, "mention");
+
+    expect(consoleSpy).toHaveBeenCalledOnce();
+    const parsed = JSON.parse(consoleSpy.mock.calls[0][0] as string);
+    expect(parsed.event).toBe("turn_end");
+    expect(parsed.flow).toBe("mention");
+    expect(parsed.requestId).toBeDefined();
+  });
+
+  it("yields the event loop via setImmediate before resolving", async () => {
+    // The `after()`-drop fix relies on flushLogs scheduling at least one
+    // setImmediate tick between the turn_end log and the promise
+    // resolution, so stdout can drain before Vercel hibernates the
+    // container. A regression that removes the `setImmediate` yield
+    // (e.g. switching to a sync return) must fail this test.
+    const spy = vi.spyOn(global, "setImmediate");
+    try {
+      const rlog = createRequestLogger();
+      await flushLogs(rlog, "mention");
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("does not throw when the logger itself throws", async () => {
+    const throwing: import("./logger").RequestLogger = () => {
+      throw new Error("logger broke");
+    };
+    // Must not reject — post-response flow depends on this invariant.
+    await expect(flushLogs(throwing, "mention")).resolves.toBeUndefined();
   });
 });
