@@ -191,6 +191,29 @@ Every round uses `anthropic.messages.stream()` and subscribes to `text` events. 
 
 On any streaming error (SDK transport blip), `runAgent` falls back transparently to `anthropic.messages.create()` for that round — the turn keeps going, just without live deltas.
 
+### Model tiering — main vs fast (see #75)
+
+Battle Mage uses two Anthropic models:
+
+- **`MODEL = "claude-sonnet-4-6"`** — the main agent. All tool-use reasoning, synthesis, and answer generation run on Sonnet. Everything that the user sees is produced by this model.
+- **`FAST_MODEL = "claude-haiku-4-5-20251001"`** — side tasks where Sonnet would be overkill. Today: **thread-history compaction**. Future candidates: thread title generation, LLM-based topic classification.
+
+Rule: tasks that face the user directly or require multi-step reasoning stay on Sonnet. Tasks that are one-shot, summarization-shaped, or high-volume low-nuance classification go to Haiku. Haiku is ~5× cheaper and ~2× faster for this shape of work; the quality drop on summarization is imperceptible.
+
+Every per-call log (`agent_start`, `agent_complete`, `agent_api_error`, `thread_compacted`) includes a `model` field so you can audit which tier ran which call from Sentry.
+
+### Thread-history compaction (see #76)
+
+Long threads (Slack Q&A with the bot accumulating over many follow-ups) used to replay the entire conversation on every turn — growing token cost and diluting the model's focus on the *current* question. Now we compact when the conversation grows past a character threshold:
+
+- **Trigger:** `THREAD_COMPACTION_TRIGGER_CHARS = 60_000` (≈15k tokens) AND more than `MIN_PRESERVED_TURNS = 6` turns of history exist.
+- **Action:** oldest turns are summarized into a single synthetic assistant message prefixed with `[Conversation summary — earlier turns condensed]`. The last `MIN_PRESERVED_TURNS` turns are preserved verbatim so local context (references to "that file we read", etc.) stays intact.
+- **Model:** Haiku 4.5 (`FAST_MODEL`). Runs a single non-streaming `messages.create` with a summarization prompt.
+- **Fail-safe:** if the compactor throws (rate limit, Haiku down), `compactThread` returns the original history and logs `thread_compaction_error`. The agent still runs — uncompacted, which is expensive but correct.
+- **One-shot, not rolling.** Junior's reference implementation uses rolling compaction (up to 16 layers). For battle-mage's QA-shaped threads, one compaction is sufficient; we'll revisit if we ever see a thread that trips the trigger twice.
+
+Integration point: `runAgent` in `src/lib/claude.ts`. Single check at the top of the function, before the round loop. Covers both mention-follow-up and thread-follow-up flows because both path through `runAgent`.
+
 ### Streaming into Slack
 
 Text deltas are coalesced by `createThrottledUpdater` in `src/lib/slack-throttle.ts`:

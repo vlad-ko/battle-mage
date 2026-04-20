@@ -9,11 +9,18 @@ import { log, type RequestLogger } from "@/lib/logger";
 import { classifyApiError, userErrorMessage } from "@/lib/api-error";
 import { shouldWarnBudget, shouldForceStop } from "@/lib/time-budget";
 import type { BattleMageConfig } from "@/lib/config";
+import { compactThread, shouldCompact } from "@/lib/compaction";
 
 // ── Anthropic client ──────────────────────────────────────────────────
 const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from env
 
 const MODEL = "claude-sonnet-4-6";
+// Side-task model — used for summarization/compaction/classification
+// where Sonnet would be overkill. Haiku 4.5 is ~5x cheaper and ~2x
+// faster for these low-nuance tasks. See #75. Must remain a separate
+// constant (not interchangeable with MODEL) — the main agent loop and
+// any tool-use-heavy reasoning stays on Sonnet.
+export const FAST_MODEL = "claude-haiku-4-5-20251001";
 export const MAX_TOOL_ROUNDS = 15;
 
 // Output contract knobs
@@ -453,9 +460,17 @@ export async function runAgent(
   // Use request-scoped logger if provided, fall back to bare log
   const _log: RequestLogger = rlog ?? log;
 
-  // Build messages: optional history + current user message
+  // Compact conversation history if it exceeds the trigger. Runs before
+  // the messages array is built so the round-0 request is already slim.
+  // Failure is non-fatal — compactThread returns the original history
+  // and logs a thread_compaction_error event.
+  const historyToUse = conversationHistory && shouldCompact(conversationHistory)
+    ? await compactThread(conversationHistory, { log: _log })
+    : conversationHistory;
+
+  // Build messages: (possibly compacted) history + current user message
   const messages: Anthropic.MessageParam[] = [
-    ...(conversationHistory ?? []),
+    ...(historyToUse ?? []),
     { role: "user", content: userMessage },
   ];
 
@@ -464,7 +479,12 @@ export async function runAgent(
   const startTime = Date.now();
   const systemBlocks = await buildSystemBlocks();
   const promptLength = systemBlocks.reduce((n, b) => n + b.text.length, 0);
-  _log("agent_start", { promptLength, question: userMessage.slice(0, 100) });
+
+  _log("agent_start", {
+    promptLength,
+    question: userMessage.slice(0, 100),
+    model: MODEL,
+  });
 
   let warned = false;
   let contextWarned = false;
@@ -516,6 +536,7 @@ export async function runAgent(
         type: errInfo.type,
         category: errInfo.category,
         message: errInfo.message,
+        model: MODEL,
       });
       return {
         text: userErrorMessage(errInfo),
@@ -552,6 +573,7 @@ export async function runAgent(
         output_tokens: totalOutput,
         cache_read_tokens: totalCacheRead,
         cache_creation_tokens: totalCacheCreation,
+        model: MODEL,
       });
       return { text, issueProposal, references: dedupeRefs() };
     }
