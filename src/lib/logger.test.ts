@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { log, createRequestLogger } from "./logger";
+import { log, createRequestLogger, flushLogs } from "./logger";
 
 describe("log", () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -98,5 +98,52 @@ describe("createRequestLogger", () => {
     const output = JSON.parse(consoleSpy.mock.calls[0][0] as string);
     expect(output.event).toBe("my_event");
     expect(output.foo).toBe("bar");
+  });
+});
+
+describe("flushLogs", () => {
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
+  });
+
+  it("emits a turn_end event tagged with the flow name", async () => {
+    const rlog = createRequestLogger();
+    await flushLogs(rlog, "mention");
+
+    expect(consoleSpy).toHaveBeenCalledOnce();
+    const parsed = JSON.parse(consoleSpy.mock.calls[0][0] as string);
+    expect(parsed.event).toBe("turn_end");
+    expect(parsed.flow).toBe("mention");
+    expect(parsed.requestId).toBeDefined();
+  });
+
+  it("yields the event loop via setImmediate before resolving", async () => {
+    // The `after()`-drop fix relies on flushLogs scheduling at least one
+    // setImmediate tick between the turn_end log and the promise
+    // resolution, so stdout can drain before Vercel hibernates the
+    // container. A regression that removes the `setImmediate` yield
+    // (e.g. switching to a sync return) must fail this test.
+    const spy = vi.spyOn(global, "setImmediate");
+    try {
+      const rlog = createRequestLogger();
+      await flushLogs(rlog, "mention");
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("does not throw when the logger itself throws", async () => {
+    const throwing: import("./logger").RequestLogger = () => {
+      throw new Error("logger broke");
+    };
+    // Must not reject — post-response flow depends on this invariant.
+    await expect(flushLogs(throwing, "mention")).resolves.toBeUndefined();
   });
 });

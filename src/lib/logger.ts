@@ -13,8 +13,12 @@
  * `vercelWaitUntil(Sentry.flush())` so events emitted from inside
  * `after()` callbacks arrive reliably despite Vercel's stdout drop.
  *
- * When SENTRY_DSN is unset the integration is a silent no-op and
- * logs only reach Vercel's drain — which works fine locally and in CI.
+ * Note: `sentry.server.config.ts` falls back to a hardcoded public DSN
+ * when `SENTRY_DSN` is unset, so telemetry is ALWAYS shipped to Sentry
+ * when running code built from this repo. To truly disable Sentry,
+ * remove the hardcoded fallback (or comment out `Sentry.init`). In
+ * local dev / CI with no network path to sentry.io the SDK's transport
+ * silently fails and logs degrade to stdout only.
  */
 
 export function log(event: string, data?: Record<string, unknown>): void {
