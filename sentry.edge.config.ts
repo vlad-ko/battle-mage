@@ -31,4 +31,11 @@ Sentry.init({
 
   // Off — same rationale as server config.
   sendDefaultPii: false,
+
+  integrations: [
+    // Mirrors server config — capture console.* as Sentry Logs on the
+    // edge runtime too. The Slack webhook lands on nodejs today, but
+    // middleware and future edge routes would otherwise lose logs.
+    Sentry.consoleLoggingIntegration({ levels: ["log", "warn", "error"] }),
+  ],
 });

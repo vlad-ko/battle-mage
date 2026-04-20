@@ -60,5 +60,12 @@ Sentry.init({
       recordInputs: true,
       recordOutputs: true,
     }),
+    // Auto-ships every console.log / .warn / .error as a Sentry Log.
+    // Complements the explicit Sentry.logger.info() path in logger.ts:
+    // our logger already emits JSON via console.log on every event, so
+    // this integration is a second, independent transport to Sentry's
+    // Logs UI. Was added after PR #95's canary proved events land but
+    // Sentry.logger.info() did not — see #90.
+    Sentry.consoleLoggingIntegration({ levels: ["log", "warn", "error"] }),
   ],
 });
