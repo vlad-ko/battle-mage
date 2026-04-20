@@ -5,6 +5,7 @@ import {
   safeInvokeTextDelta,
   truncateToolResult,
   estimateMessagesTokens,
+  executeToolsInParallel,
   MAX_TOOL_ROUNDS,
   TOOL_RESULT_MAX_CHARS,
   MESSAGES_SAFE_BUDGET_TOKENS,
@@ -697,5 +698,243 @@ describe("estimateMessagesTokens — cumulative context budgeting", () => {
     expect(MESSAGES_SAFE_BUDGET_TOKENS).toBeGreaterThan(50_000);
     // Must leave room for system prompt + tools + output + safety
     expect(MESSAGES_SAFE_BUDGET_TOKENS).toBeLessThan(180_000);
+  });
+});
+
+describe("executeToolsInParallel", () => {
+  type FakeBlock = { type: "tool_use"; id: string; name: string; input: unknown };
+  const makeBlock = (id: string, name: string, input: unknown = {}): FakeBlock => ({
+    type: "tool_use",
+    id,
+    name,
+    input,
+  });
+
+  it("executes multiple tool_use blocks in parallel, not serially", async () => {
+    const startTimes: number[] = [];
+    const executor = vi.fn(async (name: string) => {
+      startTimes.push(Date.now());
+      await new Promise((r) => setTimeout(r, 50));
+      return { type: "text" as const, text: `result for ${name}` };
+    });
+
+    const blocks: FakeBlock[] = [
+      makeBlock("t1", "a"),
+      makeBlock("t2", "b"),
+      makeBlock("t3", "c"),
+    ];
+
+    const t0 = Date.now();
+    const { toolResults } = await executeToolsInParallel(blocks, {
+      round: 0,
+      log: vi.fn(),
+      executor,
+    });
+    const elapsed = Date.now() - t0;
+
+    expect(toolResults).toHaveLength(3);
+    // Sequential would be ~150ms; parallel must be substantially less.
+    // Generous bound accounts for CI slowness; still well below 3× serial.
+    expect(elapsed).toBeLessThan(140);
+    // All three tools started within a tight window — proves concurrent start.
+    const spread = Math.max(...startTimes) - Math.min(...startTimes);
+    expect(spread).toBeLessThan(30);
+  });
+
+  it("handles per-tool errors without aborting parallel siblings", async () => {
+    const executor = vi.fn(async (name: string) => {
+      if (name === "broken") throw new Error("tool broke");
+      return { type: "text" as const, text: `ok ${name}` };
+    });
+
+    const blocks: FakeBlock[] = [
+      makeBlock("t1", "ok1"),
+      makeBlock("t2", "broken"),
+      makeBlock("t3", "ok2"),
+    ];
+
+    const { toolResults } = await executeToolsInParallel(blocks, {
+      round: 0,
+      log: vi.fn(),
+      executor,
+    });
+
+    expect(toolResults).toHaveLength(3);
+    const failed = toolResults.find((r) => r.tool_use_id === "t2");
+    expect(failed?.is_error).toBe(true);
+    expect(String(failed?.content)).toContain("tool broke");
+    const ok1 = toolResults.find((r) => r.tool_use_id === "t1");
+    expect(ok1?.is_error).toBeUndefined();
+    expect(String(ok1?.content)).toContain("ok ok1");
+  });
+
+  it("preserves tool_use_id correlation when tools complete out of order", async () => {
+    const executor = vi.fn(async (name: string) => {
+      const delay = name === "slow" ? 30 : 5;
+      await new Promise((r) => setTimeout(r, delay));
+      return { type: "text" as const, text: `result ${name}` };
+    });
+
+    const blocks: FakeBlock[] = [
+      makeBlock("slow_id", "slow"),
+      makeBlock("fast_id", "fast"),
+    ];
+
+    const { toolResults } = await executeToolsInParallel(blocks, {
+      round: 0,
+      log: vi.fn(),
+      executor,
+    });
+
+    // Results array preserves original block order regardless of completion order.
+    expect(toolResults[0].tool_use_id).toBe("slow_id");
+    expect(String(toolResults[0].content)).toContain("result slow");
+    expect(toolResults[1].tool_use_id).toBe("fast_id");
+    expect(String(toolResults[1].content)).toContain("result fast");
+  });
+
+  it("fires onProgress exactly once per tool_use block", async () => {
+    const onProgress = vi.fn();
+    const executor = vi.fn().mockResolvedValue({ type: "text", text: "ok" });
+
+    const blocks: FakeBlock[] = [
+      makeBlock("t1", "a", { x: 1 }),
+      makeBlock("t2", "b", { y: 2 }),
+    ];
+
+    await executeToolsInParallel(blocks, {
+      round: 0,
+      log: vi.fn(),
+      executor,
+      onProgress,
+    });
+
+    expect(onProgress).toHaveBeenCalledTimes(2);
+    expect(onProgress).toHaveBeenCalledWith("a", { x: 1 });
+    expect(onProgress).toHaveBeenCalledWith("b", { y: 2 });
+  });
+
+  it("emits agent_tool_call for each block with round and truncated input", async () => {
+    const rlog = vi.fn();
+    const executor = vi.fn().mockResolvedValue({ type: "text", text: "ok" });
+
+    const blocks: FakeBlock[] = [
+      makeBlock("t1", "search_code", { query: "foo" }),
+      makeBlock("t2", "read_file", { path: "a.ts" }),
+    ];
+
+    await executeToolsInParallel(blocks, {
+      round: 3,
+      log: rlog,
+      executor,
+    });
+
+    const toolCalls = rlog.mock.calls.filter((call) => call[0] === "agent_tool_call");
+    expect(toolCalls).toHaveLength(2);
+    expect(toolCalls[0][1]).toMatchObject({ tool: "search_code", round: 3 });
+    expect(toolCalls[0][1].input).toContain("foo");
+    expect(toolCalls[1][1]).toMatchObject({ tool: "read_file", round: 3 });
+  });
+
+  it("collects references from tool results across all parallel tools", async () => {
+    const executor = vi.fn(async (name: string) => {
+      if (name === "read_file") {
+        return {
+          type: "text" as const,
+          text: "content",
+          references: [{
+            type: "file" as const,
+            url: "https://github.com/x/y/blob/main/foo.ts",
+            label: "foo.ts",
+          }],
+        };
+      }
+      return {
+        type: "text" as const,
+        text: "content",
+        references: [{
+          type: "pr" as const,
+          url: "https://github.com/x/y/pull/42",
+          label: "#42",
+        }],
+      };
+    });
+
+    const blocks: FakeBlock[] = [
+      makeBlock("t1", "read_file"),
+      makeBlock("t2", "list_prs"),
+    ];
+
+    const { references } = await executeToolsInParallel(blocks, {
+      round: 0,
+      log: vi.fn(),
+      executor,
+    });
+
+    expect(references).toHaveLength(2);
+    expect(references.some((r) => r.url.endsWith("foo.ts"))).toBe(true);
+    expect(references.some((r) => r.url.endsWith("pull/42"))).toBe(true);
+  });
+
+  it("propagates issue proposal from create_issue tool result", async () => {
+    const executor = vi.fn(async (name: string) => {
+      if (name === "create_issue") {
+        return {
+          type: "issue_proposal" as const,
+          proposal: { title: "Test Issue", body: "body", labels: [] },
+        };
+      }
+      return { type: "text" as const, text: "ok" };
+    });
+
+    const blocks: FakeBlock[] = [makeBlock("t1", "create_issue")];
+
+    const { toolResults, issueProposal } = await executeToolsInParallel(blocks, {
+      round: 0,
+      log: vi.fn(),
+      executor,
+    });
+
+    expect(issueProposal).toBeDefined();
+    expect(issueProposal?.title).toBe("Test Issue");
+    expect(String(toolResults[0].content)).toContain("Test Issue");
+    expect(String(toolResults[0].content)).toContain("Awaiting user confirmation");
+  });
+
+  it("truncates oversized tool results and logs the truncation", async () => {
+    const hugeText = "x".repeat(TOOL_RESULT_MAX_CHARS + 10_000);
+    const executor = vi.fn().mockResolvedValue({ type: "text", text: hugeText });
+    const rlog = vi.fn();
+
+    const blocks: FakeBlock[] = [makeBlock("t1", "read_file")];
+
+    const { toolResults } = await executeToolsInParallel(blocks, {
+      round: 0,
+      log: rlog,
+      executor,
+    });
+
+    const content = toolResults[0].content as string;
+    expect(content.length).toBeLessThanOrEqual(TOOL_RESULT_MAX_CHARS);
+    const truncLog = rlog.mock.calls.find((call) => call[0] === "tool_result_truncated");
+    expect(truncLog).toBeDefined();
+    expect(truncLog?.[1]).toMatchObject({ tool: "read_file", round: 0 });
+  });
+
+  it("swallows onProgress errors without aborting tool execution", async () => {
+    const onProgress = vi.fn().mockRejectedValue(new Error("progress UX broke"));
+    const executor = vi.fn().mockResolvedValue({ type: "text", text: "ok" });
+
+    const blocks: FakeBlock[] = [makeBlock("t1", "a")];
+
+    const { toolResults } = await executeToolsInParallel(blocks, {
+      round: 0,
+      log: vi.fn(),
+      executor,
+      onProgress,
+    });
+
+    expect(toolResults).toHaveLength(1);
+    expect(String(toolResults[0].content)).toContain("ok");
   });
 });
