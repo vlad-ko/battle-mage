@@ -590,62 +590,18 @@ export async function runAgent(
     // Add assistant message with all content blocks
     messages.push({ role: "assistant", content: response.content });
 
-    // Execute each tool and collect results
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-
-    for (const block of toolUseBlocks) {
-      if (block.type !== "tool_use") continue;
-
-      try {
-        // Fire progress callback before executing the tool
-        _log("agent_tool_call", { tool: block.name, round, input: JSON.stringify(block.input).slice(0, 200) });
-        if (onProgress) {
-          await onProgress(block.name, block.input as Record<string, unknown>);
-        }
-
-        const result: ToolResult = await executeTool(
-          block.name,
-          block.input as Record<string, unknown>,
-        );
-
-        // Collect references from tool results
-        if (result.references) {
-          allReferences.push(...result.references);
-        }
-
-        if (result.type === "issue_proposal") {
-          issueProposal = result.proposal;
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: block.id,
-            content: `Issue proposed: "${result.proposal.title}". Awaiting user confirmation in Slack before creation.`,
-          });
-        } else {
-          const { text: capped, truncated } = truncateToolResult(result.text);
-          if (truncated) {
-            _log("tool_result_truncated", {
-              tool: block.name,
-              round,
-              original_chars: result.text.length,
-              capped_chars: capped.length,
-            });
-          }
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: block.id,
-            content: capped,
-          });
-        }
-      } catch (err) {
-        const errorMessage =
-          err instanceof Error ? err.message : "Unknown error";
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: block.id,
-          content: `Error: ${errorMessage}`,
-          is_error: true,
-        });
-      }
+    // Execute all tool_use blocks concurrently. Claude often emits multiple
+    // independent tool_use blocks in a single turn (e.g. "read A AND search
+    // for B AND list PRs"); running them in parallel cuts wall time by 2-3×
+    // with no cost impact. See #77.
+    const parallelOutcome = await executeToolsInParallel(
+      toolUseBlocks.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use"),
+      { round, log: _log, onProgress },
+    );
+    const toolResults: Anthropic.ToolResultBlockParam[] = parallelOutcome.toolResults;
+    allReferences.push(...parallelOutcome.references);
+    if (parallelOutcome.issueProposal) {
+      issueProposal = parallelOutcome.issueProposal;
     }
 
     // Inject time budget warning by appending to the last tool result.
@@ -696,4 +652,129 @@ export async function runAgent(
     issueProposal,
     references: finalRefs,
   };
+}
+
+// ── Parallel tool dispatch ────────────────────────────────────────────
+// When Claude emits multiple `tool_use` blocks in a single turn, execute
+// them concurrently instead of serially. Per-tool failures are isolated:
+// one tool throwing does not prevent the others from completing, and the
+// failed tool still produces a `tool_result` with `is_error: true` so the
+// model can reason about what went wrong.
+//
+// The `executor` parameter is injectable for tests; callers in prod leave
+// it undefined and it defaults to the real `executeTool` from `@/tools`.
+
+export interface ParallelToolsContext {
+  round: number;
+  log: RequestLogger;
+  onProgress?: ProgressCallback;
+  executor?: (name: string, input: Record<string, unknown>) => Promise<ToolResult>;
+}
+
+export interface ParallelToolsResult {
+  toolResults: Anthropic.ToolResultBlockParam[];
+  references: Reference[];
+  issueProposal?: IssueProposal;
+}
+
+export async function executeToolsInParallel(
+  blocks: Anthropic.ToolUseBlock[],
+  ctx: ParallelToolsContext,
+): Promise<ParallelToolsResult> {
+  const exec = ctx.executor ?? executeTool;
+
+  // Fire all tools concurrently. Each task logs + pings progress up front
+  // so the user sees every intended call before any finishes, then awaits
+  // its executor. Progress invocations are fire-and-forget *within* the
+  // task (so a slow/throwing progress handler can't serialize the parallel
+  // dispatch) but we collect the promises so the caller can await them.
+  //
+  // Why collect: onProgress typically does an async Slack `chat.update`,
+  // and the route posts the final answer by updating the SAME message.
+  // Without waiting for progress updates to settle before returning, a
+  // stale progress update could land AFTER the final answer and overwrite
+  // it ("thinking…" reappearing after the answer). See #77 review.
+  const progressPromises: Promise<void>[] = [];
+
+  const outcomes = await Promise.all(
+    blocks.map(async (block) => {
+      ctx.log("agent_tool_call", {
+        tool: block.name,
+        round: ctx.round,
+        input: JSON.stringify(block.input).slice(0, 200),
+      });
+      if (ctx.onProgress) {
+        const p = Promise.resolve()
+          .then(() => ctx.onProgress!(block.name, block.input as Record<string, unknown>))
+          .catch(() => {
+            // Progress is UX — never let it abort tool execution or
+            // surface as an unhandled rejection.
+          });
+        progressPromises.push(p);
+      }
+      try {
+        const result = await exec(block.name, block.input as Record<string, unknown>);
+        return { block, result, error: null as string | null };
+      } catch (err) {
+        return {
+          block,
+          result: null as ToolResult | null,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }),
+  );
+
+  // Wait for any in-flight progress updates to settle BEFORE returning.
+  // Prevents the stale-overwrite race at the caller's final-update step.
+  await Promise.all(progressPromises);
+
+  const toolResults: Anthropic.ToolResultBlockParam[] = [];
+  const references: Reference[] = [];
+  let issueProposal: IssueProposal | undefined;
+
+  // Iterate outcomes in original block order so toolResults matches the
+  // input sequence. Anthropic's API correlates results to uses by
+  // `tool_use_id`, so order isn't strictly required for correctness — but
+  // deterministic order eases log readability and test assertions.
+  for (const { block, result, error } of outcomes) {
+    if (error !== null) {
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: block.id,
+        content: `Error: ${error}`,
+        is_error: true,
+      });
+      continue;
+    }
+    const r = result!;
+    if (r.references) {
+      references.push(...r.references);
+    }
+    if (r.type === "issue_proposal") {
+      issueProposal = r.proposal;
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: block.id,
+        content: `Issue proposed: "${r.proposal.title}". Awaiting user confirmation in Slack before creation.`,
+      });
+    } else {
+      const { text: capped, truncated } = truncateToolResult(r.text);
+      if (truncated) {
+        ctx.log("tool_result_truncated", {
+          tool: block.name,
+          round: ctx.round,
+          original_chars: r.text.length,
+          capped_chars: capped.length,
+        });
+      }
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: block.id,
+        content: capped,
+      });
+    }
+  }
+
+  return { toolResults, references, issueProposal };
 }
