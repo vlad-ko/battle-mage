@@ -40,8 +40,14 @@ export interface MessageParam {
   content: string;
 }
 
-const MAX_CONTEXT_MESSAGES = 10;
-const MAX_MESSAGE_LENGTH = 500;
+// Raised alongside compaction landing (#76): with Haiku-based summarization
+// now handling long threads, there's no reason to hard-truncate history at
+// 10 × 500 chars = 5k total. Those limits predated compaction and were a
+// blunt instrument to keep context bounded. At 40 × 2000 we land full bot
+// answers verbatim for recent turns, and anything past the compaction
+// trigger (60k chars) gets summarized by Haiku on the fly.
+const MAX_CONTEXT_MESSAGES = 40;
+const MAX_MESSAGE_LENGTH = 2000;
 
 function cleanText(text: string): string {
   return text.replace(/<@[A-Z0-9]+>/g, "").trim();

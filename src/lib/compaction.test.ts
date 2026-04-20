@@ -164,15 +164,16 @@ describe("compactThread", () => {
     expect(result[0].role).toBe("user");
   });
 
-  it("shifts one turn if natural preserve window starts with `assistant`", async () => {
-    // Construct a history where slice(-MIN_PRESERVED_TURNS) starts with
-    // assistant (odd alignment). Expect compactThread to shift by 1 so
-    // preserve starts with user.
+  it("extends preserve earlier if natural window starts with `assistant`", async () => {
+    // If slice(-MIN_PRESERVED_TURNS) starts with assistant, compactThread
+    // extends preserve by one turn EARLIER to include the user turn
+    // before it — never DROPS a preserved turn, so preserve.length >=
+    // MIN_PRESERVED_TURNS always.
     const history: ConversationTurn[] = [
       { role: "user", content: "OLD_u0" },
       { role: "assistant", content: "OLD_a0" },
       { role: "user", content: "OLD_u1" },
-      // Natural slice(-MIN_PRESERVED_TURNS) starts here:
+      // Natural slice(-MIN_PRESERVED_TURNS) starts here with OLD_a1:
       { role: "assistant", content: "OLD_a1" },
       { role: "user", content: "PRES_u0" },
       { role: "assistant", content: "PRES_a0" },
@@ -181,15 +182,27 @@ describe("compactThread", () => {
       { role: "user", content: "PRES_u2" },
     ];
     const compactor = vi.fn().mockResolvedValue("summary");
+    const log = vi.fn();
 
-    const result = await compactThread(history, { compactor, log: vi.fn() });
+    const result = await compactThread(history, { compactor, log });
 
     expect(result[0].role).toBe("user");
-    expect(result[0].content).toContain("PRES_u0"); // first preserved user
-    // The misaligned assistant turn (OLD_a1) got shifted INTO the compact
-    // window so preserve begins user-aligned.
+    // preserveCount extended to 7 — the previously-misaligned assistant
+    // (OLD_a1) is now preserved, and OLD_u1 becomes the new first-user
+    // turn that carries the summary injection.
+    expect(result).toHaveLength(7);
+    expect(result[0].content).toContain("OLD_u1");
+    // Compacted block is everything before OLD_u1.
     const prompt = compactor.mock.calls[0][0] as string;
-    expect(prompt).toContain("OLD_a1");
+    expect(prompt).toContain("OLD_u0");
+    expect(prompt).toContain("OLD_a0");
+    expect(prompt).not.toContain("OLD_u1"); // preserved, not compacted
+    // Logged turn counts reflect the extension (not under-preservation).
+    const compactLog = log.mock.calls.find((c) => c[0] === "thread_compacted");
+    expect(compactLog?.[1]).toMatchObject({
+      turns_compacted: 2,
+      turns_preserved: 7,
+    });
   });
 
   it("returns original history if the compactor throws (fail-safe)", async () => {

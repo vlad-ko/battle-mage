@@ -4,8 +4,10 @@
  * When a Slack thread with the bot grows long, every follow-up replays the
  * entire history to Claude. A 30-turn QA thread racks up tokens fast and
  * also dilutes the model's focus on the current question. Compaction
- * summarizes older turns into a single synthetic assistant message,
- * keeping the N most recent turns verbatim so local context is preserved.
+ * summarizes older turns into a block of leading context that's embedded
+ * INSIDE the first preserved user turn (prefixed with COMPACTION_MARKER)
+ * — NOT a synthetic assistant message, which would break Anthropic's
+ * "first message must be role=user" invariant.
  *
  * Design choices (vs junior's reference):
  * - One-shot compaction, not rolling. If threads ever compact twice we'll
@@ -89,18 +91,21 @@ export async function compactThread(
   // between user/assistant. We embed the summary INTO the first
   // preserved user turn so the sequence stays valid after compaction:
   // no synthetic roles, no alternation breaks.
-  let toCompact = history.slice(0, -MIN_PRESERVED_TURNS);
-  let preserve = history.slice(-MIN_PRESERVED_TURNS);
-
-  // If preserve starts with `assistant` (history was misaligned — e.g.
-  // odd total count) shift one turn back into the compact window so
-  // preserve[0] is always `user`. Invariant for the summary-injection
-  // step below.
-  if (preserve.length > 0 && preserve[0].role === "assistant") {
-    const adjusted = MIN_PRESERVED_TURNS - 1;
-    toCompact = history.slice(0, -adjusted);
-    preserve = history.slice(-adjusted);
+  //
+  // If the natural preserve slice (last N) starts with `assistant`
+  // (history was misaligned — e.g. odd total count), extend preserve by
+  // one turn EARLIER (include one additional user turn) so preserve[0]
+  // is always `user`. We never under-preserve: preserved.length is
+  // always >= MIN_PRESERVED_TURNS, not less.
+  let preserveCount = MIN_PRESERVED_TURNS;
+  if (
+    history.length > MIN_PRESERVED_TURNS &&
+    history[history.length - MIN_PRESERVED_TURNS].role === "assistant"
+  ) {
+    preserveCount = MIN_PRESERVED_TURNS + 1;
   }
+  const toCompact = history.slice(0, -preserveCount);
+  const preserve = history.slice(-preserveCount);
 
   // After the shift, if there are still no older turns to compact, bail.
   if (toCompact.length === 0 || preserve.length === 0) return history;
@@ -136,11 +141,18 @@ export async function compactThread(
   };
   const compacted = [enhancedFirst, ...preserve.slice(1)];
 
+  const charsBefore = estimateConversationSize(history);
+  const charsAfter = estimateConversationSize(compacted);
   log("thread_compacted", {
     turns_compacted: toCompact.length,
     turns_preserved: preserve.length,
-    chars_before: estimateConversationSize(history),
-    chars_after: estimateConversationSize(compacted),
+    chars_before: charsBefore,
+    chars_after: charsAfter,
+    // Rough ~4 chars/token heuristic so operators get a token-shaped
+    // mental unit alongside the char count. Good enough for dashboards;
+    // not a replacement for the SDK's actual usage.input_tokens number.
+    estimated_tokens_before: Math.round(charsBefore / 4),
+    estimated_tokens_after: Math.round(charsAfter / 4),
     model: FAST_MODEL,
   });
 

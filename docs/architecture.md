@@ -207,7 +207,7 @@ Every per-call log (`agent_start`, `agent_complete`, `agent_api_error`, `thread_
 Long threads (Slack Q&A with the bot accumulating over many follow-ups) used to replay the entire conversation on every turn — growing token cost and diluting the model's focus on the *current* question. Now we compact when the conversation grows past a character threshold:
 
 - **Trigger:** `THREAD_COMPACTION_TRIGGER_CHARS = 60_000` (≈15k tokens) AND more than `MIN_PRESERVED_TURNS = 6` turns of history exist.
-- **Action:** oldest turns are summarized into a single synthetic assistant message prefixed with `[Conversation summary — earlier turns condensed]`. The last `MIN_PRESERVED_TURNS` turns are preserved verbatim so local context (references to "that file we read", etc.) stays intact.
+- **Action:** oldest turns are summarized and the summary is embedded as leading context INSIDE the first preserved user turn, prefixed with `[Conversation summary — earlier turns condensed]`. This preserves Anthropic's "first message must be role=user" invariant without needing a synthetic assistant turn. The remaining preserved turns are verbatim so local context (references to "that file we read", etc.) stays intact.
 - **Model:** Haiku 4.5 (`FAST_MODEL`). Runs a single non-streaming `messages.create` with a summarization prompt.
 - **Fail-safe:** if the compactor throws (rate limit, Haiku down), `compactThread` returns the original history and logs `thread_compaction_error`. The agent still runs — uncompacted, which is expensive but correct.
 - **One-shot, not rolling.** Junior's reference implementation uses rolling compaction (up to 16 layers). For battle-mage's QA-shaped threads, one compaction is sufficient; we'll revisit if we ever see a thread that trips the trigger twice.
