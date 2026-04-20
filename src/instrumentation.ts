@@ -54,20 +54,52 @@ export async function register() {
     canaryFired = true;
     const runtime = process.env.NEXT_RUNTIME ?? "unknown";
     const commit = process.env.VERCEL_GIT_COMMIT_SHA ?? "local";
+
+    // Each canary is isolated in its own try/catch so one path failing
+    // (e.g. Sentry.logger undefined) can't mask the others — the whole
+    // point of this PR is a truth table across three independent paths.
+
+    // Canary 1 — captureException (baseline; known working per PR #95)
     try {
       Sentry.captureException(
         new Error(`bm cold-start canary — runtime=${runtime} commit=${commit}`),
       );
-      // Explicit v10 Logs API — same call shape logger.ts uses on every
-      // log(). If this one doesn't land, logger.ts never will.
-      Sentry.logger.info("bm_cold_start_logs_canary", {
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(
+        JSON.stringify({
+          event: "canary_exception_error",
+          message: err instanceof Error ? err.message : String(err),
+          ts: Date.now(),
+        }),
+      );
+    }
+
+    // Canary 2 — explicit v10 Logs API. Optional-chain because logger.ts
+    // treats Sentry.logger as possibly absent (see src/lib/logger.ts:34).
+    // If logger is undefined the call short-circuits silently — captured
+    // as the "logger.info canary missing" branch of the truth table.
+    try {
+      Sentry.logger?.info("bm_cold_start_logs_canary", {
         path: "sentry.logger.info",
         runtime,
         commit,
       });
-      // Plain console.log — captured only if consoleLoggingIntegration
-      // is wired. Distinctive event name makes it grep-able in both
-      // Vercel logs AND (if integration works) Sentry Logs UI.
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(
+        JSON.stringify({
+          event: "canary_logger_error",
+          message: err instanceof Error ? err.message : String(err),
+          ts: Date.now(),
+        }),
+      );
+    }
+
+    // Canary 3 — plain console.log, captured by consoleLoggingIntegration
+    // in sentry.server.config.ts. Grep-able in Vercel logs regardless of
+    // whether the integration ships it to Sentry.
+    try {
       // eslint-disable-next-line no-console
       console.log(
         JSON.stringify({
@@ -78,24 +110,19 @@ export async function register() {
           ts: Date.now(),
         }),
       );
-      // eslint-disable-next-line no-console
-      console.log(
-        JSON.stringify({
-          event: "instrumentation_canary_captured",
-          runtime,
-          ts: Date.now(),
-        }),
-      );
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error(
-        JSON.stringify({
-          event: "instrumentation_canary_error",
-          message: err instanceof Error ? err.message : String(err),
-          ts: Date.now(),
-        }),
-      );
+    } catch {
+      // console.log throwing would be extraordinary; nowhere to report.
     }
+
+    // Trailer: proves the canary block ran end-to-end.
+    // eslint-disable-next-line no-console
+    console.log(
+      JSON.stringify({
+        event: "instrumentation_canary_captured",
+        runtime,
+        ts: Date.now(),
+      }),
+    );
   }
 }
 
