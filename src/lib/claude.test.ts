@@ -711,10 +711,21 @@ describe("executeToolsInParallel", () => {
   });
 
   it("executes multiple tool_use blocks in parallel, not serially", async () => {
-    const startTimes: number[] = [];
+    // Deterministic concurrency check via a barrier promise. If dispatch
+    // were serialized, only the first executor would run until released;
+    // the barrier would never see `started === 3` and the waitFor would
+    // time out. If dispatch is parallel, all three hit the barrier, we
+    // observe `started === 3`, then release them all at once. No wall-
+    // clock assertions — avoids CI scheduler flake.
+    let started = 0;
+    let releaseGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+
     const executor = vi.fn(async (name: string) => {
-      startTimes.push(Date.now());
-      await new Promise((r) => setTimeout(r, 50));
+      started++;
+      await gate;
       return { type: "text" as const, text: `result for ${name}` };
     });
 
@@ -724,21 +735,18 @@ describe("executeToolsInParallel", () => {
       makeBlock("t3", "c"),
     ];
 
-    const t0 = Date.now();
-    const { toolResults } = await executeToolsInParallel(blocks, {
+    // Start the dispatch but don't await yet — we need to observe the
+    // barrier state while tools are in flight.
+    const resultPromise = executeToolsInParallel(blocks, {
       round: 0,
       log: vi.fn(),
       executor,
     });
-    const elapsed = Date.now() - t0;
 
+    await vi.waitFor(() => expect(started).toBe(3), { timeout: 1000 });
+    releaseGate();
+    const { toolResults } = await resultPromise;
     expect(toolResults).toHaveLength(3);
-    // Sequential would be ~150ms; parallel must be substantially less.
-    // Generous bound accounts for CI slowness; still well below 3× serial.
-    expect(elapsed).toBeLessThan(140);
-    // All three tools started within a tight window — proves concurrent start.
-    const spread = Math.max(...startTimes) - Math.min(...startTimes);
-    expect(spread).toBeLessThan(30);
   });
 
   it("handles per-tool errors without aborting parallel siblings", async () => {

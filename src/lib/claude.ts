@@ -683,11 +683,19 @@ export async function executeToolsInParallel(
 ): Promise<ParallelToolsResult> {
   const exec = ctx.executor ?? executeTool;
 
-  // Fire all tools concurrently. Each task logs + optionally pings progress
-  // up front so the user sees every intended call before any finishes, then
-  // awaits its executor. Progress is fire-and-forget so a slow or throwing
-  // progress handler can't serialize the parallel dispatch — the whole
-  // point of this function is wall-time reduction.
+  // Fire all tools concurrently. Each task logs + pings progress up front
+  // so the user sees every intended call before any finishes, then awaits
+  // its executor. Progress invocations are fire-and-forget *within* the
+  // task (so a slow/throwing progress handler can't serialize the parallel
+  // dispatch) but we collect the promises so the caller can await them.
+  //
+  // Why collect: onProgress typically does an async Slack `chat.update`,
+  // and the route posts the final answer by updating the SAME message.
+  // Without waiting for progress updates to settle before returning, a
+  // stale progress update could land AFTER the final answer and overwrite
+  // it ("thinking…" reappearing after the answer). See #77 review.
+  const progressPromises: Promise<void>[] = [];
+
   const outcomes = await Promise.all(
     blocks.map(async (block) => {
       ctx.log("agent_tool_call", {
@@ -696,12 +704,13 @@ export async function executeToolsInParallel(
         input: JSON.stringify(block.input).slice(0, 200),
       });
       if (ctx.onProgress) {
-        Promise.resolve()
+        const p = Promise.resolve()
           .then(() => ctx.onProgress!(block.name, block.input as Record<string, unknown>))
           .catch(() => {
-            // Progress is UX — never let it abort tool execution or surface
-            // as an unhandled rejection.
+            // Progress is UX — never let it abort tool execution or
+            // surface as an unhandled rejection.
           });
+        progressPromises.push(p);
       }
       try {
         const result = await exec(block.name, block.input as Record<string, unknown>);
@@ -715,6 +724,10 @@ export async function executeToolsInParallel(
       }
     }),
   );
+
+  // Wait for any in-flight progress updates to settle BEFORE returning.
+  // Prevents the stale-overwrite race at the caller's final-update step.
+  await Promise.all(progressPromises);
 
   const toolResults: Anthropic.ToolResultBlockParam[] = [];
   const references: Reference[] = [];
