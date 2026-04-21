@@ -116,6 +116,31 @@ describe("assembleSystemPrompt", () => {
       expect(prompt).toContain("Feedback");
     });
 
+    it("includes doc catalog section when provided (#82)", () => {
+      const prompt = assembleSystemPrompt({
+        ...baseArgs,
+        docCatalog: [
+          { path: "docs/architecture.md", title: "Architecture" },
+          { path: "docs/setup.md", title: "Setup Guide" },
+        ],
+      });
+      expect(prompt).toContain("Documentation Index");
+      expect(prompt).toContain("`docs/architecture.md` — Architecture");
+      expect(prompt).toContain("`docs/setup.md` — Setup Guide");
+      // Guidance must mention the tool the agent uses to pull a doc.
+      expect(prompt).toContain("read_file");
+    });
+
+    it("omits doc catalog section when undefined", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      expect(prompt).not.toContain("Documentation Index");
+    });
+
+    it("omits doc catalog section when empty array", () => {
+      const prompt = assembleSystemPrompt({ ...baseArgs, docCatalog: [] });
+      expect(prompt).not.toContain("Documentation Index");
+    });
+
     it("includes thread participants block when provided (#80)", () => {
       const prompt = assembleSystemPrompt({
         ...baseArgs,
