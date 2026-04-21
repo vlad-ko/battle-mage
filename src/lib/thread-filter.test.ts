@@ -76,22 +76,30 @@ describe("buildConversationHistory", () => {
     expect(result[1].role).toBe("assistant");
   });
 
-  it("truncates long messages", () => {
-    const longText = "x".repeat(600);
+  it("truncates long messages at MAX_MESSAGE_LENGTH", () => {
+    // Raised to 2000 alongside compaction (#76). A message longer than
+    // that is truncated with a trailing ellipsis; loose upper bound so
+    // raising the constant again doesn't force a test edit.
+    const longText = "x".repeat(4000);
     const messages = [{ user: "U123", text: longText, bot_id: undefined }];
     const result = buildConversationHistory(messages, botId);
-    expect((result[0].content as string).length).toBeLessThan(510);
+    expect((result[0].content as string).length).toBeLessThanOrEqual(2010);
+    expect(result[0].content).toMatch(/\.\.\.$/);
   });
 
-  it("limits to most recent messages", () => {
-    const messages = Array.from({ length: 20 }, (_, i) => ({
+  it("limits to most recent messages (MAX_CONTEXT_MESSAGES)", () => {
+    // With compaction (#76) handling long threads, the cap is 40. The
+    // assertion is stated as a loose upper bound so raising the constant
+    // again in the future doesn't require a test edit.
+    const messages = Array.from({ length: 100 }, (_, i) => ({
       user: i % 2 === 0 ? "U123" : "B001",
       text: `Message ${i}`,
       bot_id: i % 2 === 0 ? undefined : "B001",
     }));
     const result = buildConversationHistory(messages, botId);
-    // Should have at most MAX_CONTEXT_MESSAGES turns
-    expect(result.length).toBeLessThanOrEqual(10);
+    expect(result.length).toBeLessThanOrEqual(40);
+    // And should be populated — prove the cap isn't zeroing out content.
+    expect(result.length).toBeGreaterThan(0);
   });
 
   it("ensures first message is always role user (Anthropic requirement)", () => {

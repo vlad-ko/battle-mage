@@ -6,6 +6,7 @@ import {
   truncateToolResult,
   estimateMessagesTokens,
   executeToolsInParallel,
+  FAST_MODEL,
   MAX_TOOL_ROUNDS,
   TOOL_RESULT_MAX_CHARS,
   MESSAGES_SAFE_BUDGET_TOKENS,
@@ -170,6 +171,17 @@ describe("assembleSystemPrompt", () => {
       const prompt = assembleSystemPrompt(baseArgs);
       // The agent should know how many rounds it has
       expect(prompt).toContain(String(MAX_TOOL_ROUNDS));
+    });
+  });
+
+  describe("FAST_MODEL", () => {
+    it("is a Haiku 4.5 identifier — side-task model split per #75", () => {
+      expect(FAST_MODEL).toMatch(/^claude-haiku-4-5/);
+    });
+
+    it("is distinct from the main Sonnet model", () => {
+      // Ensure we don't accidentally collapse the two tiers into one.
+      expect(FAST_MODEL).not.toMatch(/sonnet/);
     });
   });
 
