@@ -36,3 +36,6 @@ Thumbs.db
 
 # Sentry Config File
 .env.sentry-build-plugin
+
+# Claude Code runtime artifacts
+.claude/scheduled_tasks.lock

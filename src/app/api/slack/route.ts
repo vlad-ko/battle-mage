@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import {
   verifySlackSignature,
   replyInThread,
@@ -216,6 +217,11 @@ export async function POST(request: NextRequest) {
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
         rlog("error", { flow: "mention", message: msg });
+        // Also capture as a Sentry Issue so the stack trace surfaces
+        // in the dashboard — `rlog` alone produces a Log entry without
+        // a stack, which is how #100 stayed a mystery (we knew the
+        // error message but not what line in the after() body threw it).
+        Sentry.captureException(err, { tags: { flow: "mention" } });
         await replyInThread(
           channel,
           threadTs,
@@ -400,6 +406,7 @@ export async function POST(request: NextRequest) {
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
         rlog("error", { flow: "thread_followup", message: msg });
+        Sentry.captureException(err, { tags: { flow: "thread_followup" } });
         await replyInThread(
           channel,
           threadTs,
@@ -463,6 +470,7 @@ export async function POST(request: NextRequest) {
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : "Unknown error";
         rlog("error", { flow: "reaction_checkmark", message: errMsg });
+        Sentry.captureException(err, { tags: { flow: "reaction_checkmark" } });
         // Best-effort reply — use thread_ts if available
         try {
           const msg = await fetchMessage(channel, messageTs);
@@ -519,6 +527,7 @@ export async function POST(request: NextRequest) {
         } catch { /* already reacted or can't react — ignore */ }
       } catch (err) {
         rlog("error", { flow: "reaction_thumbsup", message: err instanceof Error ? err.message : String(err) });
+        Sentry.captureException(err, { tags: { flow: "reaction_thumbsup" } });
       } finally {
         await flushLogs(rlog, "reaction_thumbsup");
       }
@@ -586,6 +595,7 @@ export async function POST(request: NextRequest) {
         );
       } catch (err) {
         rlog("error", { flow: "reaction_thumbsdown", message: err instanceof Error ? err.message : String(err) });
+        Sentry.captureException(err, { tags: { flow: "reaction_thumbsdown" } });
       } finally {
         await flushLogs(rlog, "reaction_thumbsdown");
       }

@@ -429,6 +429,28 @@ export interface ConversationTurn {
   content: string;
 }
 
+// Factory for a `stream.on("error", ...)` handler. The @anthropic-ai/sdk
+// MessageStream can emit `error` events AFTER `finalMessage()` has
+// resolved (e.g. if the underlying HTTP connection receives a late error
+// frame). Node's EventEmitter throws synchronously on an `error` event
+// without a listener, which on Vercel surfaces as an unhandled rejection
+// bubbling through the NEXT await — that's why #100 saw `msg_too_long`
+// land in the route's catch block 85ms AFTER `agent_complete` fired.
+//
+// Register this as a no-throw listener so late errors are merely logged
+// and the async context stays clean. Exported for unit testing.
+export function logStreamError(
+  round: number,
+  logger: RequestLogger,
+): (err: unknown) => void {
+  return (err: unknown) => {
+    logger("agent_stream_error", {
+      round,
+      message: err instanceof Error ? err.message : String(err),
+    });
+  };
+}
+
 async function anthropicCall(
   params: Anthropic.MessageCreateParamsNonStreaming,
   onTextDelta: TextDeltaCallback | undefined,
@@ -440,6 +462,10 @@ async function anthropicCall(
     stream.on("text", (_delta, snapshot) => {
       safeInvokeTextDelta(onTextDelta, snapshot);
     });
+    // MUST register before finalMessage resolves. Without this listener,
+    // a late `error` event after finalMessage() returns becomes an
+    // unhandled rejection bubbling through the next await. See #100.
+    stream.on("error", logStreamError(round, _log));
     return await stream.finalMessage();
   } catch (streamErr) {
     _log("agent_stream_fallback", {

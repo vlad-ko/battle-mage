@@ -6,6 +6,7 @@ import {
   truncateToolResult,
   estimateMessagesTokens,
   executeToolsInParallel,
+  logStreamError,
   FAST_MODEL,
   MAX_TOOL_ROUNDS,
   TOOL_RESULT_MAX_CHARS,
@@ -710,6 +711,62 @@ describe("estimateMessagesTokens — cumulative context budgeting", () => {
     expect(MESSAGES_SAFE_BUDGET_TOKENS).toBeGreaterThan(50_000);
     // Must leave room for system prompt + tools + output + safety
     expect(MESSAGES_SAFE_BUDGET_TOKENS).toBeLessThan(180_000);
+  });
+});
+
+describe("logStreamError", () => {
+  // Factory returns an "error" handler suitable for stream.on("error", ...).
+  // Goal: prevent late error events from MessageStream (emitted AFTER
+  // finalMessage has resolved) from surfacing as unhandled rejections —
+  // those caused msg_too_long errors to bubble through unrelated awaits
+  // in the route handler. See #100.
+
+  it("returns a function that logs agent_stream_error with round + message", () => {
+    const log = vi.fn();
+    const handler = logStreamError(3, log);
+
+    handler(new Error("connection reset"));
+
+    expect(log).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith("agent_stream_error", expect.objectContaining({
+      round: 3,
+      message: "connection reset",
+    }));
+  });
+
+  it("coerces non-Error throwables to string", () => {
+    const log = vi.fn();
+    const handler = logStreamError(0, log);
+
+    handler("raw string error");
+    handler({ weird: "object" });
+    handler(42);
+
+    expect(log).toHaveBeenCalledTimes(3);
+    expect(log.mock.calls[0][1].message).toBe("raw string error");
+    expect(log.mock.calls[1][1].message).toContain("object");
+    expect(log.mock.calls[2][1].message).toBe("42");
+  });
+
+  it("does not throw or return a rejected promise", () => {
+    const log = vi.fn();
+    const handler = logStreamError(0, log);
+
+    // The whole point — stream.on("error", handler) must never re-throw,
+    // otherwise Node's EventEmitter would crash the async context.
+    expect(() => handler(new Error("boom"))).not.toThrow();
+  });
+
+  it("preserves the Error prototype check when message is missing", () => {
+    const log = vi.fn();
+    const handler = logStreamError(0, log);
+
+    const err = new Error(); // empty message
+    handler(err);
+
+    // We always log a non-undefined message field so Sentry has something
+    // to filter on — empty string is fine, undefined is not.
+    expect(log.mock.calls[0][1].message).toBeTypeOf("string");
   });
 });
 
