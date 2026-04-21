@@ -24,7 +24,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { FAST_MODEL, type ConversationTurn } from "@/lib/claude";
-import { log as defaultLog, type RequestLogger } from "@/lib/logger";
+import { log as defaultLog, type LogFn } from "@/lib/logger";
 
 // Shared client. Same instance as claude.ts via singleton at module-eval
 // time. Reads ANTHROPIC_API_KEY from env.
@@ -72,7 +72,7 @@ export function shouldCompact(history: ConversationTurn[]): boolean {
 
 export interface CompactContext {
   /** Logger for thread_compacted / thread_compaction_error events. */
-  log?: RequestLogger;
+  log?: LogFn;
   /** Injectable compactor for tests. In prod defaults to a Haiku call. */
   compactor?: (prompt: string) => Promise<string>;
 }

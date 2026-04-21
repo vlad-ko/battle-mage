@@ -32,16 +32,30 @@ export function log(event: string, data?: Record<string, unknown>): void {
 }
 
 /**
- * Create a request-scoped logger with a unique ID.
- * All calls from the same logger share a requestId for correlation.
+ * A plain log function — event name + optional data. Use this as the
+ * parameter type anywhere a caller only needs to INVOKE the logger
+ * (the overwhelming majority of internal call sites). Accepts both a
+ * bare function and a full RequestLogger.
  */
-export type RequestLogger = (event: string, data?: Record<string, unknown>) => void;
+export type LogFn = (event: string, data?: Record<string, unknown>) => void;
+
+/**
+ * Request-scoped logger: callable like LogFn, plus exposes the shared
+ * `requestId` as a property so surfaces that render it (e.g., the reply
+ * footer in #79) can read it without regenerating one. All calls from
+ * the same logger share that requestId for correlation.
+ */
+export type RequestLogger = LogFn & {
+  readonly requestId: string;
+};
 
 export function createRequestLogger(): RequestLogger {
   const requestId = Math.random().toString(36).slice(2, 10);
-  return (event: string, data?: Record<string, unknown>) => {
+  const fn = (event: string, data?: Record<string, unknown>) => {
     log(event, { requestId, ...data });
   };
+  // Attach requestId as a readable property on the function object.
+  return Object.assign(fn, { requestId });
 }
 
 /**
@@ -53,7 +67,7 @@ export function createRequestLogger(): RequestLogger {
  * event itself acts as a canary: if it appears in production logs,
  * the flush worked and so did every earlier log in the same turn.
  */
-export async function flushLogs(rlog: RequestLogger, flow: string): Promise<void> {
+export async function flushLogs(rlog: LogFn, flow: string): Promise<void> {
   try {
     rlog("turn_end", { flow });
   } catch {
