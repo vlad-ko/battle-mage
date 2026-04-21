@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { classifyTopics, isIndexStale, buildIndexSummary } from "./repo-index";
+import {
+  classifyTopics,
+  isIndexStale,
+  buildIndexSummary,
+  extractDocTitle,
+  filterDocPaths,
+  buildDocCatalogSection,
+} from "./repo-index";
 
 describe("classifyTopics", () => {
   it("classifies auth-related files", () => {
@@ -230,5 +237,131 @@ describe("buildIndexSummary", () => {
     const lines = summary.split("\n");
     expect(lines[0]).toContain("authentication");
     expect(lines[1]).toContain("historic");
+  });
+});
+
+describe("extractDocTitle", () => {
+  it("returns the first H1 line, trimmed and without the # prefix", () => {
+    const content = "# Architecture\n\nHow the internals work.";
+    expect(extractDocTitle(content, "docs/architecture.md")).toBe("Architecture");
+  });
+
+  it("handles leading whitespace/blank lines before the H1", () => {
+    const content = "\n\n\n# Setup Guide\n\nGetting started.";
+    expect(extractDocTitle(content, "docs/setup.md")).toBe("Setup Guide");
+  });
+
+  it("ignores H2/H3 lines and picks only the first H1", () => {
+    const content = "## Subsection\n# Real Title\n### Sub-sub\n";
+    expect(extractDocTitle(content, "docs/x.md")).toBe("Real Title");
+  });
+
+  it("falls back to the path basename (no extension) when no H1 is present", () => {
+    const content = "No heading here.\n\nJust a paragraph.";
+    expect(extractDocTitle(content, "docs/features/repo-index.md")).toBe("repo-index");
+  });
+
+  it("falls back to the basename for empty content", () => {
+    expect(extractDocTitle("", "docs/setup.md")).toBe("setup");
+  });
+
+  it("strips surrounding whitespace and markdown markers from the H1 text", () => {
+    const content = "#   Knowledge  Base   \n\n...";
+    expect(extractDocTitle(content, "docs/kb.md")).toBe("Knowledge  Base");
+  });
+
+  it("uses the first '# ' line regardless of code-fence context (simple heuristic)", () => {
+    // Intentional simplicity: the extractor doesn't parse Markdown AST.
+    // It takes the first line starting with `# `, even inside code fences.
+    // In real docs, the H1 almost always precedes any fenced block, so
+    // this edge case is rare and the cost of AST parsing isn't justified.
+    const content = "```\n# not a heading\n```\n# Real Title\n";
+    expect(extractDocTitle(content, "docs/x.md")).toBe("not a heading");
+  });
+});
+
+describe("filterDocPaths", () => {
+  it("keeps docs/**/*.md and excludes other paths", () => {
+    const paths = [
+      "docs/setup.md",
+      "docs/features/kb.md",
+      "src/auth.ts",
+      "README.md",
+      "docs/architecture.md",
+    ];
+    const result = filterDocPaths(paths);
+    expect(result).toEqual([
+      "docs/setup.md",
+      "docs/features/kb.md",
+      "docs/architecture.md",
+    ]);
+  });
+
+  it("also accepts uppercase .MD (Markdown case-insensitivity)", () => {
+    const paths = ["docs/README.MD", "docs/setup.md"];
+    const result = filterDocPaths(paths);
+    expect(result).toContain("docs/README.MD");
+    expect(result).toContain("docs/setup.md");
+  });
+
+  it("returns empty array when no docs exist", () => {
+    expect(filterDocPaths(["src/auth.ts", "README.md"])).toEqual([]);
+  });
+
+  it("respects config excluded paths", () => {
+    // BattleMageConfig.paths is Record<prefix, PathAnnotation> — the
+    // annotation is the VALUE, not `{ annotation: ... }`. See config.ts.
+    const config = { paths: { "docs/internal/": "excluded" as const } };
+    const paths = ["docs/setup.md", "docs/internal/secret.md"];
+    expect(filterDocPaths(paths, config)).toEqual(["docs/setup.md"]);
+  });
+
+  it("respects config historic paths", () => {
+    const config = { paths: { "docs/archive/": "historic" as const } };
+    const paths = ["docs/setup.md", "docs/archive/old.md"];
+    expect(filterDocPaths(paths, config)).toEqual(["docs/setup.md"]);
+  });
+
+  it("does not match CLAUDE.md (kept inline, not in docs/)", () => {
+    const paths = ["CLAUDE.md", "docs/setup.md"];
+    expect(filterDocPaths(paths)).toEqual(["docs/setup.md"]);
+  });
+});
+
+describe("buildDocCatalogSection", () => {
+  it("renders a markdown section listing each entry", () => {
+    const entries = [
+      { path: "docs/architecture.md", title: "Architecture" },
+      { path: "docs/setup.md", title: "Setup Guide" },
+    ];
+    const section = buildDocCatalogSection(entries);
+    expect(section).toContain("## Documentation Index");
+    expect(section).toContain("- `docs/architecture.md` — Architecture");
+    expect(section).toContain("- `docs/setup.md` — Setup Guide");
+  });
+
+  it("includes guidance about how to load docs", () => {
+    const entries = [{ path: "docs/x.md", title: "X" }];
+    const section = buildDocCatalogSection(entries);
+    // Must tell the model to pull content via read_file when needed.
+    expect(section).toContain("read_file");
+  });
+
+  it("returns empty string for empty input", () => {
+    expect(buildDocCatalogSection([])).toBe("");
+  });
+
+  it("preserves entry order", () => {
+    const entries = [
+      { path: "docs/b.md", title: "B doc" },
+      { path: "docs/a.md", title: "A doc" },
+      { path: "docs/c.md", title: "C doc" },
+    ];
+    const section = buildDocCatalogSection(entries);
+    const bIdx = section.indexOf("docs/b.md");
+    const aIdx = section.indexOf("docs/a.md");
+    const cIdx = section.indexOf("docs/c.md");
+    expect(bIdx).toBeLessThan(aIdx);
+    expect(aIdx).toBeLessThan(cIdx);
   });
 });

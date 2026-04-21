@@ -4,7 +4,13 @@ import type { IssueProposal } from "@/tools/create-issue";
 import { readFile } from "@/lib/github";
 import { getKnowledgeAsMarkdown } from "@/lib/knowledge";
 import { getFeedbackAsMarkdown } from "@/lib/feedback";
-import { getOrRebuildIndex, getCachedConfig } from "@/lib/repo-index";
+import {
+  getOrRebuildIndex,
+  getCachedConfig,
+  getDocCatalog,
+  buildDocCatalogSection,
+  type DocEntry,
+} from "@/lib/repo-index";
 import { log, type LogFn, type RequestLogger } from "@/lib/logger";
 import { classifyApiError, userErrorMessage } from "@/lib/api-error";
 import { shouldWarnBudget, shouldForceStop } from "@/lib/time-budget";
@@ -147,6 +153,12 @@ export interface PromptInputs {
    * pass an empty array to skip the block entirely. See #80.
    */
   participants?: Participant[];
+  /**
+   * Catalog of `docs/**` markdown files with one-line titles. Rendered
+   * as a discoverability section so the agent knows which docs exist
+   * and can pull the relevant one via `read_file`. See #82.
+   */
+  docCatalog?: DocEntry[];
 }
 
 function buildAnnotationsSection(config: BattleMageConfig | null): string {
@@ -368,7 +380,7 @@ function buildParticipantsSection(participants: Participant[] | undefined): stri
 }
 
 function buildVolatileZone(inputs: PromptInputs): string {
-  const { owner, repo, claudeMd, knowledge, feedback, repoIndex, pathAnnotations, participants } = inputs;
+  const { owner, repo, claudeMd, knowledge, feedback, repoIndex, pathAnnotations, participants, docCatalog } = inputs;
   const contextSection = claudeMd
     ? `\n## Project Context (from CLAUDE.md)\n\n${claudeMd}\n`
     : "";
@@ -383,8 +395,9 @@ function buildVolatileZone(inputs: PromptInputs): string {
     : "";
   const annotationsSection = buildAnnotationsSection(pathAnnotations);
   const participantsSection = buildParticipantsSection(participants);
+  const docCatalogSection = buildDocCatalogSection(docCatalog ?? []);
 
-  return `\n\n${buildRepoContextSection(owner, repo)}\n${contextSection}${repoIndexSection}${annotationsSection}${knowledgeSection}${feedbackSection}${participantsSection}`;
+  return `\n\n${buildRepoContextSection(owner, repo)}\n${contextSection}${repoIndexSection}${docCatalogSection}${annotationsSection}${knowledgeSection}${feedbackSection}${participantsSection}`;
 }
 
 export function assembleSystemPrompt(inputs: PromptInputs): string {
@@ -413,8 +426,18 @@ export function assembleSystemBlocks(inputs: PromptInputs): Anthropic.TextBlockP
 async function buildSystemBlocks(
   participants?: Participant[],
 ): Promise<Anthropic.TextBlockParam[]> {
-  const repoIndex = await getOrRebuildIndex();
-  const config = await getCachedConfig();
+  // Fetch index + doc catalog in parallel. Both are KV-reads on the warm
+  // path; rebuild on cold path is already time-bounded inside
+  // getOrRebuildIndex. getDocCatalog is KV-only and never triggers a
+  // rebuild — the catalog is populated by getOrRebuildIndex as a side
+  // effect, so the order of these two calls here doesn't matter for
+  // correctness (cold-start will either get an empty catalog or the
+  // just-built one depending on timing; both are safe).
+  const [repoIndex, config, docCatalog] = await Promise.all([
+    getOrRebuildIndex(),
+    getCachedConfig(),
+    getDocCatalog(),
+  ]);
   return assembleSystemBlocks({
     owner: process.env.GITHUB_OWNER,
     repo: process.env.GITHUB_REPO,
@@ -424,6 +447,7 @@ async function buildSystemBlocks(
     repoIndex,
     pathAnnotations: Object.keys(config.paths).length > 0 ? config : null,
     participants,
+    docCatalog,
   });
 }
 
