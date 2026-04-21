@@ -19,6 +19,12 @@ import { buildCorrectionActions } from "@/lib/auto-correct";
 import { buildThinkingMessage, THINKING_HEADER } from "@/lib/progress";
 import { toSlackMrkdwn } from "@/lib/mrkdwn";
 import { createThrottledUpdater } from "@/lib/slack-throttle";
+import {
+  createStatusScheduler,
+  DEFAULT_STATUS_DEBOUNCE_MS,
+  DEFAULT_STATUS_ROTATION_MS,
+  DEFAULT_STATUS_ROTATION_TEXT,
+} from "@/lib/status-scheduler";
 import { createRequestLogger, flushLogs } from "@/lib/logger";
 import { getCachedTopics } from "@/lib/repo-index";
 import { matchTopicsToQuestion, buildQuestionHints } from "@/lib/topic-match";
@@ -118,23 +124,42 @@ export async function POST(request: NextRequest) {
           }
         }, 1200);
 
+        // Debounced + rotating status updater for tool-progress messages.
+        // Fixes #78: previously every onProgress did a direct chat.update,
+        // so parallel-tool bursts (#77) could fire 3+ edits in under a
+        // second and trip Slack's rate limit. The scheduler coalesces
+        // rapid schedules and emits a "still working…" heartbeat every
+        // 30s of silence so Slack doesn't auto-dim the thinking badge.
+        const statusScheduler = createStatusScheduler(
+          async (text) => {
+            if (thinkingTs) {
+              await updateMessage(channel, thinkingTs, text);
+            }
+          },
+          {
+            debounceMs: DEFAULT_STATUS_DEBOUNCE_MS,
+            rotationMs: DEFAULT_STATUS_ROTATION_MS,
+            rotationText: DEFAULT_STATUS_ROTATION_TEXT,
+          },
+        );
+
         const result = await runAgent(
           augmentedMessage,
           async (toolName, input) => {
-            // Progress emoji takes over — drop any pending streamed text that
-            // was queued during the prior round, otherwise it could land and
-            // overwrite the emoji after this call.
+            // Progress emoji takes over — drop any pending streamed text
+            // that was queued during the prior round, otherwise it could
+            // land and overwrite the emoji after this call.
             await streamThrottle.cancel();
-            if (thinkingTs) {
-              await updateMessage(channel, thinkingTs, buildThinkingMessage(toolName, input));
-            }
+            statusScheduler.schedule(buildThinkingMessage(toolName, input));
           },
           mentionHistory,
           rlog,
           (snapshot) => streamThrottle.update(snapshot),
         );
-        // Drain any pending streamed edit so it doesn't race the final write
+        // Drain any pending streamed edit AND pending status before
+        // the final write so neither can race or overwrite the answer.
         await streamThrottle.flush();
+        await statusScheduler.flush();
         // `agent_complete` is already emitted by runAgent with rounds, token
         // usage, and cache metrics — don't duplicate it at the route level.
 
@@ -297,21 +322,34 @@ export async function POST(request: NextRequest) {
           }
         }, 1200);
 
+        // Mirror of the mention-flow scheduler — see #78.
+        const followupStatus = createStatusScheduler(
+          async (text) => {
+            if (thinkTs) {
+              await updateMessage(channel, thinkTs, text);
+            }
+          },
+          {
+            debounceMs: DEFAULT_STATUS_DEBOUNCE_MS,
+            rotationMs: DEFAULT_STATUS_ROTATION_MS,
+            rotationText: DEFAULT_STATUS_ROTATION_TEXT,
+          },
+        );
+
         const result = await runAgent(
           followupMessage,
           async (toolName, input) => {
             // See the mention handler: cancel pending streamed text so
             // the emoji progress isn't overwritten by a late flush.
             await followupThrottle.cancel();
-            if (thinkTs) {
-              await updateMessage(channel, thinkTs, buildThinkingMessage(toolName, input));
-            }
+            followupStatus.schedule(buildThinkingMessage(toolName, input));
           },
           history,
           rlog,
           (snapshot) => followupThrottle.update(snapshot),
         );
         await followupThrottle.flush();
+        await followupStatus.flush();
 
         const text = toSlackMrkdwn(result.text);
         const rankedRefs = rankReferences(result.references, result.text);
