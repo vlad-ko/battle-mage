@@ -466,80 +466,32 @@ export interface AgentResult {
   metrics: AgentMetrics;
 }
 
-export type ProgressCallback = (toolName: string, input: Record<string, unknown>) => void | Promise<void>;
-export type TextDeltaCallback = (snapshot: string) => void | Promise<void>;
-
-// Invokes an optional text-delta callback safely. Swallows both synchronous
-// throws and async rejections so a faulty handler cannot surface as an
-// unhandled rejection and destabilize the runtime. Exported for testing.
-export function safeInvokeTextDelta(
-  onTextDelta: TextDeltaCallback | undefined,
-  snapshot: string,
-): void {
-  if (!onTextDelta) return;
-  Promise.resolve()
-    .then(() => onTextDelta(snapshot))
-    .catch(() => {});
-}
-
 export interface ConversationTurn {
   role: "user" | "assistant";
   content: string;
 }
 
-// Factory for a `stream.on("error", ...)` handler. The @anthropic-ai/sdk
-// MessageStream can emit `error` events AFTER `finalMessage()` has
-// resolved (e.g. if the underlying HTTP connection receives a late error
-// frame). Node's EventEmitter throws synchronously on an `error` event
-// without a listener, which on Vercel surfaces as an unhandled rejection
-// bubbling through the NEXT await — that's why #100 saw `msg_too_long`
-// land in the route's catch block 85ms AFTER `agent_complete` fired.
+// Non-streaming Anthropic call. Previously used `messages.stream` +
+// `finalMessage()` to enable live text-delta forwarding to Slack. With
+// the API-minimization refactor (#108) we no longer stream text to
+// Slack, so there's nothing to gain from a streaming request:
+//   - The agent-loop needs the FULL response before dispatching tools.
+//   - The final synthesis round returns text that we post in a single
+//     chat.update — partial tokens would just be buffered and discarded.
 //
-// Register this as a no-throw listener so late errors are merely logged
-// and the async context stays clean. Exported for unit testing.
-export function logStreamError(
-  round: number,
-  logger: LogFn,
-): (err: unknown) => void {
-  return (err: unknown) => {
-    logger("agent_stream_error", {
-      round,
-      message: err instanceof Error ? err.message : String(err),
-    });
-  };
-}
-
+// Dropping the stream also kills the #100 bug class (late error events
+// emitted by MessageStream AFTER finalMessage resolved, which surfaced
+// as unhandled rejections bubbling through unrelated awaits).
 async function anthropicCall(
   params: Anthropic.MessageCreateParamsNonStreaming,
-  onTextDelta: TextDeltaCallback | undefined,
-  _log: LogFn,
-  round: number,
 ): Promise<Anthropic.Message> {
-  try {
-    const stream = anthropic.messages.stream(params);
-    stream.on("text", (_delta, snapshot) => {
-      safeInvokeTextDelta(onTextDelta, snapshot);
-    });
-    // MUST register before finalMessage resolves. Without this listener,
-    // a late `error` event after finalMessage() returns becomes an
-    // unhandled rejection bubbling through the next await. See #100.
-    stream.on("error", logStreamError(round, _log));
-    return await stream.finalMessage();
-  } catch (streamErr) {
-    _log("agent_stream_fallback", {
-      round,
-      error: streamErr instanceof Error ? streamErr.message : String(streamErr),
-    });
-    return await anthropic.messages.create(params);
-  }
+  return anthropic.messages.create(params);
 }
 
 export async function runAgent(
   userMessage: string,
-  onProgress?: ProgressCallback,
   conversationHistory?: ConversationTurn[],
   rlog?: LogFn,
-  onTextDelta?: TextDeltaCallback,
   participants?: Participant[],
 ): Promise<AgentResult> {
   // Use request-scoped logger if provided, fall back to bare log. Typed
@@ -611,18 +563,13 @@ export async function runAgent(
 
     let response;
     try {
-      response = await anthropicCall(
-        {
-          model: MODEL,
-          max_tokens: 4096,
-          system: systemBlocks,
-          tools,
-          messages,
-        },
-        onTextDelta,
-        _log,
-        round,
-      );
+      response = await anthropicCall({
+        model: MODEL,
+        max_tokens: 4096,
+        system: systemBlocks,
+        tools,
+        messages,
+      });
       totalInput += response.usage.input_tokens;
       totalOutput += response.usage.output_tokens;
       totalCacheRead += response.usage.cache_read_input_tokens ?? 0;
@@ -724,7 +671,7 @@ export async function runAgent(
     // with no cost impact. See #77.
     const parallelOutcome = await executeToolsInParallel(
       toolUseBlocks.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use"),
-      { round, log: _log, onProgress },
+      { round, log: _log },
     );
     const toolResults: Anthropic.ToolResultBlockParam[] = parallelOutcome.toolResults;
     allReferences.push(...parallelOutcome.references);
@@ -796,7 +743,6 @@ export async function runAgent(
 export interface ParallelToolsContext {
   round: number;
   log: LogFn;
-  onProgress?: ProgressCallback;
   executor?: (name: string, input: Record<string, unknown>) => Promise<ToolResult>;
 }
 
@@ -812,19 +758,11 @@ export async function executeToolsInParallel(
 ): Promise<ParallelToolsResult> {
   const exec = ctx.executor ?? executeTool;
 
-  // Fire all tools concurrently. Each task logs + pings progress up front
-  // so the user sees every intended call before any finishes, then awaits
-  // its executor. Progress invocations are fire-and-forget *within* the
-  // task (so a slow/throwing progress handler can't serialize the parallel
-  // dispatch) but we collect the promises so the caller can await them.
-  //
-  // Why collect: onProgress typically does an async Slack `chat.update`,
-  // and the route posts the final answer by updating the SAME message.
-  // Without waiting for progress updates to settle before returning, a
-  // stale progress update could land AFTER the final answer and overwrite
-  // it ("thinking…" reappearing after the answer). See #77 review.
-  const progressPromises: Promise<void>[] = [];
-
+  // Fire all tools concurrently. Each task emits its agent_tool_call log
+  // synchronously at the top (so the full set of intended calls is
+  // visible in Sentry before any tool finishes), then awaits its
+  // executor. With the API-minimization refactor (#108) there's no UI
+  // progress callback to coordinate with; Sentry is the sole observer.
   const outcomes = await Promise.all(
     blocks.map(async (block) => {
       ctx.log("agent_tool_call", {
@@ -832,15 +770,6 @@ export async function executeToolsInParallel(
         round: ctx.round,
         input: JSON.stringify(block.input).slice(0, 200),
       });
-      if (ctx.onProgress) {
-        const p = Promise.resolve()
-          .then(() => ctx.onProgress!(block.name, block.input as Record<string, unknown>))
-          .catch(() => {
-            // Progress is UX — never let it abort tool execution or
-            // surface as an unhandled rejection.
-          });
-        progressPromises.push(p);
-      }
       try {
         const result = await exec(block.name, block.input as Record<string, unknown>);
         return { block, result, error: null as string | null };
@@ -853,10 +782,6 @@ export async function executeToolsInParallel(
       }
     }),
   );
-
-  // Wait for any in-flight progress updates to settle BEFORE returning.
-  // Prevents the stale-overwrite race at the caller's final-update step.
-  await Promise.all(progressPromises);
 
   const toolResults: Anthropic.ToolResultBlockParam[] = [];
   const references: Reference[] = [];

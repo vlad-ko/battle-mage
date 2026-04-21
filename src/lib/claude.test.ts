@@ -2,11 +2,9 @@ import { describe, it, expect, vi } from "vitest";
 import {
   assembleSystemPrompt,
   assembleSystemBlocks,
-  safeInvokeTextDelta,
   truncateToolResult,
   estimateMessagesTokens,
   executeToolsInParallel,
-  logStreamError,
   FAST_MODEL,
   MAX_TOOL_ROUNDS,
   TOOL_RESULT_MAX_CHARS,
@@ -538,67 +536,6 @@ describe("assembleSystemBlocks — prompt caching", () => {
   });
 });
 
-describe("safeInvokeTextDelta — streaming callback safety", () => {
-  it("invokes the callback with the snapshot", async () => {
-    const cb = vi.fn();
-    safeInvokeTextDelta(cb, "Hello world");
-    // Microtask-scheduled — flush the queue
-    await Promise.resolve();
-    expect(cb).toHaveBeenCalledOnce();
-    expect(cb).toHaveBeenCalledWith("Hello world");
-  });
-
-  it("is a no-op when the callback is undefined", () => {
-    expect(() => safeInvokeTextDelta(undefined, "anything")).not.toThrow();
-  });
-
-  it("swallows synchronous throws from the callback", async () => {
-    const cb = vi.fn(() => {
-      throw new Error("sync boom");
-    });
-    expect(() => safeInvokeTextDelta(cb, "x")).not.toThrow();
-    // Flush the microtask where the callback actually runs
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(cb).toHaveBeenCalled();
-  });
-
-  it("swallows async rejections from the callback (no unhandled promise rejection)", async () => {
-    const cb = vi.fn(async () => {
-      throw new Error("async boom");
-    });
-    safeInvokeTextDelta(cb, "y");
-    // Let the rejection + catch() propagate through the microtask queue
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(cb).toHaveBeenCalled();
-    // If the rejection were unhandled, vitest would fail the test here.
-  });
-
-  it("supports sync-returning callbacks", async () => {
-    let seen = "";
-    const cb = (snap: string): void => {
-      seen = snap;
-    };
-    safeInvokeTextDelta(cb, "streamed");
-    await Promise.resolve();
-    expect(seen).toBe("streamed");
-  });
-
-  it("supports async-returning callbacks", async () => {
-    let seen = "";
-    const cb = async (snap: string): Promise<void> => {
-      await Promise.resolve();
-      seen = snap;
-    };
-    safeInvokeTextDelta(cb, "async streamed");
-    // Two awaits for the inner await + the outer .then
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(seen).toBe("async streamed");
-  });
-});
-
 describe("truncateToolResult — prevents msg_too_long crashes", () => {
   it("passes through content shorter than the cap", () => {
     const { text, truncated } = truncateToolResult("short content");
@@ -767,62 +704,6 @@ describe("estimateMessagesTokens — cumulative context budgeting", () => {
   });
 });
 
-describe("logStreamError", () => {
-  // Factory returns an "error" handler suitable for stream.on("error", ...).
-  // Goal: prevent late error events from MessageStream (emitted AFTER
-  // finalMessage has resolved) from surfacing as unhandled rejections —
-  // those caused msg_too_long errors to bubble through unrelated awaits
-  // in the route handler. See #100.
-
-  it("returns a function that logs agent_stream_error with round + message", () => {
-    const log = vi.fn();
-    const handler = logStreamError(3, log);
-
-    handler(new Error("connection reset"));
-
-    expect(log).toHaveBeenCalledOnce();
-    expect(log).toHaveBeenCalledWith("agent_stream_error", expect.objectContaining({
-      round: 3,
-      message: "connection reset",
-    }));
-  });
-
-  it("coerces non-Error throwables to string", () => {
-    const log = vi.fn();
-    const handler = logStreamError(0, log);
-
-    handler("raw string error");
-    handler({ weird: "object" });
-    handler(42);
-
-    expect(log).toHaveBeenCalledTimes(3);
-    expect(log.mock.calls[0][1].message).toBe("raw string error");
-    expect(log.mock.calls[1][1].message).toContain("object");
-    expect(log.mock.calls[2][1].message).toBe("42");
-  });
-
-  it("does not throw or return a rejected promise", () => {
-    const log = vi.fn();
-    const handler = logStreamError(0, log);
-
-    // The whole point — stream.on("error", handler) must never re-throw,
-    // otherwise Node's EventEmitter would crash the async context.
-    expect(() => handler(new Error("boom"))).not.toThrow();
-  });
-
-  it("preserves the Error prototype check when message is missing", () => {
-    const log = vi.fn();
-    const handler = logStreamError(0, log);
-
-    const err = new Error(); // empty message
-    handler(err);
-
-    // We always log a non-undefined message field so Sentry has something
-    // to filter on — empty string is fine, undefined is not.
-    expect(log.mock.calls[0][1].message).toBeTypeOf("string");
-  });
-});
-
 describe("executeToolsInParallel", () => {
   type FakeBlock = { type: "tool_use"; id: string; name: string; input: unknown };
   const makeBlock = (id: string, name: string, input: unknown = {}): FakeBlock => ({
@@ -921,27 +802,6 @@ describe("executeToolsInParallel", () => {
     expect(String(toolResults[0].content)).toContain("result slow");
     expect(toolResults[1].tool_use_id).toBe("fast_id");
     expect(String(toolResults[1].content)).toContain("result fast");
-  });
-
-  it("fires onProgress exactly once per tool_use block", async () => {
-    const onProgress = vi.fn();
-    const executor = vi.fn().mockResolvedValue({ type: "text", text: "ok" });
-
-    const blocks: FakeBlock[] = [
-      makeBlock("t1", "a", { x: 1 }),
-      makeBlock("t2", "b", { y: 2 }),
-    ];
-
-    await executeToolsInParallel(blocks, {
-      round: 0,
-      log: vi.fn(),
-      executor,
-      onProgress,
-    });
-
-    expect(onProgress).toHaveBeenCalledTimes(2);
-    expect(onProgress).toHaveBeenCalledWith("a", { x: 1 });
-    expect(onProgress).toHaveBeenCalledWith("b", { y: 2 });
   });
 
   it("emits agent_tool_call for each block with round and truncated input", async () => {
@@ -1051,20 +911,4 @@ describe("executeToolsInParallel", () => {
     expect(truncLog?.[1]).toMatchObject({ tool: "read_file", round: 0 });
   });
 
-  it("swallows onProgress errors without aborting tool execution", async () => {
-    const onProgress = vi.fn().mockRejectedValue(new Error("progress UX broke"));
-    const executor = vi.fn().mockResolvedValue({ type: "text", text: "ok" });
-
-    const blocks: FakeBlock[] = [makeBlock("t1", "a")];
-
-    const { toolResults } = await executeToolsInParallel(blocks, {
-      round: 0,
-      log: vi.fn(),
-      executor,
-      onProgress,
-    });
-
-    expect(toolResults).toHaveLength(1);
-    expect(String(toolResults[0].content)).toContain("ok");
-  });
 });
