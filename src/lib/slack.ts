@@ -42,6 +42,30 @@ export function verifySlackSignature(
   return crypto.timingSafeEqual(expectedBuf, signatureBuf);
 }
 
+// ── Slack message length guard ────────────────────────────────────────
+// Slack's `chat.postMessage` / `chat.update` cap `text` at 40,000 chars.
+// Exceeding this throws `An API error occurred: msg_too_long` — the
+// error that haunted us through #100, mis-attributed to Anthropic's
+// context-window limit. Actual root cause: Slack's message cap. We leave
+// ~500 chars of headroom under the hard limit so the truncation note
+// itself can't push us over.
+export const SLACK_MESSAGE_HARD_CAP = 39_500;
+
+const TRUNCATION_NOTE =
+  "\n\n_…(response truncated — exceeded Slack's 40K-character message limit. Ask a narrower follow-up for full detail.)_";
+
+/**
+ * Cap a message body at Slack's max length. Passes short messages
+ * through unchanged; for oversized messages, takes the first N chars
+ * (leaving room for the note) and appends a truncation note so the
+ * user knows they got a partial response. Pure function; no I/O.
+ */
+export function capSlackMessage(text: string): string {
+  if (text.length <= SLACK_MESSAGE_HARD_CAP) return text;
+  const budget = SLACK_MESSAGE_HARD_CAP - TRUNCATION_NOTE.length;
+  return text.slice(0, budget) + TRUNCATION_NOTE;
+}
+
 // ── Thread reply helper ───────────────────────────────────────────────
 export async function replyInThread(
   channel: string,
@@ -51,7 +75,7 @@ export async function replyInThread(
   const result = await slack.chat.postMessage({
     channel,
     thread_ts: threadTs,
-    text,
+    text: capSlackMessage(text),
   });
   return result.ts; // message timestamp — used to track Q&A context for feedback
 }
@@ -62,7 +86,7 @@ export async function updateMessage(
   ts: string,
   text: string,
 ): Promise<void> {
-  await slack.chat.update({ channel, ts, text });
+  await slack.chat.update({ channel, ts, text: capSlackMessage(text) });
 }
 
 // ── Delete a message ──────────────────────────────────────────────────
