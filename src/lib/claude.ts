@@ -11,6 +11,7 @@ import { shouldWarnBudget, shouldForceStop } from "@/lib/time-budget";
 import type { BattleMageConfig } from "@/lib/config";
 import { compactThread, shouldCompact } from "@/lib/compaction";
 import type { AgentMetrics } from "@/lib/reply-footer";
+import type { Participant } from "@/lib/slack-users";
 
 // ── Anthropic client ──────────────────────────────────────────────────
 const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from env
@@ -140,6 +141,12 @@ export interface PromptInputs {
   feedback: string | null;
   repoIndex: string | null;
   pathAnnotations: BattleMageConfig | null;
+  /**
+   * Resolved Slack thread participants — `<@USERID>` tokens + display
+   * names that the model can @-mention without calling a tool. Omit or
+   * pass an empty array to skip the block entirely. See #80.
+   */
+  participants?: Participant[];
 }
 
 function buildAnnotationsSection(config: BattleMageConfig | null): string {
@@ -345,8 +352,23 @@ function buildStableZone(inputs: PromptInputs): string {
   ].join("\n\n");
 }
 
+function buildParticipantsSection(participants: Participant[] | undefined): string {
+  if (!participants || participants.length === 0) return "";
+  const lines = participants
+    .map((p) => `- ${p.displayName} (<@${p.id}>)`)
+    .join("\n");
+  // Keep the rule short and unambiguous — bare `@name` tokens never render
+  // as a live mention in Slack, only `<@USERID>` does. Telling the model
+  // this avoids "@cole" strings that look right in chat but don't ping.
+  return (
+    `\n## Thread Participants\n\n` +
+    `When referring to a participant below, use the exact \`<@USERID>\` token from the list — never a bare \`@name\` (Slack only renders the \`<@...>\` form as a real mention). If someone is not in this list, don't try to @-mention them.\n\n` +
+    `${lines}\n`
+  );
+}
+
 function buildVolatileZone(inputs: PromptInputs): string {
-  const { owner, repo, claudeMd, knowledge, feedback, repoIndex, pathAnnotations } = inputs;
+  const { owner, repo, claudeMd, knowledge, feedback, repoIndex, pathAnnotations, participants } = inputs;
   const contextSection = claudeMd
     ? `\n## Project Context (from CLAUDE.md)\n\n${claudeMd}\n`
     : "";
@@ -360,8 +382,9 @@ function buildVolatileZone(inputs: PromptInputs): string {
     ? `\n## Repository Map (auto-generated index)\n\nThis map shows the key areas of the repo. Use it to jump directly to relevant files with \`read_file\` instead of searching blind. The map is rebuilt automatically when the repo changes.\n\n${repoIndex}\n`
     : "";
   const annotationsSection = buildAnnotationsSection(pathAnnotations);
+  const participantsSection = buildParticipantsSection(participants);
 
-  return `\n\n${buildRepoContextSection(owner, repo)}\n${contextSection}${repoIndexSection}${annotationsSection}${knowledgeSection}${feedbackSection}`;
+  return `\n\n${buildRepoContextSection(owner, repo)}\n${contextSection}${repoIndexSection}${annotationsSection}${knowledgeSection}${feedbackSection}${participantsSection}`;
 }
 
 export function assembleSystemPrompt(inputs: PromptInputs): string {
@@ -387,7 +410,9 @@ export function assembleSystemBlocks(inputs: PromptInputs): Anthropic.TextBlockP
 }
 
 // ── Async wrapper that fetches data then assembles ────────────────────
-async function buildSystemBlocks(): Promise<Anthropic.TextBlockParam[]> {
+async function buildSystemBlocks(
+  participants?: Participant[],
+): Promise<Anthropic.TextBlockParam[]> {
   const repoIndex = await getOrRebuildIndex();
   const config = await getCachedConfig();
   return assembleSystemBlocks({
@@ -398,6 +423,7 @@ async function buildSystemBlocks(): Promise<Anthropic.TextBlockParam[]> {
     feedback: await getFeedbackAsMarkdown(),
     repoIndex,
     pathAnnotations: Object.keys(config.paths).length > 0 ? config : null,
+    participants,
   });
 }
 
@@ -490,6 +516,7 @@ export async function runAgent(
   conversationHistory?: ConversationTurn[],
   rlog?: LogFn,
   onTextDelta?: TextDeltaCallback,
+  participants?: Participant[],
 ): Promise<AgentResult> {
   // Use request-scoped logger if provided, fall back to bare log. Typed
   // as LogFn because runAgent itself only calls the logger (the route
@@ -513,7 +540,7 @@ export async function runAgent(
   let issueProposal: IssueProposal | undefined;
   const allReferences: Reference[] = [];
   const startTime = Date.now();
-  const systemBlocks = await buildSystemBlocks();
+  const systemBlocks = await buildSystemBlocks(participants);
   const promptLength = systemBlocks.reduce((n, b) => n + b.text.length, 0);
 
   _log("agent_start", {

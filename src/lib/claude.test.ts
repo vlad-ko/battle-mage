@@ -116,6 +116,34 @@ describe("assembleSystemPrompt", () => {
       expect(prompt).toContain("Feedback");
     });
 
+    it("includes thread participants block when provided (#80)", () => {
+      const prompt = assembleSystemPrompt({
+        ...baseArgs,
+        participants: [
+          { id: "U12345", displayName: "Vlad" },
+          { id: "U67890", displayName: "Cole" },
+        ],
+      });
+      // Header is present
+      expect(prompt).toContain("Thread Participants");
+      // Each participant rendered as "- Name (<@ID>)"
+      expect(prompt).toContain("- Vlad (<@U12345>)");
+      expect(prompt).toContain("- Cole (<@U67890>)");
+      // Guidance: the rule about not using a bare `@name`
+      expect(prompt).toContain("<@USERID>");
+      expect(prompt).toContain("bare");
+    });
+
+    it("omits participants section when undefined", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      expect(prompt).not.toContain("Thread Participants");
+    });
+
+    it("omits participants section when empty array", () => {
+      const prompt = assembleSystemPrompt({ ...baseArgs, participants: [] });
+      expect(prompt).not.toContain("Thread Participants");
+    });
+
     it("omits feedback section when null", () => {
       const prompt = assembleSystemPrompt(baseArgs);
       expect(prompt).not.toContain("User Feedback");

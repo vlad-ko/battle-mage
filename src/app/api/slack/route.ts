@@ -27,6 +27,11 @@ import {
   DEFAULT_STATUS_ROTATION_TEXT,
 } from "@/lib/status-scheduler";
 import { formatReplyFooter, isReplyFooterEnabled } from "@/lib/reply-footer";
+import {
+  extractParticipantIds,
+  resolveParticipants,
+  type Participant,
+} from "@/lib/slack-users";
 import { createRequestLogger, flushLogs } from "@/lib/logger";
 import { getCachedTopics } from "@/lib/repo-index";
 import { matchTopicsToQuestion, buildQuestionHints } from "@/lib/topic-match";
@@ -99,14 +104,31 @@ export async function POST(request: NextRequest) {
 
         const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
 
-        // If this is a re-mention inside a thread, fetch history for context
-        // (fresh top-level mentions have no thread_ts — no history needed)
+        // Thread participants for #80: resolve user IDs to display names
+        // so the agent can @-mention correctly. Populated for BOTH fresh
+        // mentions (participants = invoking user + anyone they mentioned)
+        // and thread follow-ups (all thread authors + anyone mentioned).
         let mentionHistory: { role: "user" | "assistant"; content: string }[] | undefined;
+        let mentionParticipants: Participant[] | undefined;
+        const botId = await getBotUserId();
         if (event.thread_ts) {
-          const botId = await getBotUserId();
+          const threadMsgs = await fetchThreadMessages(channel, threadTs);
           if (botId) {
-            const threadMsgs = await fetchThreadMessages(channel, threadTs);
             mentionHistory = buildConversationHistory(threadMsgs, botId);
+          }
+          const ids = extractParticipantIds(threadMsgs, botId);
+          if (ids.length > 0) {
+            mentionParticipants = await resolveParticipants(ids);
+          }
+        } else {
+          // Fresh top-level mention — the only participant signal is the
+          // invoking user + anyone they mentioned in the message body.
+          const ids = extractParticipantIds(
+            [{ user: event.user, text: userMessage }],
+            botId,
+          );
+          if (ids.length > 0) {
+            mentionParticipants = await resolveParticipants(ids);
           }
         }
 
@@ -157,6 +179,7 @@ export async function POST(request: NextRequest) {
           mentionHistory,
           rlog,
           (snapshot) => streamThrottle.update(snapshot),
+          mentionParticipants,
         );
         // Drain any pending streamed edit AND pending status before
         // the final write so neither can race or overwrite the answer.
@@ -322,6 +345,13 @@ export async function POST(request: NextRequest) {
         // (uses Anthropic's native message format, not string hacking)
         const history = buildConversationHistory(threadMessages, bid);
 
+        // Thread participants for #80 — resolve IDs now so the agent can
+        // @-mention teammates in its answer.
+        const followupParticipantIds = extractParticipantIds(threadMessages, bid);
+        const followupParticipants = followupParticipantIds.length > 0
+          ? await resolveParticipants(followupParticipantIds)
+          : undefined;
+
         // Pre-match for thread follow-ups too
         const followupTopics = await getCachedTopics();
         const followupMatches = matchTopicsToQuestion(cleanMessage, followupTopics);
@@ -359,6 +389,7 @@ export async function POST(request: NextRequest) {
           history,
           rlog,
           (snapshot) => followupThrottle.update(snapshot),
+          followupParticipants,
         );
         await followupThrottle.flush();
         await followupStatus.flush();
