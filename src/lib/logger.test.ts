@@ -140,7 +140,7 @@ describe("flushLogs", () => {
   });
 
   it("does not throw when the logger itself throws", async () => {
-    const throwing: import("./logger").RequestLogger = () => {
+    const throwing: import("./logger").LogFn = () => {
       throw new Error("logger broke");
     };
     // Must not reject — post-response flow depends on this invariant.

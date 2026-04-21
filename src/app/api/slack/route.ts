@@ -26,6 +26,7 @@ import {
   DEFAULT_STATUS_ROTATION_MS,
   DEFAULT_STATUS_ROTATION_TEXT,
 } from "@/lib/status-scheduler";
+import { formatReplyFooter, isReplyFooterEnabled } from "@/lib/reply-footer";
 import { createRequestLogger, flushLogs } from "@/lib/logger";
 import { getCachedTopics } from "@/lib/repo-index";
 import { matchTopicsToQuestion, buildQuestionHints } from "@/lib/topic-match";
@@ -167,6 +168,11 @@ export async function POST(request: NextRequest) {
         const text = toSlackMrkdwn(result.text);
         const rankedRefs = rankReferences(result.references, result.text);
         const refsFooter = formatReferences(rankedRefs);
+        // Optional compact telemetry footer (#79). Disabled by default;
+        // enable with BM_REPLY_FOOTER=1 in the Vercel env.
+        const replyFooter = isReplyFooterEnabled(process.env)
+          ? formatReplyFooter(result.metrics, rlog.requestId)
+          : "";
 
         if (result.issueProposal) {
           const proposal = result.issueProposal;
@@ -183,7 +189,7 @@ export async function POST(request: NextRequest) {
             proposal.body,
             "",
             "React with :white_check_mark: to create this issue, or ignore to cancel.",
-          ].join("\n") + refsFooter;
+          ].join("\n") + refsFooter + replyFooter;
 
           if (thinkingTs) {
             // Reuse the thinking/streamed message as the final answer.
@@ -194,7 +200,7 @@ export async function POST(request: NextRequest) {
           }
           rlog("answer_posted", { channel, threadTs });
         } else {
-          const finalBody = text + refsFooter;
+          const finalBody = text + refsFooter + replyFooter;
           let replyTs: string | undefined;
           if (thinkingTs) {
             await updateMessage(channel, thinkingTs, finalBody);
@@ -360,6 +366,10 @@ export async function POST(request: NextRequest) {
         const text = toSlackMrkdwn(result.text);
         const rankedRefs = rankReferences(result.references, result.text);
         const refsFooter = formatReferences(rankedRefs);
+        // Optional compact telemetry footer (#79) — mirrors the mention flow.
+        const replyFooter = isReplyFooterEnabled(process.env)
+          ? formatReplyFooter(result.metrics, rlog.requestId)
+          : "";
 
         if (result.issueProposal) {
           const proposal = result.issueProposal;
@@ -376,7 +386,7 @@ export async function POST(request: NextRequest) {
             proposal.body,
             "",
             "React with :white_check_mark: to create this issue, or ignore to cancel.",
-          ].join("\n") + refsFooter;
+          ].join("\n") + refsFooter + replyFooter;
 
           if (thinkTs) {
             await updateMessage(channel, thinkTs, finalBody);
@@ -385,7 +395,7 @@ export async function POST(request: NextRequest) {
             await replyInThread(channel, threadTs, finalBody);
           }
         } else {
-          const finalBody = text + refsFooter;
+          const finalBody = text + refsFooter + replyFooter;
           let replyTs: string | undefined;
           if (thinkTs) {
             await updateMessage(channel, thinkTs, finalBody);

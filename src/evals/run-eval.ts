@@ -1,5 +1,5 @@
 import { runAgent, type AgentResult } from "@/lib/claude";
-import type { RequestLogger } from "@/lib/logger";
+import type { LogFn } from "@/lib/logger";
 
 function requireEnv(name: string): void {
   if (!process.env[name]) {
@@ -13,7 +13,7 @@ function requireEnv(name: string): void {
 // Drops all structured log events so eval runs don't pollute vitest output
 // with per-round agent JSON. Override by setting EVAL_VERBOSE=1 in the
 // environment when debugging a failing eval.
-const silentLog: RequestLogger =
+const silentLog: LogFn =
   process.env.EVAL_VERBOSE
     ? (event, data) => {
         // eslint-disable-next-line no-console

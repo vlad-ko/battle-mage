@@ -5,11 +5,12 @@ import { readFile } from "@/lib/github";
 import { getKnowledgeAsMarkdown } from "@/lib/knowledge";
 import { getFeedbackAsMarkdown } from "@/lib/feedback";
 import { getOrRebuildIndex, getCachedConfig } from "@/lib/repo-index";
-import { log, type RequestLogger } from "@/lib/logger";
+import { log, type LogFn, type RequestLogger } from "@/lib/logger";
 import { classifyApiError, userErrorMessage } from "@/lib/api-error";
 import { shouldWarnBudget, shouldForceStop } from "@/lib/time-budget";
 import type { BattleMageConfig } from "@/lib/config";
 import { compactThread, shouldCompact } from "@/lib/compaction";
+import type { AgentMetrics } from "@/lib/reply-footer";
 
 // ── Anthropic client ──────────────────────────────────────────────────
 const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from env
@@ -406,6 +407,13 @@ export interface AgentResult {
   text: string;
   issueProposal?: IssueProposal;
   references: Reference[];
+  /**
+   * Per-turn telemetry snapshot: duration, token usage, cache reads,
+   * round count. Always populated — every return path computes it from
+   * the current counters. Consumed by the optional reply footer in
+   * route.ts (see #79); also useful for any future debug tooling.
+   */
+  metrics: AgentMetrics;
 }
 
 export type ProgressCallback = (toolName: string, input: Record<string, unknown>) => void | Promise<void>;
@@ -441,7 +449,7 @@ export interface ConversationTurn {
 // and the async context stays clean. Exported for unit testing.
 export function logStreamError(
   round: number,
-  logger: RequestLogger,
+  logger: LogFn,
 ): (err: unknown) => void {
   return (err: unknown) => {
     logger("agent_stream_error", {
@@ -454,7 +462,7 @@ export function logStreamError(
 async function anthropicCall(
   params: Anthropic.MessageCreateParamsNonStreaming,
   onTextDelta: TextDeltaCallback | undefined,
-  _log: RequestLogger,
+  _log: LogFn,
   round: number,
 ): Promise<Anthropic.Message> {
   try {
@@ -480,11 +488,13 @@ export async function runAgent(
   userMessage: string,
   onProgress?: ProgressCallback,
   conversationHistory?: ConversationTurn[],
-  rlog?: RequestLogger,
+  rlog?: LogFn,
   onTextDelta?: TextDeltaCallback,
 ): Promise<AgentResult> {
-  // Use request-scoped logger if provided, fall back to bare log
-  const _log: RequestLogger = rlog ?? log;
+  // Use request-scoped logger if provided, fall back to bare log. Typed
+  // as LogFn because runAgent itself only calls the logger (the route
+  // keeps the full RequestLogger for the reply footer's requestId).
+  const _log: LogFn = rlog ?? log;
 
   // Compact conversation history if it exceeds the trigger. Runs before
   // the messages array is built so the round-0 request is already slim.
@@ -514,6 +524,17 @@ export async function runAgent(
 
   let warned = false;
   let contextWarned = false;
+  // Snapshot current counters at any return point. All AgentResult values
+  // carry a `metrics` field populated via this closure so the reply
+  // footer (#79) can render it without branching on error vs. happy path.
+  const buildMetrics = (rounds: number): AgentMetrics => ({
+    duration_ms: Date.now() - startTime,
+    input_tokens: totalInput,
+    output_tokens: totalOutput,
+    cache_read_tokens: totalCacheRead,
+    cache_creation_tokens: totalCacheCreation,
+    rounds,
+  });
   let totalCacheRead = 0;
   let totalCacheCreation = 0;
   let totalInput = 0;
@@ -533,6 +554,7 @@ export async function runAgent(
         text: "I've been working on this for a while and want to give you what I have so far rather than keep you waiting. Here's my answer based on what I've found:\n\n_I ran out of time before completing a thorough analysis. Ask a follow-up question if you need more detail on a specific area._",
         issueProposal,
         references: finalRefs,
+        metrics: buildMetrics(round),
       };
     }
 
@@ -568,6 +590,7 @@ export async function runAgent(
         text: userErrorMessage(errInfo),
         issueProposal,
         references: [],
+        metrics: buildMetrics(round),
       };
     }
 
@@ -601,7 +624,7 @@ export async function runAgent(
         cache_creation_tokens: totalCacheCreation,
         model: MODEL,
       });
-      return { text, issueProposal, references: dedupeRefs() };
+      return { text, issueProposal, references: dedupeRefs(), metrics: buildMetrics(round + 1) };
     }
 
     // Process tool calls
@@ -616,7 +639,12 @@ export async function runAgent(
         if (b.type === "text") return b.text;
         return "";
       }).join("\n");
-      return { text: text || "I wasn't able to process that request.", issueProposal, references: dedupeRefs() };
+      return {
+        text: text || "I wasn't able to process that request.",
+        issueProposal,
+        references: dedupeRefs(),
+        metrics: buildMetrics(round + 1),
+      };
     }
 
     // Context-budget exhaustion guard: if we already warned and the model
@@ -632,6 +660,7 @@ export async function runAgent(
           "I gathered a lot of context while researching this. Here's what I've found so far — please ask a narrower follow-up if you need more detail on a specific area.",
         issueProposal,
         references: dedupeRefs(),
+        metrics: buildMetrics(round + 1),
       };
     }
 
@@ -699,6 +728,7 @@ export async function runAgent(
     text: "I hit the maximum number of tool calls for this request. Here's what I found so far — please ask a more specific question if you need more detail.",
     issueProposal,
     references: finalRefs,
+    metrics: buildMetrics(MAX_TOOL_ROUNDS),
   };
 }
 
@@ -714,7 +744,7 @@ export async function runAgent(
 
 export interface ParallelToolsContext {
   round: number;
-  log: RequestLogger;
+  log: LogFn;
   onProgress?: ProgressCallback;
   executor?: (name: string, input: Record<string, unknown>) => Promise<ToolResult>;
 }
