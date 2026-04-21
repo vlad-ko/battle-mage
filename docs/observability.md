@@ -3,7 +3,7 @@
 Battle Mage observability has two layers:
 
 1. **Structured logs** — every event (mention, tool call, agent completion, answer posted, errors) is emitted as a JSON line to stdout AND as a Sentry event. See "Log Format" and "Event Catalog" below.
-2. **Tracing** — planned. OpenTelemetry `gen_ai.*` spans via `vercelAIIntegration` (already wired in `sentry.server.config.ts`) will auto-capture agent loop spans once we migrate to the Vercel AI SDK. Tracked separately in [#81](https://github.com/vlad-ko/battle-mage/issues/81).
+2. **Tracing** — not on the roadmap. `vercelAIIntegration` stays wired in `sentry.server.config.ts` for the day we want OpenTelemetry `gen_ai.*` spans, but capturing them would require migrating the agent loop off the bare `@anthropic-ai/sdk` onto Vercel AI SDK's `streamText`, which would touch the parallel-tools dispatch (#77), compaction (#76), budget guards (#93), and streaming pipeline. The refactor cost vs. the marginal visibility over our existing request-correlated logs + per-turn metrics footer + Sentry stack traces isn't favorable. Revisit only if an independent reason to rewrite the agent loop appears.
 
 The rest of this doc focuses on logs — traces will get their own section once spans are flowing.
 
