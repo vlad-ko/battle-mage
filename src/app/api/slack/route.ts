@@ -17,15 +17,12 @@ import { storeQAContext, getQAContext, saveFeedback } from "@/lib/feedback";
 import { formatReferences, rankReferences } from "@/lib/references";
 import { getAllKnowledge } from "@/lib/knowledge";
 import { buildCorrectionActions } from "@/lib/auto-correct";
-import { buildThinkingMessage, THINKING_HEADER } from "@/lib/progress";
 import { toSlackMrkdwn } from "@/lib/mrkdwn";
-import { createThrottledUpdater } from "@/lib/slack-throttle";
-import {
-  createStatusScheduler,
-  DEFAULT_STATUS_DEBOUNCE_MS,
-  DEFAULT_STATUS_ROTATION_MS,
-  DEFAULT_STATUS_ROTATION_TEXT,
-} from "@/lib/status-scheduler";
+
+// Initial acknowledgment posted as the thinking message. One-shot per
+// turn — under the minimize-API-calls model (#108) this is the first
+// of exactly two Slack calls per turn (ack + final answer).
+const THINKING_HEADER = "🧠 Battle Mage is working... _(this may take a minute, go grab some tea)_";
 import { formatReplyFooter, isReplyFooterEnabled } from "@/lib/reply-footer";
 import {
   extractParticipantIds,
@@ -140,53 +137,20 @@ export async function POST(request: NextRequest) {
           rlog("topic_hints_injected", { topics: topicMatches.map((m) => m.topic), fileCount: topicMatches.reduce((s, m) => s + m.paths.length, 0) });
         }
 
-        // Throttle streaming text deltas into the thinking message. Slack's
-        // chat.update is ~1/sec per message; 1200ms keeps us safely under.
-        const streamThrottle = createThrottledUpdater(async (snapshot) => {
-          if (thinkingTs) {
-            await updateMessage(channel, thinkingTs, toSlackMrkdwn(snapshot));
-          }
-        }, 1200);
-
-        // Debounced + rotating status updater for tool-progress messages.
-        // Fixes #78: previously every onProgress did a direct chat.update,
-        // so parallel-tool bursts (#77) could fire 3+ edits in under a
-        // second and trip Slack's rate limit. The scheduler coalesces
-        // rapid schedules and emits a "still working…" heartbeat every
-        // 30s of silence so Slack doesn't auto-dim the thinking badge.
-        const statusScheduler = createStatusScheduler(
-          async (text) => {
-            if (thinkingTs) {
-              await updateMessage(channel, thinkingTs, text);
-            }
-          },
-          {
-            debounceMs: DEFAULT_STATUS_DEBOUNCE_MS,
-            rotationMs: DEFAULT_STATUS_ROTATION_MS,
-            rotationText: DEFAULT_STATUS_ROTATION_TEXT,
-          },
-        );
-
+        // Minimize Slack API calls per turn to 2: one "Thinking…" on ack
+        // (posted above via replyInThread → thinkingTs) and one final
+        // updateMessage below with the answer. No mid-flight progress
+        // updates, no streaming text deltas — see #108 for the rationale.
+        // The agent_tool_call events still fire to Sentry via the agent
+        // loop's logger, so per-round observability is unaffected.
         const result = await runAgent(
           augmentedMessage,
-          async (toolName, input) => {
-            // Progress emoji takes over — drop any pending streamed text
-            // that was queued during the prior round, otherwise it could
-            // land and overwrite the emoji after this call.
-            await streamThrottle.cancel();
-            statusScheduler.schedule(buildThinkingMessage(toolName, input));
-          },
           mentionHistory,
           rlog,
-          (snapshot) => streamThrottle.update(snapshot),
           mentionParticipants,
         );
-        // Drain any pending streamed edit AND pending status before
-        // the final write so neither can race or overwrite the answer.
-        await streamThrottle.flush();
-        await statusScheduler.flush();
-        // `agent_complete` is already emitted by runAgent with rounds, token
-        // usage, and cache metrics — don't duplicate it at the route level.
+        // `agent_complete` is already emitted by runAgent with rounds,
+        // token usage, and cache metrics — don't duplicate at route level.
 
         const text = toSlackMrkdwn(result.text);
         const rankedRefs = rankReferences(result.references, result.text);
@@ -357,42 +321,15 @@ export async function POST(request: NextRequest) {
         const followupMatches = matchTopicsToQuestion(cleanMessage, followupTopics);
         const followupMessage = buildQuestionHints(cleanMessage, followupMatches);
 
-        // Throttle streaming text deltas into the thinking message.
-        const followupThrottle = createThrottledUpdater(async (snapshot) => {
-          if (thinkTs) {
-            await updateMessage(channel, thinkTs, toSlackMrkdwn(snapshot));
-          }
-        }, 1200);
-
-        // Mirror of the mention-flow scheduler — see #78.
-        const followupStatus = createStatusScheduler(
-          async (text) => {
-            if (thinkTs) {
-              await updateMessage(channel, thinkTs, text);
-            }
-          },
-          {
-            debounceMs: DEFAULT_STATUS_DEBOUNCE_MS,
-            rotationMs: DEFAULT_STATUS_ROTATION_MS,
-            rotationText: DEFAULT_STATUS_ROTATION_TEXT,
-          },
-        );
-
+        // Minimize Slack API calls per turn — see mention flow above
+        // and #108 for full rationale. Single "Thinking…" post above +
+        // single final updateMessage below; nothing in between.
         const result = await runAgent(
           followupMessage,
-          async (toolName, input) => {
-            // See the mention handler: cancel pending streamed text so
-            // the emoji progress isn't overwritten by a late flush.
-            await followupThrottle.cancel();
-            followupStatus.schedule(buildThinkingMessage(toolName, input));
-          },
           history,
           rlog,
-          (snapshot) => followupThrottle.update(snapshot),
           followupParticipants,
         );
-        await followupThrottle.flush();
-        await followupStatus.flush();
 
         const text = toSlackMrkdwn(result.text);
         const rankedRefs = rankReferences(result.references, result.text);

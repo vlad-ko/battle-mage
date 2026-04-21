@@ -33,9 +33,7 @@ export async function runEval(question: string): Promise<AgentResult> {
 
   return runAgent(
     question,
-    undefined, // onProgress: no-op
     undefined, // conversationHistory: none
     silentLog, // rlog: suppresses agent_start / agent_complete / agent_tool_call / ...
-    undefined, // onTextDelta: no-op
   );
 }

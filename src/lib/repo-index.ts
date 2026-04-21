@@ -116,24 +116,26 @@ export interface DocEntry {
   title: string;
 }
 
-const H1_LINE_RE = /^#\s+(.+?)\s*$/m;
-
 /**
- * Extract a one-line title from a Markdown doc. Takes the first H1 line
- * (`# Title`) as the title; falls back to the path basename without
- * extension when no H1 is found (or content is empty). The H1 heuristic
- * is intentionally simple (no AST parsing): first line matching `^# ` in
- * the document. Code fences start with ` ``` ` not `# `, so they don't
- * trip the regex naturally.
+ * Derive a one-line title from a doc path. Originally extracted from the
+ * first H1 line of the file (#82/#106), but the content-fetching cost
+ * (one GitHub API call per doc × the entire docs tree) caused a 260-call
+ * fan-out on large repos and was a direct contributor to the msg_too_long
+ * class of errors via system-prompt bloat. See #108.
+ *
+ * Now: title comes from the path basename, with `-`/`_` → space and
+ * word-initial capitals. `docs/features/repo-index.md` → `Repo Index`.
+ * Slightly less descriptive than a curated H1 but zero network cost and
+ * still meaningful for the agent's doc-discovery decision.
  */
-export function extractDocTitle(content: string, path: string): string {
-  const match = content.match(H1_LINE_RE);
-  if (match && match[1].trim().length > 0) {
-    return match[1].trim();
-  }
-  // Fallback: basename without .md/.MD extension.
+export function extractDocTitle(path: string): string {
   const base = path.split("/").pop() ?? path;
-  return base.replace(/\.md$/i, "");
+  const stem = base.replace(/\.md$/i, "");
+  return stem
+    .split(/[-_]/)
+    .filter((w) => w.length > 0)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
 }
 
 const DOC_PATH_RE = /^docs\/.+\.md$/i;
@@ -156,19 +158,34 @@ export function filterDocPaths(
 }
 
 /**
+ * Hard cap on doc-catalog entries embedded in the system prompt. Keeps
+ * the section bounded regardless of how many docs the target repo has
+ * (wealthbot-io/webo has 260; battle-mage has ~10). See #108.
+ */
+export const MAX_DOC_CATALOG_ENTRIES = 30;
+
+/**
  * Render the doc catalog as a Markdown section for the system prompt.
+ * Caps at MAX_DOC_CATALOG_ENTRIES; appends a "(+N more)" note if more
+ * exist so the agent knows it can reach them on demand via read_file.
  * Empty string for empty input so the caller can concatenate without
  * worrying about blank sections.
  */
 export function buildDocCatalogSection(entries: DocEntry[]): string {
   if (entries.length === 0) return "";
-  const lines = entries
+  const capped = entries.slice(0, MAX_DOC_CATALOG_ENTRIES);
+  const overflow = entries.length - capped.length;
+  const lines = capped
     .map((e) => `- \`${e.path}\` — ${e.title}`)
     .join("\n");
+  const overflowNote =
+    overflow > 0
+      ? `\n\n_(+${overflow} more docs under \`docs/\` — use \`read_file\` with a specific path to load any that aren't listed above.)_`
+      : "";
   return (
     `\n## Documentation Index\n\n` +
     `These project docs are available via the \`read_file\` tool — use the title hint to pick which to pull when a question warrants deep context. Don't pull a doc speculatively; only when it's likely to answer the current question.\n\n` +
-    `${lines}\n`
+    `${lines}${overflowNote}\n`
   );
 }
 
@@ -237,10 +254,9 @@ export async function getOrRebuildIndex(): Promise<string> {
     const topics = classifyTopics(paths, config);
     const summary = buildIndexSummary(topics);
 
-    // Build doc catalog in parallel with the rest — fetches content for
-    // every docs/**/*.md to extract H1 titles. Cold-path only; cached on
-    // same SHA-keyed invalidation as the topic map. See #82.
-    const docCatalog = await fetchDocCatalog(paths, config);
+    // Build doc catalog from paths alone — no per-file content fetches.
+    // See #108 for the fan-out fix.
+    const docCatalog = buildDocCatalogFromPaths(paths, config);
 
     // Write to KV
     await kv.set(INDEX_SHA_KEY, currentSha);
@@ -281,34 +297,21 @@ export async function getDocCatalog(): Promise<DocEntry[]> {
   }
 }
 
-// Parallel fetch + H1 extraction for every doc path. Individual file
-// failures degrade gracefully to the basename fallback — one broken doc
-// shouldn't deprive the agent of the rest of the catalog.
-async function fetchDocCatalog(
+// Build the doc catalog purely from paths — no content fetching. Previously
+// parallel-read every file to grab its H1 title; on a repo with 260 docs
+// that was a 260-call GitHub fan-out per index rebuild PLUS a 21 KB prompt
+// bloat that contributed to msg_too_long on long turns. See #108.
+//
+// Sorted alphabetically for deterministic rendering. buildDocCatalogSection
+// enforces the hard cap at render time.
+function buildDocCatalogFromPaths(
   paths: string[],
   config: BattleMageConfig,
-): Promise<DocEntry[]> {
+): DocEntry[] {
   const docPaths = filterDocPaths(paths, config);
-  if (docPaths.length === 0) return [];
-
-  const { readFile } = await import("@/lib/github");
-  const entries = await Promise.all(
-    docPaths.map(async (path): Promise<DocEntry> => {
-      try {
-        const result = await readFile(path);
-        const content =
-          "content" in result && typeof result.content === "string"
-            ? result.content
-            : "";
-        return { path, title: extractDocTitle(content, path) };
-      } catch {
-        // Per-file failure: fall back to basename-as-title. The catalog
-        // still surfaces the path so the agent can try read_file later.
-        return { path, title: extractDocTitle("", path) };
-      }
-    }),
-  );
-  return entries;
+  return docPaths
+    .map((path): DocEntry => ({ path, title: extractDocTitle(path) }))
+    .sort((a, b) => a.path.localeCompare(b.path));
 }
 
 /**

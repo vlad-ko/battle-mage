@@ -6,6 +6,7 @@ import {
   extractDocTitle,
   filterDocPaths,
   buildDocCatalogSection,
+  MAX_DOC_CATALOG_ENTRIES,
 } from "./repo-index";
 
 describe("classifyTopics", () => {
@@ -240,43 +241,39 @@ describe("buildIndexSummary", () => {
   });
 });
 
-describe("extractDocTitle", () => {
-  it("returns the first H1 line, trimmed and without the # prefix", () => {
-    const content = "# Architecture\n\nHow the internals work.";
-    expect(extractDocTitle(content, "docs/architecture.md")).toBe("Architecture");
+describe("extractDocTitle (path-only, #108)", () => {
+  // Content-fetching was removed to eliminate the 260-call GitHub fan-out.
+  // Title now comes purely from the path basename.
+
+  it("title-cases the basename stem with dashes → spaces", () => {
+    expect(extractDocTitle("docs/features/repo-index.md")).toBe("Repo Index");
   });
 
-  it("handles leading whitespace/blank lines before the H1", () => {
-    const content = "\n\n\n# Setup Guide\n\nGetting started.";
-    expect(extractDocTitle(content, "docs/setup.md")).toBe("Setup Guide");
+  it("strips the .md extension (case-insensitive)", () => {
+    expect(extractDocTitle("docs/README.MD")).toBe("README");
+    expect(extractDocTitle("docs/setup.md")).toBe("Setup");
   });
 
-  it("ignores H2/H3 lines and picks only the first H1", () => {
-    const content = "## Subsection\n# Real Title\n### Sub-sub\n";
-    expect(extractDocTitle(content, "docs/x.md")).toBe("Real Title");
+  it("handles multi-dash basenames", () => {
+    expect(extractDocTitle("docs/how-to-deploy-to-prod.md")).toBe(
+      "How To Deploy To Prod",
+    );
   });
 
-  it("falls back to the path basename (no extension) when no H1 is present", () => {
-    const content = "No heading here.\n\nJust a paragraph.";
-    expect(extractDocTitle(content, "docs/features/repo-index.md")).toBe("repo-index");
+  it("handles underscores as word separators", () => {
+    expect(extractDocTitle("docs/my_feature_notes.md")).toBe("My Feature Notes");
   });
 
-  it("falls back to the basename for empty content", () => {
-    expect(extractDocTitle("", "docs/setup.md")).toBe("setup");
+  it("handles a mix of dashes and underscores", () => {
+    expect(extractDocTitle("docs/ci-cd_setup.md")).toBe("Ci Cd Setup");
   });
 
-  it("strips surrounding whitespace and markdown markers from the H1 text", () => {
-    const content = "#   Knowledge  Base   \n\n...";
-    expect(extractDocTitle(content, "docs/kb.md")).toBe("Knowledge  Base");
+  it("handles a top-level docs file with no nesting", () => {
+    expect(extractDocTitle("docs/architecture.md")).toBe("Architecture");
   });
 
-  it("uses the first '# ' line regardless of code-fence context (simple heuristic)", () => {
-    // Intentional simplicity: the extractor doesn't parse Markdown AST.
-    // It takes the first line starting with `# `, even inside code fences.
-    // In real docs, the H1 almost always precedes any fenced block, so
-    // this edge case is rare and the cost of AST parsing isn't justified.
-    const content = "```\n# not a heading\n```\n# Real Title\n";
-    expect(extractDocTitle(content, "docs/x.md")).toBe("not a heading");
+  it("handles a single-word basename", () => {
+    expect(extractDocTitle("docs/overview.md")).toBe("Overview");
   });
 });
 
@@ -363,5 +360,30 @@ describe("buildDocCatalogSection", () => {
     const cIdx = section.indexOf("docs/c.md");
     expect(bIdx).toBeLessThan(aIdx);
     expect(aIdx).toBeLessThan(cIdx);
+  });
+
+  it("caps entries at MAX_DOC_CATALOG_ENTRIES and appends an overflow note", () => {
+    const entries = Array.from(
+      { length: MAX_DOC_CATALOG_ENTRIES + 5 },
+      (_, i) => ({ path: `docs/d${i}.md`, title: `D${i}` }),
+    );
+    const section = buildDocCatalogSection(entries);
+    // First 30 present
+    expect(section).toContain("docs/d0.md");
+    expect(section).toContain(`docs/d${MAX_DOC_CATALOG_ENTRIES - 1}.md`);
+    // Last 5 NOT rendered as entries (caught only by the overflow note)
+    expect(section).not.toContain(`\`docs/d${MAX_DOC_CATALOG_ENTRIES}.md\``);
+    // Overflow note reports remaining count + escape hatch
+    expect(section).toContain(`+5 more`);
+    expect(section).toContain("read_file");
+  });
+
+  it("omits the overflow note when entries are at or below the cap", () => {
+    const entries = Array.from(
+      { length: MAX_DOC_CATALOG_ENTRIES },
+      (_, i) => ({ path: `docs/d${i}.md`, title: `D${i}` }),
+    );
+    const section = buildDocCatalogSection(entries);
+    expect(section).not.toContain("more docs");
   });
 });
