@@ -43,33 +43,61 @@ export function verifySlackSignature(
 }
 
 // ── Slack message length guard (safety net) ──────────────────────────
-// Slack's `chat.postMessage` / `chat.update` cap `text` at 40,000 chars.
-// Exceeding this throws `An API error occurred: msg_too_long` — the
-// error that haunted us through #100, mis-attributed to Anthropic's
-// context-window limit.
+// Slack's `chat.postMessage` / `chat.update` cap `text` at 40,000 —
+// measured in BYTES, not characters (the docs say "characters" but
+// empirical behavior on msg_too_long rejects aligns with byte count).
+// Unicode content blows this up fast: em-dash `—` = 3 bytes, emoji = 4,
+// divider `─` = 3. A 39K-char answer with moderate unicode density
+// easily crosses 42-45K BYTES, which Slack refuses.
 //
-// PRIMARY fix for oversized replies lives in the prompt (see
-// `buildOutputContractSection` — ANSWER_BUDGET_CHARS etc.): we tell the
-// model about the 40K ceiling and give it a conservative answer budget.
-// This function is a last-line-of-defense safety net for the rare case
-// where the model ignores the budget. When it fires, that's a signal
-// the prompt guidance needs tuning for that class of question — not a
-// routine outcome the user should expect to see.
-export const SLACK_MESSAGE_HARD_CAP = 39_500;
+// First shipped a char-based cap in #110 — still saw msg_too_long on
+// unicode-heavy answers. Moving to byte-based cap here. See #108.
+//
+// PRIMARY fix for oversized replies still lives in the prompt
+// (ANSWER_BUDGET_CHARS in claude.ts — 20K char target). This function
+// is a last-line-of-defense safety net; when it fires, that's a signal
+// the prompt guidance needs tuning for a class of question.
+export const SLACK_MESSAGE_BYTE_CAP = 36_000;
 
 const TRUNCATION_NOTE =
-  "\n\n_…(answer cut off to fit Slack's 40K-character message limit — ask a narrower follow-up for detail on any specific area.)_";
+  "\n\n_…(answer cut off to fit Slack's message size limit — ask a narrower follow-up for detail on any specific area.)_";
+
+const textEncoder = new TextEncoder();
+// `fatal: false` so a mid-multi-byte-char cut at the budget boundary is
+// gracefully replaced with U+FFFD rather than throwing. `ignoreBOM: true`
+// because Slack messages never need a BOM.
+const textDecoder = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true });
 
 /**
- * Cap a message body at Slack's max length. Passes short messages
- * through unchanged; for the rare oversized case, takes the first N
- * chars (leaving room for the note) and appends a short explanation
- * so the user knows to ask a narrower follow-up. Pure function; no I/O.
+ * Cap a Slack message body at `SLACK_MESSAGE_BYTE_CAP` BYTES (UTF-8).
+ * Short messages pass through unchanged; oversized ones are sliced at
+ * a byte-aligned boundary with the partial multi-byte sequence at the
+ * cut handled by TextDecoder's replacement behavior, then the
+ * truncation note is appended. Result's byte length is guaranteed
+ * ≤ SLACK_MESSAGE_BYTE_CAP (the note's bytes are reserved in the
+ * initial budget).
+ *
+ * Pure function; no I/O.
  */
 export function capSlackMessage(text: string): string {
-  if (text.length <= SLACK_MESSAGE_HARD_CAP) return text;
-  const budget = SLACK_MESSAGE_HARD_CAP - TRUNCATION_NOTE.length;
-  return text.slice(0, budget) + TRUNCATION_NOTE;
+  const textBytes = textEncoder.encode(text);
+  if (textBytes.length <= SLACK_MESSAGE_BYTE_CAP) return text;
+
+  const noteBytes = textEncoder.encode(TRUNCATION_NOTE).length;
+  // When the slice lands inside a multi-byte char, TextDecoder substitutes
+  // U+FFFD (3 UTF-8 bytes) for the partial sequence. That can make the
+  // re-encoded result 2–3 bytes larger than the byte slice itself, so we
+  // pre-reserve 3 bytes for that overhead.
+  const REPLACEMENT_OVERHEAD = 3;
+  const budget = SLACK_MESSAGE_BYTE_CAP - noteBytes - REPLACEMENT_OVERHEAD;
+  let head = textDecoder.decode(textBytes.slice(0, budget));
+  // Defensive trim: in case a pathological input still spills past the cap
+  // (e.g. grapheme clusters across multiple code points), shave chars until
+  // we fit. Finite loop bounded by head.length.
+  while (textEncoder.encode(head + TRUNCATION_NOTE).length > SLACK_MESSAGE_BYTE_CAP) {
+    head = head.slice(0, -1);
+  }
+  return head + TRUNCATION_NOTE;
 }
 
 // ── Thread reply helper ───────────────────────────────────────────────
