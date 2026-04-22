@@ -9,6 +9,7 @@ import {
   fetchThreadMessages,
   updateMessage,
   deleteMessage,
+  postReplyInChunks,
 } from "@/lib/slack";
 import { runAgent } from "@/lib/claude";
 import { createIssue } from "@/lib/github";
@@ -187,29 +188,30 @@ export async function POST(request: NextRequest) {
             "React with :white_check_mark: to create this issue, or ignore to cancel.",
           ].join("\n") + refsFooter + replyFooter;
 
-          if (thinkingTs) {
-            // Reuse the thinking/streamed message as the final answer.
-            await updateMessage(channel, thinkingTs, finalBody);
-            thinkingTs = undefined; // Mark as finalized — prevent finally-cleanup.
-          } else {
-            await replyInThread(channel, threadTs, finalBody);
-          }
-          rlog("answer_posted", { channel, threadTs });
+          const posted = await postReplyInChunks({
+            channel,
+            threadTs,
+            thinkingTs,
+            text: finalBody,
+          });
+          // Only mark as finalized when we actually posted. A 0-chunk
+          // result (empty body) falls through to the finally cleanup.
+          if (posted.chunks > 0) thinkingTs = undefined;
+          rlog("answer_posted", { channel, threadTs, chunks: posted.chunks, kind: "proposal" });
         } else {
           const finalBody = text + refsFooter + replyFooter;
-          let replyTs: string | undefined;
-          if (thinkingTs) {
-            await updateMessage(channel, thinkingTs, finalBody);
-            replyTs = thinkingTs;
-            thinkingTs = undefined; // Mark as finalized.
-          } else {
-            replyTs = await replyInThread(channel, threadTs, finalBody);
-          }
-          rlog("answer_posted", { channel, threadTs });
+          const posted = await postReplyInChunks({
+            channel,
+            threadTs,
+            thinkingTs,
+            text: finalBody,
+          });
+          if (posted.chunks > 0) thinkingTs = undefined;
+          rlog("answer_posted", { channel, threadTs, chunks: posted.chunks });
 
           // Store Q&A context so 👍/👎 reactions can reference it
-          if (replyTs) {
-            await storeQAContext(channel, replyTs, {
+          if (posted.firstTs) {
+            await storeQAContext(channel, posted.firstTs, {
               question: cleanMessage,
               answer: result.text.slice(0, 500),
               references: result.references.map((r) => r.label),
@@ -374,25 +376,27 @@ export async function POST(request: NextRequest) {
             "React with :white_check_mark: to create this issue, or ignore to cancel.",
           ].join("\n") + refsFooter + replyFooter;
 
-          if (thinkTs) {
-            await updateMessage(channel, thinkTs, finalBody);
-            thinkTs = undefined;
-          } else {
-            await replyInThread(channel, threadTs, finalBody);
-          }
+          const posted = await postReplyInChunks({
+            channel,
+            threadTs,
+            thinkingTs: thinkTs,
+            text: finalBody,
+          });
+          if (posted.chunks > 0) thinkTs = undefined;
+          rlog("answer_posted", { channel, threadTs, chunks: posted.chunks, kind: "proposal" });
         } else {
           const finalBody = text + refsFooter + replyFooter;
-          let replyTs: string | undefined;
-          if (thinkTs) {
-            await updateMessage(channel, thinkTs, finalBody);
-            replyTs = thinkTs;
-            thinkTs = undefined;
-          } else {
-            replyTs = await replyInThread(channel, threadTs, finalBody);
-          }
+          const posted = await postReplyInChunks({
+            channel,
+            threadTs,
+            thinkingTs: thinkTs,
+            text: finalBody,
+          });
+          if (posted.chunks > 0) thinkTs = undefined;
+          rlog("answer_posted", { channel, threadTs, chunks: posted.chunks });
 
-          if (replyTs) {
-            await storeQAContext(channel, replyTs, {
+          if (posted.firstTs) {
+            await storeQAContext(channel, posted.firstTs, {
               question: cleanMessage,
               answer: result.text.slice(0, 500),
               references: result.references.map((r) => r.label),
