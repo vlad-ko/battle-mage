@@ -97,6 +97,19 @@ Filter: requestId=a3f2b1c4
 | `issue_created` | GitHub issue created after ✅ | number |
 | `followup_agent_start` | Thread follow-up triggering agent | channel, threadTs |
 
+### KV Events (lib/kv.ts) — #117
+
+Every persistent-state operation flows through `src/lib/kv.ts`, which wraps the `@upstash/redis` client. Per-op events give us latency distribution, hit rate, and distinct visibility into KV-layer failures (Upstash outage vs. a generic route error).
+
+| Event | When | Key data |
+|-------|------|----------|
+| `kv_client_init` | Module load (once per cold start) | library (`@upstash/redis`) |
+| `kv_op` | Every successful op | op (`get`/`set`/`del`/`zadd`/`zrange`/`zrem`), keyPrefix, durationMs, and per-op metadata: `hit` (get), `valueSize`+`ttlSec` (set), `deleted` (del), `removed` (zrem), `rangeSize` (zrange) |
+| `kv_error` | Every failed op (also `Sentry.captureException`) | op, keyPrefix, durationMs, errorClass, errorMessage (sliced to 200 chars). Sentry tags: `kv.op`, `kv.keyPrefix`. |
+| `kv_possible_double_stringify` | `get` returns a string that parses as a JSON object | keyPrefix. **Migration diagnostic only** — flags pre-migration writes that called `JSON.stringify` manually. See #117. Safe to remove after prod validation confirms no remaining double-writes. |
+
+**Why `keyPrefix`, not the full key:** full keys contain channel IDs and message timestamps (`feedback:context:C01ABCDEF:1234.5678`) — not privacy-sensitive per se, but cardinality-hostile for aggregation. The first segment (`feedback`, `knowledge`, `pending-correction`, `repo-index`, `slack-users`) combined with `op` gives clean bucketing (e.g., `{op: get, keyPrefix: feedback}` for context lookups vs. `{op: zrange, keyPrefix: feedback}` for entry-list reads).
+
 ### Feedback Events (route.ts) — #114
 
 Every reaction flows through this event funnel. `reaction_skipped` and `feedback_saved` are **mutually exclusive outcomes** of a given `reaction_received`. When diagnosing "my 👍 did nothing", filter for `reaction_skipped` with the user's `reactingUser` first — silent drops used to be invisible and are now fully logged.

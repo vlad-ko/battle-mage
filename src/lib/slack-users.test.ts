@@ -7,7 +7,7 @@ import type { ThreadMessage } from "./thread-filter";
 // override behavior via .mockImplementation.
 const kvGet = vi.fn().mockResolvedValue(null);
 const kvSet = vi.fn().mockResolvedValue("OK");
-vi.mock("@vercel/kv", () => ({
+vi.mock("./kv", () => ({
   kv: {
     get: (...args: unknown[]) => kvGet(...args),
     set: (...args: unknown[]) => kvSet(...args),

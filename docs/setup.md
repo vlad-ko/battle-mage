@@ -140,19 +140,21 @@ vercel --prod
 3. Add all six environment variables in the **Environment Variables** section before deploying
 4. Click **Deploy**
 
-### Set Up Vercel KV
+### Set Up Upstash Redis
 
-Battle Mage uses Vercel KV (powered by Upstash Redis) for the knowledge base, feedback storage, and repo index cache.
+Battle Mage uses Upstash Redis (via the Vercel Marketplace integration) for the knowledge base, feedback storage, and repo index cache.
 
 1. Go to your project in the Vercel dashboard
-2. Navigate to **Storage** tab
-3. Click **Create Database** > **KV (Upstash)**
-4. Name it something like `battle-mage-kv`
+2. Navigate to **Storage** tab (or **Integrations** → **Marketplace**)
+3. Add the **Upstash** integration and create a Redis database
+4. Name it something like `battle-mage-redis`
 5. Connect it to your project
 
-Vercel automatically injects `KV_REST_API_URL` and `KV_REST_API_TOKEN` into your environment. No manual configuration needed.
+The integration sets both sets of env vars — `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` (the canonical names) plus the legacy `KV_REST_API_URL` / `KV_REST_API_TOKEN` aliases. The app's `Redis.fromEnv()` client reads whichever pair is present, so either works.
 
-> **Gotcha**: If you skip KV setup, the bot will still work for basic Q&A -- but the knowledge base, feedback, and repo index features will silently degrade. You will see no errors, but corrections will not persist and the repo map will not be cached.
+> **Legacy note**: Older deployments provisioned "Vercel KV" (which was a thin wrapper over Upstash Redis). Those still work — `KV_REST_API_*` env vars are read as a fallback by `@upstash/redis`. New projects should use the Upstash Marketplace integration directly.
+
+> **Gotcha**: If you skip this step, the bot will still work for basic Q&A -- but the knowledge base, feedback, and repo index features will silently degrade. You will see no errors, but corrections will not persist and the repo map will not be cached.
 
 ### For Local Development
 
@@ -160,13 +162,13 @@ Vercel automatically injects `KV_REST_API_URL` and `KV_REST_API_TOKEN` into your
 cp .env.example .env.local
 ```
 
-Fill in all the credentials. For KV, you need to pull the KV credentials from Vercel:
+Fill in all the credentials. For Redis, pull the credentials from Vercel:
 
 ```bash
 vercel env pull .env.local
 ```
 
-This will add `KV_REST_API_URL` and `KV_REST_API_TOKEN` to your `.env.local`.
+This will add `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` (and/or the legacy `KV_REST_API_*` aliases) to your `.env.local`.
 
 Then start the dev server:
 
@@ -226,8 +228,10 @@ If the bot does not respond, check the [Troubleshooting Guide](./troubleshooting
 | `GITHUB_PAT_BM` | Yes | `github_pat_...` | Fine-grained PAT scoped to your target repo |
 | `GITHUB_OWNER` | Yes | `acme-corp` | GitHub organization or username |
 | `GITHUB_REPO` | Yes | `backend` | Repository name |
-| `KV_REST_API_URL` | Auto | `https://...upstash.io` | Injected by Vercel KV -- do not set manually |
-| `KV_REST_API_TOKEN` | Auto | `AaB1Cc2...` | Injected by Vercel KV -- do not set manually |
+| `UPSTASH_REDIS_REST_URL` | Auto | `https://...upstash.io` | Injected by the Upstash Vercel integration -- do not set manually |
+| `UPSTASH_REDIS_REST_TOKEN` | Auto | `AaB1Cc2...` | Injected by the Upstash Vercel integration -- do not set manually |
+| `KV_REST_API_URL` | Legacy | `https://...upstash.io` | Read as a fallback by `@upstash/redis` for projects that still provision "Vercel KV" |
+| `KV_REST_API_TOKEN` | Legacy | `AaB1Cc2...` | Read as a fallback — either pair works |
 
 ## Security Notes
 

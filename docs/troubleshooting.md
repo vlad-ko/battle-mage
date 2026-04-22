@@ -101,7 +101,7 @@ If you see it anyway, Sentry will have a `SlackMessageOversizeError` with the of
 **Check:**
 
 - **Is a KV store linked?** Go to your Vercel project > Storage tab. You should see a KV database connected.
-- **Are KV credentials present?** Vercel auto-injects `KV_REST_API_URL` and `KV_REST_API_TOKEN`. Check that these appear in your Environment Variables.
+- **Are Redis credentials present?** The Upstash Vercel integration auto-injects `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` (and legacy `KV_REST_API_URL` / `KV_REST_API_TOKEN` for older deployments). Check that at least one pair appears in your Environment Variables. The `@upstash/redis` client reads whichever is present.
 - **Local development**: For local dev, you need to pull KV credentials: `vercel env pull .env.local`. Without these, the KV-dependent features silently degrade -- no errors, but no persistence either.
 
 **Graceful degradation**: If KV is not available, the bot still answers questions. It just cannot:

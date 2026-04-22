@@ -17,7 +17,7 @@
  * label is less friendly.
  */
 
-import { kv } from "@vercel/kv";
+import { kv } from "./kv";
 import { slack } from "./slack";
 import type { ThreadMessage } from "./thread-filter";
 

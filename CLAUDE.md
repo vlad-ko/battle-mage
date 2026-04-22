@@ -57,6 +57,7 @@ src/
     logger.ts             — Structured JSON logging with request correlation IDs
     references.ts         — Typed references: ranking, dedup, emoji formatting
     split-reply.ts        — Pure splitter for long Slack replies (paragraph/line/word/fence-aware)
+    kv.ts                 — @upstash/redis wrapper with Sentry observability (kv_op + kv_error events)
   tools/
     index.ts              — Tool registry and executor
     search-code.ts        — GitHub code search tool
