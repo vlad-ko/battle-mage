@@ -33,6 +33,12 @@ Common issues and how to fix them.
 - **Rate limits**: Both GitHub and Anthropic APIs have rate limits. If you are hitting them, you will see errors in the Vercel function logs.
 - **Vercel function logs**: The error message is logged to console. Check Vercel dashboard > Logs for the specific error.
 
+### `msg_too_long` errors
+
+If the error message is `An API error occurred: msg_too_long`, Slack rejected an oversized `chat.postMessage` or `chat.update` call. With the split-reply architecture (see [Message Splitting](./features/message-splitting.md)), this should be architecturally unreachable on the happy path — a single message should never approach Slack's 40,000-char limit because the splitter chops long bodies into multiple thread replies first.
+
+If you see it anyway, Sentry will have a `SlackMessageOversizeError` with the offending length and action. That indicates a splitter bug, not a prompt-budget issue. Widen the splitter's test matrix rather than raising the limit.
+
 ## Bot Cannot Read the Repository
 
 **Symptom**: The bot says it cannot find files, or search returns no results.
