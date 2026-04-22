@@ -42,23 +42,29 @@ export function verifySlackSignature(
   return crypto.timingSafeEqual(expectedBuf, signatureBuf);
 }
 
-// ── Slack message length guard ────────────────────────────────────────
+// ── Slack message length guard (safety net) ──────────────────────────
 // Slack's `chat.postMessage` / `chat.update` cap `text` at 40,000 chars.
 // Exceeding this throws `An API error occurred: msg_too_long` — the
 // error that haunted us through #100, mis-attributed to Anthropic's
-// context-window limit. Actual root cause: Slack's message cap. We leave
-// ~500 chars of headroom under the hard limit so the truncation note
-// itself can't push us over.
+// context-window limit.
+//
+// PRIMARY fix for oversized replies lives in the prompt (see
+// `buildOutputContractSection` — ANSWER_BUDGET_CHARS etc.): we tell the
+// model about the 40K ceiling and give it a conservative answer budget.
+// This function is a last-line-of-defense safety net for the rare case
+// where the model ignores the budget. When it fires, that's a signal
+// the prompt guidance needs tuning for that class of question — not a
+// routine outcome the user should expect to see.
 export const SLACK_MESSAGE_HARD_CAP = 39_500;
 
 const TRUNCATION_NOTE =
-  "\n\n_…(response truncated — exceeded Slack's 40K-character message limit. Ask a narrower follow-up for full detail.)_";
+  "\n\n_…(answer cut off to fit Slack's 40K-character message limit — ask a narrower follow-up for detail on any specific area.)_";
 
 /**
  * Cap a message body at Slack's max length. Passes short messages
- * through unchanged; for oversized messages, takes the first N chars
- * (leaving room for the note) and appends a truncation note so the
- * user knows they got a partial response. Pure function; no I/O.
+ * through unchanged; for the rare oversized case, takes the first N
+ * chars (leaving room for the note) and appends a short explanation
+ * so the user knows to ask a narrower follow-up. Pure function; no I/O.
  */
 export function capSlackMessage(text: string): string {
   if (text.length <= SLACK_MESSAGE_HARD_CAP) return text;

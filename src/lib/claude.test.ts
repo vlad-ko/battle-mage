@@ -9,6 +9,8 @@ import {
   MAX_TOOL_ROUNDS,
   TOOL_RESULT_MAX_CHARS,
   MESSAGES_SAFE_BUDGET_TOKENS,
+  ANSWER_BUDGET_CHARS,
+  ISSUE_PROPOSAL_BODY_BUDGET_CHARS,
 } from "./claude";
 import type Anthropic from "@anthropic-ai/sdk";
 
@@ -193,6 +195,48 @@ describe("assembleSystemPrompt", () => {
       const prompt = assembleSystemPrompt(baseArgs);
       expect(prompt).toContain("acme");
       expect(prompt).toContain("backend");
+    });
+  });
+
+  describe("Slack message budget (output contract, #110)", () => {
+    // Primary guard against msg_too_long is prompt-level: tell the model
+    // about Slack's 40K-char ceiling and give it a conservative answer
+    // budget. The slack.ts cap is a rare safety net; these tests pin
+    // the prompt guidance so a future refactor can't silently weaken it.
+
+    it("tells the model about Slack's 40,000-char message ceiling", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      expect(prompt).toContain("40,000");
+      // Must frame it as something that causes the user to see an error,
+      // not just a soft guideline.
+      expect(prompt).toMatch(/reject|error/i);
+    });
+
+    it("states an explicit char budget for the answer itself", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      // The formatted constant must appear — pin the exact number so
+      // callers can't drift the constant without updating the prompt.
+      expect(prompt).toContain(ANSWER_BUDGET_CHARS.toLocaleString());
+    });
+
+    it("states an explicit char budget for issue proposal bodies", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      expect(prompt).toContain(ISSUE_PROPOSAL_BODY_BUDGET_CHARS.toLocaleString());
+      expect(prompt).toMatch(/create_issue|proposal/i);
+    });
+
+    it("directs the model toward references instead of long inline content", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      // Core UX principle: concise answer + references > essay inline.
+      expect(prompt).toMatch(/point.*user.*references|references.*detail|follow.up/i);
+    });
+
+    it("mentions comparative/summarize questions explicitly as NOT an exception", () => {
+      const prompt = assembleSystemPrompt(baseArgs);
+      // Long-form questions are where the model most often over-writes.
+      // Call that class out by name so the model can't hide behind
+      // "but this question requires depth".
+      expect(prompt).toMatch(/compar|summari/i);
     });
   });
 

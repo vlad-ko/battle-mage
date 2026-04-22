@@ -34,6 +34,16 @@ export const MAX_TOOL_ROUNDS = 15;
 // Output contract knobs
 export const MAX_ANSWER_LINES = 15;
 export const RECENCY_WINDOW_DAYS = 30;
+// Target character budget for the agent's TEXT answer alone. Composed
+// messages also carry references + optional issue proposal body +
+// optional reply footer; all of that must fit under Slack's 40K hard
+// cap. Telling the model "~6000 chars for the answer" leaves comfortable
+// room for the other components. See `buildOutputContractSection`.
+export const ANSWER_BUDGET_CHARS = 6_000;
+// Target character budget for an issue proposal body when the agent
+// uses `create_issue`. A focused issue doesn't need 15K chars — title
+// + goal + acceptance criteria + the 1–2 key files is enough.
+export const ISSUE_PROPOSAL_BODY_BUDGET_CHARS = 5_000;
 
 // Hard cap on any single tool_result before it is appended to the agent's
 // messages array. Prevents broad research prompts (list_issues, list_prs,
@@ -331,6 +341,14 @@ Prefer a single result-focused reply after tool work completes. Don't pre-announ
 - Skip sections like "Development Maturity Indicators" or "Why This Is Impressive" — the user didn't ask for a pitch.
 - Be direct and technical — this is an engineering team.
 - If the user wants more detail, they'll ask a follow-up.
+
+*Slack message budget — hard limit:*
+- Slack caps a single message at **40,000 characters**. Your answer, plus the reference footer, plus (when applicable) an issue proposal body, are composed into ONE Slack message. If the total exceeds 40K, Slack rejects it and the user sees an error — not your answer.
+- Keep your answer text itself under **~${ANSWER_BUDGET_CHARS.toLocaleString()} characters** (≈150 lines). Comparative or "summarize our X" questions are NOT an exception — condense aggressively.
+- When you'd want to go long: DON'T. Summarize the 3–5 key points, then point the user at specific files/PRs/issues via references. They can ask a narrower follow-up for detail on any one of them.
+- DO NOT quote or paraphrase tool results verbatim. Don't inline whole files. Don't write an essay comparing two systems when a bulleted contrast list + references will do.
+- When using \`create_issue\`, keep the proposal body under **~${ISSUE_PROPOSAL_BODY_BUDGET_CHARS.toLocaleString()} characters**: title, clear goal, 3–6 acceptance-criteria bullets, and the 1–2 most relevant file paths. Don't paste context dumps.
+- Your goal is a clear answer a human can absorb in ~30 seconds, with references they can follow for anything deeper. Not an essay.
 
 *Recency (today is ${today}):*
 - Prefer the most recent activity first. When asked about "recent developments", "status", or "what's new", focus on the last ${RECENCY_WINDOW_DAYS} days.

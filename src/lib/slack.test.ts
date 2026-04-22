@@ -17,9 +17,10 @@ describe("capSlackMessage", () => {
     const result = capSlackMessage(text);
     // Final length must fit under the hard cap.
     expect(result.length).toBeLessThanOrEqual(SLACK_MESSAGE_HARD_CAP);
-    // Must carry a truncation note so the user knows they got a partial.
-    expect(result).toMatch(/truncated/);
+    // Must carry a user-facing note so they know to ask a narrower follow-up.
+    expect(result).toMatch(/cut off|truncated/i);
     expect(result).toContain("Slack");
+    expect(result).toMatch(/follow.up|narrower/i);
   });
 
   it("preserves the start of the content (truncates from the end)", () => {
@@ -35,7 +36,7 @@ describe("capSlackMessage", () => {
     const text = "a".repeat(SLACK_MESSAGE_HARD_CAP + 1);
     const result = capSlackMessage(text);
     expect(result.length).toBeLessThanOrEqual(SLACK_MESSAGE_HARD_CAP);
-    expect(result).toMatch(/truncated/);
+    expect(result).toMatch(/cut off|truncated/i);
   });
 
   it("handles very-oversized messages without allocating uncontrollably", () => {
