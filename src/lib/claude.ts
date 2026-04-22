@@ -3,7 +3,7 @@ import { tools, executeTool, type ToolResult, type Reference } from "@/tools";
 import type { IssueProposal } from "@/tools/create-issue";
 import { readFile } from "@/lib/github";
 import { getKnowledgeAsMarkdown } from "@/lib/knowledge";
-import { getFeedbackAsMarkdown } from "@/lib/feedback";
+import { getFeedbackSummary } from "@/lib/feedback";
 import {
   getOrRebuildIndex,
   getCachedConfig,
@@ -448,7 +448,7 @@ export function assembleSystemBlocks(inputs: PromptInputs): Anthropic.TextBlockP
 // ── Async wrapper that fetches data then assembles ────────────────────
 async function buildSystemBlocks(
   participants?: Participant[],
-): Promise<Anthropic.TextBlockParam[]> {
+): Promise<{ blocks: Anthropic.TextBlockParam[]; feedbackMeta: { positiveCount: number; negativeCount: number; totalEntries: number } }> {
   // Fetch index + doc catalog in parallel. Both are KV-reads on the warm
   // path; rebuild on cold path is already time-bounded inside
   // getOrRebuildIndex. getDocCatalog is KV-only and never triggers a
@@ -456,22 +456,29 @@ async function buildSystemBlocks(
   // effect, so the order of these two calls here doesn't matter for
   // correctness (cold-start will either get an empty catalog or the
   // just-built one depending on timing; both are safe).
-  const [repoIndex, config, docCatalog] = await Promise.all([
+  const [repoIndex, config, docCatalog, feedbackSummary] = await Promise.all([
     getOrRebuildIndex(),
     getCachedConfig(),
     getDocCatalog(),
+    getFeedbackSummary(),
   ]);
-  return assembleSystemBlocks({
+  const blocks = assembleSystemBlocks({
     owner: process.env.GITHUB_OWNER,
     repo: process.env.GITHUB_REPO,
     claudeMd: await getClaudeMd(),
     knowledge: await getKnowledge(),
-    feedback: await getFeedbackAsMarkdown(),
+    feedback: feedbackSummary?.markdown ?? null,
     repoIndex,
     pathAnnotations: Object.keys(config.paths).length > 0 ? config : null,
     participants,
     docCatalog,
   });
+  const feedbackMeta = {
+    positiveCount: feedbackSummary?.positiveCount ?? 0,
+    negativeCount: feedbackSummary?.negativeCount ?? 0,
+    totalEntries: feedbackSummary?.totalEntries ?? 0,
+  };
+  return { blocks, feedbackMeta };
 }
 
 // ── Agent loop: message → tool calls → final answer ───────────────────
@@ -552,7 +559,7 @@ export async function runAgent(
   let issueProposal: IssueProposal | undefined;
   const allReferences: Reference[] = [];
   const startTime = Date.now();
-  const systemBlocks = await buildSystemBlocks(participants);
+  const { blocks: systemBlocks, feedbackMeta } = await buildSystemBlocks(participants);
   const promptLength = systemBlocks.reduce((n, b) => n + b.text.length, 0);
 
   _log("agent_start", {
@@ -560,6 +567,11 @@ export async function runAgent(
     question: userMessage.slice(0, 100),
     model: MODEL,
   });
+  // Observability (#114): emit how much feedback context the model saw
+  // this turn. Fires on every turn (even when totalEntries === 0) so we
+  // can compute "feedback-present" vs "feedback-absent" turn ratios
+  // when correlating with downstream reactions.
+  _log("prompt_feedback_included", { ...feedbackMeta, promptZone: "volatile" });
 
   let warned = false;
   let contextWarned = false;

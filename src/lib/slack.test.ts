@@ -1,8 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   requireSlackMessageText,
   SLACK_MESSAGE_CHAR_LIMIT,
   SlackMessageOversizeError,
+  postReplyInChunks,
+  slack,
 } from "./slack";
 
 describe("requireSlackMessageText (fail-loud boundary guard)", () => {
@@ -64,5 +66,84 @@ describe("requireSlackMessageText (fail-loud boundary guard)", () => {
     expect(() => requireSlackMessageText(overText, "chat.postMessage")).toThrow(
       SlackMessageOversizeError,
     );
+  });
+});
+
+// ── Multi-chunk delivery (#114) ──────────────────────────────────────
+describe("postReplyInChunks returns every posted TS", () => {
+  let postCounter = 0;
+
+  beforeEach(() => {
+    postCounter = 0;
+    vi.spyOn(slack.chat, "postMessage").mockImplementation(
+      (async () => ({ ok: true, ts: `9999.${postCounter++}` })) as never,
+    );
+    vi.spyOn(slack.chat, "update").mockResolvedValue({ ok: true } as never);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns empty allTs for empty text", async () => {
+    const result = await postReplyInChunks({ channel: "C1", threadTs: "T1", text: "" });
+    expect(result.chunks).toBe(0);
+    expect(result.firstTs).toBeUndefined();
+    expect(result.allTs).toEqual([]);
+  });
+
+  it("single-chunk (with thinkingTs) returns the thinkingTs in allTs", async () => {
+    const result = await postReplyInChunks({
+      channel: "C1",
+      threadTs: "T1",
+      thinkingTs: "THINK.1",
+      text: "short answer",
+    });
+    expect(result.chunks).toBe(1);
+    expect(result.firstTs).toBe("THINK.1");
+    expect(result.allTs).toEqual(["THINK.1"]);
+  });
+
+  it("single-chunk (no thinkingTs) returns the newly-posted TS", async () => {
+    const result = await postReplyInChunks({
+      channel: "C1",
+      threadTs: "T1",
+      text: "short answer",
+    });
+    expect(result.chunks).toBe(1);
+    expect(result.firstTs).toBe("9999.0");
+    expect(result.allTs).toEqual(["9999.0"]);
+  });
+
+  it("multi-chunk returns thinkingTs as chunk 0 plus every new-reply TS", async () => {
+    // Force a 3-chunk split with a large body (>> default 3K).
+    const bigText = "x".repeat(8_500);
+    const result = await postReplyInChunks({
+      channel: "C1",
+      threadTs: "T1",
+      thinkingTs: "THINK.1",
+      text: bigText,
+    });
+    expect(result.chunks).toBeGreaterThanOrEqual(3);
+    expect(result.firstTs).toBe("THINK.1");
+    expect(result.allTs[0]).toBe("THINK.1");
+    // Subsequent chunks are fresh posts with TS from the counter
+    expect(result.allTs.length).toBe(result.chunks);
+    for (let i = 1; i < result.chunks; i++) {
+      expect(result.allTs[i]).toMatch(/^9999\.\d+$/);
+    }
+    // Crucially: allTs contains UNIQUE values so per-chunk KV writes
+    // don't collide on the same key.
+    expect(new Set(result.allTs).size).toBe(result.allTs.length);
+  });
+
+  it("allTs length matches chunks exactly (no orphans, no dupes)", async () => {
+    const bigText = "y".repeat(7_000);
+    const result = await postReplyInChunks({
+      channel: "C1",
+      threadTs: "T1",
+      text: bigText,
+    });
+    expect(result.allTs.length).toBe(result.chunks);
   });
 });
