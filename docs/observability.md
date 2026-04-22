@@ -29,6 +29,14 @@ vercel logs --prod --follow # Live tail
 
 Why this works on Vercel when stdout doesn't: `@sentry/nextjs` internally calls `vercelWaitUntil(Sentry.flush())` to hold the function container open until events are transmitted. That's the same mechanism `getsentry/junior` uses on their Vercel-hosted Hono agent.
 
+### The `after()` tail-drop gotcha (#98)
+
+The SDK's auto-flush above fires at **route-handler response time** — which runs BEFORE Next.js's `after()` callbacks. Any log emitted inside `after()` (where BM does its real work: agent loop, answer post, reaction handlers, KV writes) lands in the Sentry buffer AFTER the auto-flush has already fired, and relies on the 5-second weight-timer for its next drain. Vercel often freezes the container before that timer runs — dropping the tail of the log stream.
+
+**Fix:** every `after()` body ends with `await flushLogs(rlog, "<flow>")` in its `finally` block. `flushLogs` emits `turn_end` and then explicitly calls `Sentry.flush(2000)` to drain the buffer before the container hibernates. This matches the SDK's own `flushSafelyWithTimeout` internal pattern.
+
+If you add a new `after()` callback, **you must end it with `flushLogs`** or its logs will tail-drop. The unit test at `src/lib/logger.test.ts` pins the explicit-flush behavior so accidental regression fails loudly in CI.
+
 ## Log Format
 
 Every log entry is a single JSON line:

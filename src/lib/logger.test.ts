@@ -1,4 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+// Mock @sentry/nextjs before importing the logger so flushLogs sees the
+// mocked flush. `vi.hoisted` ensures the spy exists before vi.mock runs
+// (vitest hoists vi.mock above top-level consts).
+const { flushSpy } = vi.hoisted(() => ({ flushSpy: vi.fn().mockResolvedValue(true) }));
+vi.mock("@sentry/nextjs", () => ({
+  flush: (...args: unknown[]) => flushSpy(...args),
+}));
+
 import { log, createRequestLogger, flushLogs } from "./logger";
 
 describe("log", () => {
@@ -106,6 +115,8 @@ describe("flushLogs", () => {
 
   beforeEach(() => {
     consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    flushSpy.mockClear();
+    flushSpy.mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -123,20 +134,40 @@ describe("flushLogs", () => {
     expect(parsed.requestId).toBeDefined();
   });
 
-  it("yields the event loop via setImmediate before resolving", async () => {
-    // The `after()`-drop fix relies on flushLogs scheduling at least one
-    // setImmediate tick between the turn_end log and the promise
-    // resolution, so stdout can drain before Vercel hibernates the
-    // container. A regression that removes the `setImmediate` yield
-    // (e.g. switching to a sync return) must fail this test.
-    const spy = vi.spyOn(global, "setImmediate");
-    try {
-      const rlog = createRequestLogger();
-      await flushLogs(rlog, "mention");
-      expect(spy).toHaveBeenCalled();
-    } finally {
-      spy.mockRestore();
-    }
+  it("explicitly drains the Sentry buffer via Sentry.flush before resolving", async () => {
+    // Root fix for the after()-drop bug (#98): @sentry/nextjs auto-flushes
+    // on response-end, which fires BEFORE after() callbacks run. Logs
+    // emitted inside after() land in the buffer after the auto-flush
+    // and rely on the 5s weight timer — which Vercel may not give us.
+    // Calling Sentry.flush explicitly at the end of every after() body
+    // forces a drain before the container freezes.
+    const rlog = createRequestLogger();
+    await flushLogs(rlog, "mention");
+    expect(flushSpy).toHaveBeenCalled();
+  });
+
+  it("uses a 2000ms timeout — matches the SDK's own flushSafelyWithTimeout pattern", async () => {
+    const rlog = createRequestLogger();
+    await flushLogs(rlog, "mention");
+    // The SDK's own vercelWaitUntil(flushSafelyWithTimeout()) uses 2000ms.
+    // Pin that constant so a future refactor can't silently reduce it.
+    expect(flushSpy).toHaveBeenCalledWith(2000);
+  });
+
+  it("flushes AFTER emitting turn_end so the turn_end itself is in the buffer", async () => {
+    // Ordering matters: the turn_end log must be enqueued BEFORE flush
+    // runs, otherwise we drain an empty buffer and the final event
+    // still gets lost.
+    const rlog = createRequestLogger();
+    await flushLogs(rlog, "mention");
+    // Both happened; the console.log (which enqueues the log) must have
+    // been called before the flushSpy resolved.
+    expect(consoleSpy).toHaveBeenCalled();
+    expect(flushSpy).toHaveBeenCalled();
+    // Vitest invocationCallOrder gives a monotonic id per call; lower = earlier.
+    const logOrder = consoleSpy.mock.invocationCallOrder[0];
+    const flushOrder = flushSpy.mock.invocationCallOrder[0];
+    expect(logOrder).toBeLessThan(flushOrder);
   });
 
   it("does not throw when the logger itself throws", async () => {
@@ -145,5 +176,13 @@ describe("flushLogs", () => {
     };
     // Must not reject — post-response flow depends on this invariant.
     await expect(flushLogs(throwing, "mention")).resolves.toBeUndefined();
+  });
+
+  it("does not throw when Sentry.flush rejects", async () => {
+    // If Sentry transport is broken or times out, flushLogs must still
+    // resolve — it's in a finally block of every after() callback.
+    flushSpy.mockRejectedValueOnce(new Error("sentry transport blew up"));
+    const rlog = createRequestLogger();
+    await expect(flushLogs(rlog, "mention")).resolves.toBeUndefined();
   });
 });
