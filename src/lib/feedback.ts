@@ -71,7 +71,7 @@ export async function storeQAContext(
   context: QAContext,
 ): Promise<void> {
   const key = `${CONTEXT_PREFIX}:${channel}:${messageTs}`;
-  await kv.set(key, JSON.stringify(context), { ex: CONTEXT_TTL });
+  await kv.set(key, context, { ex: CONTEXT_TTL });
 }
 
 /**
@@ -85,10 +85,8 @@ export async function getQAContext(
   messageTs: string,
 ): Promise<QAContext | null> {
   const key = `${CONTEXT_PREFIX}:${channel}:${messageTs}`;
-  const raw = await kv.get<string>(key);
-  if (!raw) return null;
   try {
-    return typeof raw === "string" ? JSON.parse(raw) : (raw as QAContext);
+    return (await kv.get<QAContext>(key)) ?? null;
   } catch {
     return null;
   }

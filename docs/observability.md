@@ -114,7 +114,6 @@ Every persistent-state operation flows through `src/lib/kv.ts`, which wraps the 
 | `kv_client_init` | Module load (once per cold start) | library (`@upstash/redis`) |
 | `kv_op` | Every successful op | op (`get`/`set`/`del`/`zadd`/`zrange`/`zrem`), keyPrefix, durationMs, and per-op metadata: `hit` (get), `valueSize`+`ttlSec` (set), `deleted` (del), `removed` (zrem), `rangeSize` (zrange) |
 | `kv_error` | Every failed op (also `Sentry.captureException`) | op, keyPrefix, durationMs, errorClass, errorMessage (sliced to 200 chars). Sentry tags: `kv.op`, `kv.keyPrefix`. |
-| `kv_possible_double_stringify` | `get` returns a string that parses as a JSON object | keyPrefix. **Migration diagnostic only** — flags pre-migration writes that called `JSON.stringify` manually. See #117. Safe to remove after prod validation confirms no remaining double-writes. |
 
 **Why `keyPrefix`, not the full key:** full keys contain channel IDs and message timestamps (`feedback:context:C01ABCDEF:1234.5678`) — not privacy-sensitive per se, but cardinality-hostile for aggregation. The first segment (`feedback`, `knowledge`, `pending-correction`, `repo-index`, `slack-users`) combined with `op` gives clean bucketing (e.g., `{op: get, keyPrefix: feedback}` for context lookups vs. `{op: zrange, keyPrefix: feedback}` for entry-list reads).
 

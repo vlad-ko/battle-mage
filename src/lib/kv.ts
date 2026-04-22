@@ -11,11 +11,6 @@
 // 2. Observability — KV failures today bubble up as generic route
 //    errors; the wrapper tags them so "Upstash is flaky" shows up as
 //    a distinct signal.
-// 3. Migration diagnostic — the `kv_possible_double_stringify` canary
-//    on `get` flags pre-migration writes that manually JSON.stringify'd
-//    objects (the old @vercel/kv pattern). Upstash auto-parses JSON on
-//    get, so a mixed-write KB is consistent on read but confusing in
-//    logs; the canary surfaces it.
 //
 // See #117 for the migration context, docs/observability.md for the
 // `kv_op` / `kv_error` event schema.
@@ -65,29 +60,8 @@ function logError(op: KVOp, prefix: string, startedAt: number, err: unknown): vo
   Sentry.captureException(err, sentryTags(op, prefix));
 }
 
-// ── Double-stringify canary ──────────────────────────────────────────
-// If a get returns a STRING that happens to parse as valid JSON, the
-// value was most likely written by pre-migration code that called
-// `kv.set(k, JSON.stringify(obj))`. Upstash's auto-deserialize would
-// normally return the parsed object if the library wrote it; a string
-// coming back means it was stored as a literal string. Flag it.
-function maybeFlagDoubleStringify(key: string, result: unknown): void {
-  if (typeof result !== "string") return;
-  try {
-    const parsed = JSON.parse(result);
-    // Only flag if the parse actually produces something structured —
-    // `"42"` or `"true"` parse to primitives but aren't double-stringified
-    // objects worth flagging.
-    if (parsed !== null && typeof parsed === "object") {
-      log("kv_possible_double_stringify", { keyPrefix: keyPrefix(key) });
-    }
-  } catch {
-    // Not JSON — nothing to do.
-  }
-}
-
 // ── Public wrapper ───────────────────────────────────────────────────
-// Mirrors @upstash/redis surface for the 5 ops we use. Same signatures
+// Mirrors @upstash/redis surface for the 6 ops we use. Same signatures
 // so callers switching from @vercel/kv need only update the import path.
 
 export const kv = {
@@ -102,7 +76,6 @@ export const kv = {
         durationMs: Date.now() - startedAt,
         hit: result !== null && result !== undefined,
       });
-      maybeFlagDoubleStringify(key, result);
       return result;
     } catch (err) {
       logError("get", prefix, startedAt, err);

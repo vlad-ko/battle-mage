@@ -258,12 +258,14 @@ export async function getOrRebuildIndex(): Promise<string> {
     // See #108 for the fan-out fix.
     const docCatalog = buildDocCatalogFromPaths(paths, config);
 
-    // Write to KV
+    // Write to KV. @upstash/redis auto-stringifies objects on set, so we
+    // pass rich values directly; the on-disk JSON bytes are identical
+    // to the old manual `JSON.stringify` pattern.
     await kv.set(INDEX_SHA_KEY, currentSha);
-    await kv.set(INDEX_TOPICS_KEY, JSON.stringify(topics));
+    await kv.set(INDEX_TOPICS_KEY, topics);
     await kv.set(INDEX_SUMMARY_KEY, summary);
-    await kv.set(INDEX_DOC_CATALOG_KEY, JSON.stringify(docCatalog));
-    await kv.set(INDEX_CONFIG_KEY, JSON.stringify(config));
+    await kv.set(INDEX_DOC_CATALOG_KEY, docCatalog);
+    await kv.set(INDEX_CONFIG_KEY, config);
     await kv.set(INDEX_BUILT_AT_KEY, new Date().toISOString());
 
     log("index_rebuilt", {
@@ -288,9 +290,7 @@ export async function getOrRebuildIndex(): Promise<string> {
  */
 export async function getDocCatalog(): Promise<DocEntry[]> {
   try {
-    const raw = await kv.get<string>(INDEX_DOC_CATALOG_KEY);
-    if (!raw) return [];
-    const parsed = typeof raw === "string" ? JSON.parse(raw) : (raw as DocEntry[]);
+    const parsed = await kv.get<DocEntry[]>(INDEX_DOC_CATALOG_KEY);
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
@@ -320,11 +320,8 @@ function buildDocCatalogFromPaths(
  */
 export async function getCachedTopics(): Promise<TopicMap> {
   try {
-    const raw = await kv.get<string>(INDEX_TOPICS_KEY);
-    if (raw) {
-      return typeof raw === "string" ? JSON.parse(raw) : (raw as TopicMap);
-    }
-    return {};
+    const topics = await kv.get<TopicMap>(INDEX_TOPICS_KEY);
+    return topics ?? {};
   } catch {
     return {};
   }
@@ -332,10 +329,8 @@ export async function getCachedTopics(): Promise<TopicMap> {
 
 export async function getCachedConfig(): Promise<BattleMageConfig> {
   try {
-    const raw = await kv.get<string>(INDEX_CONFIG_KEY);
-    if (raw) {
-      return typeof raw === "string" ? JSON.parse(raw) : (raw as BattleMageConfig);
-    }
+    const config = await kv.get<BattleMageConfig>(INDEX_CONFIG_KEY);
+    if (config) return config;
     return { paths: {} };
   } catch {
     return { paths: {} };
