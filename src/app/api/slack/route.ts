@@ -32,6 +32,19 @@ import { getCachedTopics } from "@/lib/repo-index";
 import { matchTopicsToQuestion, buildQuestionHints } from "@/lib/topic-match";
 import { isAddressedToOtherUser, buildConversationHistory } from "@/lib/thread-filter";
 
+// Shape of the pending-correction record stored under
+// `pending-correction:{channel}:{threadTs}` when a user reacts 👎.
+// Read by the thread-followup handler on the user's next message to
+// save their correction to the KB. @upstash/redis auto-stringifies
+// this on set and auto-parses on get.
+interface PendingCorrection {
+  question: string;
+  references: string[];
+  flaggedKB: string[];
+  pendingAt: number;
+  answerTs: string;
+}
+
 /**
  * Slack Events API webhook handler.
  *
@@ -286,10 +299,9 @@ export async function POST(request: NextRequest) {
         // Check for pending correction (from a 👎 reaction)
         const { kv } = await import("@/lib/kv");
         const pendingKey = `pending-correction:${channel}:${threadTs}`;
-        const pendingRaw = await kv.get<string>(pendingKey);
-        if (pendingRaw) {
+        const pending = await kv.get<PendingCorrection>(pendingKey);
+        if (pending) {
           // This reply is a correction — save directly to KB
-          const pending = typeof pendingRaw === "string" ? JSON.parse(pendingRaw) : pendingRaw;
           const { saveKnowledgeEntry } = await import("@/lib/knowledge");
 
           await saveKnowledgeEntry(userMessage);
@@ -305,17 +317,14 @@ export async function POST(request: NextRequest) {
           // Clear the pending state
           await kv.del(pendingKey);
           // Close the 👎 → correction funnel with latency from the
-          // moment 👎 was registered. `pendingAt` was added to the KV
-          // record when the pending state was created (see reaction_thumbsdown
-          // handler); fall back to 0 for records written before that.
-          const pendingAt: number = typeof pending.pendingAt === "number" ? pending.pendingAt : 0;
+          // moment 👎 was registered.
           rlog("correction_saved", {
             channel,
             threadTs,
             answerTs: pending.answerTs ?? null,
             correctionLength: userMessage.length,
-            timeSincePendingMs: pendingAt > 0 ? Date.now() - pendingAt : null,
-            flaggedKBCount: Array.isArray(pending.flaggedKB) ? pending.flaggedKB.length : 0,
+            timeSincePendingMs: Date.now() - pending.pendingAt,
+            flaggedKBCount: pending.flaggedKB.length,
             correctionSample: userMessage.slice(0, 100),
           });
 
@@ -702,17 +711,14 @@ export async function POST(request: NextRequest) {
         const pendingAt = Date.now();
         const ttlSec = 86400;
         const { kv } = await import("@/lib/kv");
-        await kv.set(
-          pendingKey,
-          JSON.stringify({
-            question: context.question,
-            references: context.references,
-            flaggedKB: actions.kbEntriesToFlag.map((e) => e.entry),
-            pendingAt,
-            answerTs: context.answerTs,
-          }),
-          { ex: ttlSec },
-        );
+        const pendingRecord: PendingCorrection = {
+          question: context.question,
+          references: context.references,
+          flaggedKB: actions.kbEntriesToFlag.map((e) => e.entry),
+          pendingAt,
+          answerTs: context.answerTs,
+        };
+        await kv.set(pendingKey, pendingRecord, { ex: ttlSec });
         rlog("correction_pending", {
           channel,
           threadTs,
