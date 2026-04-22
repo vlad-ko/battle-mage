@@ -56,6 +56,7 @@ src/
     mrkdwn.ts             — Markdown → Slack mrkdwn converter
     logger.ts             — Structured JSON logging with request correlation IDs
     references.ts         — Typed references: ranking, dedup, emoji formatting
+    split-reply.ts        — Pure splitter for long Slack replies (paragraph/line/word/fence-aware)
   tools/
     index.ts              — Tool registry and executor
     search-code.ts        — GitHub code search tool
@@ -77,6 +78,7 @@ docs/
     source-hierarchy.md   — Source-of-truth hierarchy (5 levels)
     auto-correction.md    — Auto-correction on 👎 reactions
     progress-ux.md        — Live progress updates (emoji + status)
+    message-splitting.md  — Long-reply chunking architecture (split-reply + boundary guard)
 ```
 
 ## Testing (TDD Required)

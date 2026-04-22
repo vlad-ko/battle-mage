@@ -18,14 +18,16 @@ POST /api/slack (Next.js API route)
         ├── Post thinking message ("Battle Mage is working...")
         ├── Run agent loop (Claude + tools)
         │     ├── Tool round 1: search_code("auth middleware")
-        │     │   └── Update thinking message: "Searching for auth middleware..."
+        │     │   └── Update thinking message: "🔍 Searching for auth middleware..."
         │     ├── Tool round 2: read_file("src/middleware/auth.ts")
-        │     │   └── Update thinking message: "Reading src/middleware/auth.ts..."
+        │     │   └── Update thinking message: "📖 Reading src/middleware/auth.ts..."
         │     └── ... up to 15 rounds
-        ├── Delete thinking message
         ├── Convert markdown to Slack mrkdwn
         ├── Format reference links
-        └── Post final answer in thread
+        └── Post final answer via `postReplyInChunks`
+              ├── Split body into chunks (≤3K chars each)
+              ├── Chunk 0: edit thinking message in place
+              └── Chunks 1..N: post as new thread replies with "[continued ↓]"
 ```
 
 ## The Ack-Then-Process Pattern
@@ -165,19 +167,17 @@ A warm thread should see `cache_read_tokens` dominate after the first turn. A co
 
 ## The Agent Loop
 
-The agent loop is a streaming Claude tool-use loop with a hard cap of 15 rounds:
+The agent loop is a Claude tool-use loop with a hard cap of 15 rounds. It is **non-streaming** — each round is a single `messages.create` call that returns the complete response before any tools run (see [Message Splitting](./features/message-splitting.md) for why streaming was removed):
 
 ```
 for round in 0..MAX_TOOL_ROUNDS:
-    stream = claude.messages.stream(system, tools, messages)
-    stream.on("text", (_delta, snapshot) => onTextDelta(snapshot))   // Slack streaming
-    response = await stream.finalMessage()
+    response = await anthropic.messages.create(system, tools, messages)
 
     if response.stop_reason == "end_turn":
         return text + references
 
     for each tool_use block in response:
-        fire onProgress callback (updates thinking message)
+        fire onProgress callback (updates thinking message with tool status)
         result = executeTool(name, input)
         collect references from result
 
@@ -187,9 +187,7 @@ if loop exhausted:
     return "hit maximum tool calls" message
 ```
 
-Every round uses `anthropic.messages.stream()` and subscribes to `text` events. On the final round — where Claude produces only text (no `tool_use`) — deltas flow through to Slack in near-real-time. On tool-use rounds, the text event typically doesn't fire (the model emits only tool_use blocks under the output contract), so progress emoji owns the message.
-
-On any streaming error (SDK transport blip), `runAgent` falls back transparently to `anthropic.messages.create()` for that round — the turn keeps going, just without live deltas.
+Progress updates run via `onProgress(toolName, input)` → `progressThrottle.update(...)` (`createThrottledUpdater` in `src/lib/slack-throttle.ts`). The throttle coalesces bursts of parallel tool progress into ~1 Slack edit every 1.2 seconds, well under Slack's rate limit. A final `progressThrottle.flush()` drains any pending update before the final answer is posted, preventing a stale progress message from overwriting the answer.
 
 ### Model tiering — main vs fast (see #75)
 
@@ -214,28 +212,26 @@ Long threads (Slack Q&A with the bot accumulating over many follow-ups) used to 
 
 Integration point: `runAgent` in `src/lib/claude.ts`. Single check at the top of the function, before the round loop. Covers both mention-follow-up and thread-follow-up flows because both path through `runAgent`.
 
-### Streaming into Slack
+### Answer delivery — split, don't truncate
 
-Text deltas are coalesced by `createThrottledUpdater` in `src/lib/slack-throttle.ts`:
+The final answer flows through `postReplyInChunks` in `src/lib/slack.ts`, which splits long bodies into multiple thread replies instead of truncating them to fit Slack's 40K-char limit. Each chunk is a complete, valid Slack message well under the limit; users see the same logical answer across 1-4 posts depending on length. See [Message Splitting](./features/message-splitting.md) for the full design.
 
-- First update fires immediately.
-- Rapid subsequent updates within 1200 ms are coalesced and fire once with the latest accumulated snapshot — safely below Slack's ~1 edit/sec per-message rate limit.
-- `flush()` drains any pending edit before the final-answer write, preventing a race.
+### One-answer lifecycle
 
-Slack mrkdwn conversion (`toSlackMrkdwn`) runs on every streamed edit as a safety net — with the output contract in place, the model emits single-asterisk bold natively so conversion is near-idempotent.
+The thinking message is created once and **reused as chunk 0** of the final answer — no delete-and-repost flicker on short answers. Sequence:
 
-### One-message lifecycle
+1. Post thinking message: "🧠 Battle Mage is working…"
+2. Tool rounds: emoji + status via `onProgress` → throttled `updateMessage(thinkingTs, ...)`
+3. `runAgent` returns; `progressThrottle.flush()` drains pending progress edits
+4. Build final body: formatted text + references footer (and proposal block if present)
+5. `postReplyInChunks({ channel, threadTs, thinkingTs, text: finalBody })`:
+   - Splits `finalBody` into N chunks at paragraph boundaries (see [Message Splitting](./features/message-splitting.md))
+   - Chunk 0: `updateMessage(thinkingTs, chunks[0])` — edits the thinking message in place
+   - Chunks 1..N: `replyInThread(channel, threadTs, chunks[i])` — new thread posts
+   - Returns `{ firstTs, chunks }`
+6. Store Q&A context using `firstTs` (chunk 0's ts)
 
-The thinking message is created once and **reused as the final answer** — no delete-and-repost flicker. Sequence:
-
-1. Post thinking message: "Battle Mage is working…"
-2. Tool round: emoji + status via `onProgress` → `updateMessage(thinkingTs, ...)`
-3. Final round: text deltas via `onTextDelta` → throttled `updateMessage(thinkingTs, ...)`
-4. `runAgent` returns; `streamThrottle.flush()` drains pending edits
-5. Final edit: formatted text + references footer (and proposal block if present) → `updateMessage(thinkingTs, finalBody)`
-6. Store Q&A context using the former `thinkingTs` (now the answer `ts`)
-
-The `finally` block still deletes the thinking message as a safety net if the turn crashed mid-flight.
+The `finally` block still deletes the thinking message as a safety net if the turn crashed before any chunk posted (`thinkingTs` is only cleared once a chunk was successfully sent).
 
 ### Other key behaviors
 
@@ -333,7 +329,8 @@ This ensures users see the most authoritative sources first.
 | **15 tool round budget** | Hard cap prevents runaway tool loops. The system prompt instructs Claude to synthesize early rather than exhausting all rounds. |
 | **References from reads only** | Search results are discovery aids and do not appear in references. Only files the agent actually reads (via `read_file`) are cited. |
 | **KV for knowledge, not GitHub** | The knowledge base lives in Vercel KV, not in the GitHub repo. The GitHub PAT does not need Contents: Write permission. |
-| **Progress messages deleted** | The thinking message is deleted when the answer is ready, rather than edited in place. This keeps the thread clean with just the final answer. |
+| **Split long answers, don't truncate** | Answers over ~3K chars post as multiple thread replies (`[continued ↓]`) instead of being silently cut off. Makes Slack's `msg_too_long` architecturally unreachable on the happy path. See [Message Splitting](./features/message-splitting.md). |
+| **Thinking message reused as chunk 0** | The "🧠 Battle Mage is working…" message is edited in place with the first chunk of the answer — no delete-and-repost flicker. Subsequent chunks post as new thread replies. |
 
 ## Project Structure
 
@@ -354,6 +351,7 @@ src/
     progress.ts           -- Progress message formatter (tool name to emoji + status)
     mrkdwn.ts             -- Markdown to Slack mrkdwn converter
     references.ts         -- Reference deduplication, capping, and formatting
+    split-reply.ts        -- Pure splitter for long Slack replies (paragraph/line/word/fence-aware)
   tools/
     index.ts              -- Tool registry and executor
     search-code.ts        -- GitHub code search
