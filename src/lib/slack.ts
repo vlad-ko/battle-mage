@@ -123,13 +123,26 @@ export interface PostReplyInChunksInput {
   text: string;
 }
 
+export interface PostReplyInChunksResult {
+  // TS of chunk 0 — used as the stable "answer id" across the whole split.
+  firstTs: string | undefined;
+  // TS of every posted chunk in order (0..N-1). Callers store Q&A
+  // context against each TS so a reaction on any chunk resolves to the
+  // same answer (see #114). Empty when chunks === 0.
+  allTs: string[];
+  // Number of chunks posted. 0 if the text was empty after trim.
+  chunks: number;
+}
+
 export async function postReplyInChunks(
   input: PostReplyInChunksInput,
-): Promise<{ firstTs: string | undefined; chunks: number }> {
+): Promise<PostReplyInChunksResult> {
   const chunks = splitSlackReplyText(input.text);
   if (chunks.length === 0) {
-    return { firstTs: undefined, chunks: 0 };
+    return { firstTs: undefined, allTs: [], chunks: 0 };
   }
+
+  const allTs: string[] = [];
 
   const first = chunks[0] ?? "";
   let firstTs: string | undefined;
@@ -140,14 +153,16 @@ export async function postReplyInChunks(
   } else {
     firstTs = await replyInThread(input.channel, input.threadTs, first);
   }
+  if (firstTs) allTs.push(firstTs);
 
   // Remaining chunks post as fresh thread replies in order.
   for (let i = 1; i < chunks.length; i++) {
     const chunk = chunks[i] ?? "";
-    await replyInThread(input.channel, input.threadTs, chunk);
+    const ts = await replyInThread(input.channel, input.threadTs, chunk);
+    if (ts) allTs.push(ts);
   }
 
-  return { firstTs, chunks: chunks.length };
+  return { firstTs, allTs, chunks: chunks.length };
 }
 
 // ── Delete a message ──────────────────────────────────────────────────

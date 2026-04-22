@@ -69,16 +69,16 @@ Filter: requestId=a3f2b1c4
 | `mention_received` | @bm mentioned in a channel | channel, user, question |
 | `thread_followup` | Reply in thread where bot is participating | channel, threadTs |
 | `reaction_checkmark` | ✅ on a proposal message | channel, messageTs |
-| `reaction_thumbsup` | 👍 on a bot answer | channel, messageTs |
-| `reaction_thumbsdown` | 👎 on a bot answer | channel, messageTs |
+| `reaction_received` | **Any** `reaction_added` dispatched to the bot's handler (fires before validation) | reaction, reactingUser, targetTs, channel |
 
 ### Agent Events (claude.ts)
 
 | Event | When | Key data |
 |-------|------|----------|
-| `agent_start` | Agent loop begins | promptLength, question |
+| `agent_start` | Agent loop begins | promptLength, question, model |
 | `agent_tool_call` | Each tool execution | tool, round, input (truncated) |
 | `agent_complete` | Agent produces final answer | rounds, refCount, hasProposal, duration_ms |
+| `prompt_feedback_included` | System prompt assembled — fires **every** turn, even when no entries | positiveCount, negativeCount, totalEntries, promptZone |
 
 ### Index Events (repo-index.ts)
 
@@ -93,12 +93,32 @@ Filter: requestId=a3f2b1c4
 
 | Event | When | Key data |
 |-------|------|----------|
-| `answer_posted` | Bot's answer sent to Slack | channel, threadTs |
+| `answer_posted` | Bot's answer sent to Slack | channel, threadTs, chunks |
 | `issue_created` | GitHub issue created after ✅ | number |
-| `correction_saved` | User's correction saved to KB | entry (truncated) |
-| `feedback_positive` | 👍 feedback recorded | question (truncated) |
-| `feedback_negative` | 👎 analysis complete | kbFlagged, docsFlagged |
 | `followup_agent_start` | Thread follow-up triggering agent | channel, threadTs |
+
+### Feedback Events (route.ts) — #114
+
+Every reaction flows through this event funnel. `reaction_skipped` and `feedback_saved` are **mutually exclusive outcomes** of a given `reaction_received`. When diagnosing "my 👍 did nothing", filter for `reaction_skipped` with the user's `reactingUser` first — silent drops used to be invisible and are now fully logged.
+
+| Event | When | Key data |
+|-------|------|----------|
+| `reaction_skipped` | The handler decided to drop the reaction | reaction, reason (`non_message_item` / `bot_own_reaction` / `target_not_bot_message` / `no_qa_context`), targetTs, channel |
+| `feedback_saved` | A 👍 or 👎 passed validation and was recorded | type, answerTs, chunkIndex, chunkCount, latencyMs, referenceCount, referenceTypes, questionLength, answerLength, questionSample |
+| `feedback_ack_added` | The 🧠 ack reaction posted back to the user | reactionName, chunkTs |
+| `feedback_ack_failed` | The 🧠 ack was rejected by Slack | reason (`already_reacted` / `permission_denied` / `unknown`), chunkTs, errMsg |
+| `correction_pending` | 👎 created a pending-correction KV record; user prompted for the correction text | channel, threadTs, answerTs, flaggedKBCount, flaggedDocCount, ttlSec |
+| `correction_saved` | User replied with a correction; entry saved to KB and funnel closed | channel, threadTs, answerTs, correctionLength, timeSincePendingMs, flaggedKBCount, correctionSample |
+
+**The `answerTs` field** is the stable identifier for the whole answer — equal to chunk 0's TS regardless of which chunk the user reacted on. Use it to join reaction events across the same answer (e.g. to see if the user reacted on chunk 1 and also replied with a correction later).
+
+### Useful queries
+
+- **Silent-drop rate:** `count(reaction_skipped) / count(reaction_received)` — should be low in steady state; a spike in `no_qa_context` indicates either stale Q&A records (>7-day TTL) or a bug.
+- **Chunk-reaction distribution:** `feedback_saved.chunkIndex` bucketed — if users reliably react on chunk 1+, the compact-answer prompt isn't working; if they only react on chunk 0, the 2-chunk marker-drop heuristic is fine.
+- **👎 funnel completion:** `count(correction_saved) / count(correction_pending)` — low means users don't follow through; consider shortening the pending TTL or changing the prompt.
+- **Feedback feature value:** correlate `prompt_feedback_included.totalEntries > 0` turns with subsequent `feedback_saved.type = "positive"` rates — does having feedback in context correlate with higher-quality answers?
+- **Reaction latency:** bucket `feedback_saved.latencyMs` — immediate reactions (<30s) are higher signal than day-later reactions.
 
 ### Error Events (all flows)
 
@@ -126,7 +146,19 @@ If you see `index_cache_hit` on every request, the SHA hasn't changed since the 
 
 ### "Feedback not working"
 
-After a 👍/👎, look for `feedback_positive`/`feedback_negative` events. If missing, the Q&A context may have expired (7-day TTL) or the reacted-to message wasn't a bot answer.
+First check the reaction funnel — a feedback event that never resulted in action now always leaves a log:
+
+1. Search for `reaction_received` with the user's `reactingUser` and the approximate time.
+2. Look for a matching `feedback_saved` (success) or `reaction_skipped` (drop).
+   - `reason: "no_qa_context"` → the reacted-on message has no stored Q&A context. Either it's not an answer chunk, or the 7-day TTL expired. Post-#114, Q&A is stored against every chunk of a split answer.
+   - `reason: "bot_own_reaction"` → the bot reacted to itself; benign.
+   - `reason: "target_not_bot_message"` → the user reacted on a human message; benign.
+3. If `feedback_saved` fired but the user didn't see a 🧠 ack, look for `feedback_ack_failed` — usually `already_reacted`, which is benign.
+
+For the 👎 correction funnel specifically, expect `correction_pending` immediately after `feedback_saved` (type=negative), and `correction_saved` only if the user typed a reply within 24h.
+
+
+After a 👍/👎, look for a `feedback_saved` event with the matching `type`. If missing, look for `reaction_skipped` with the reason — the Q&A context may have expired (7-day TTL), the reacted-to message may not be a bot answer, or the bot reacted to its own message (`bot_own_reaction`). See the "Feedback Events" section above for the full funnel.
 
 ## Implementation
 

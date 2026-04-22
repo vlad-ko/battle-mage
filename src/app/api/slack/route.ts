@@ -14,7 +14,7 @@ import {
 import { runAgent } from "@/lib/claude";
 import { createIssue } from "@/lib/github";
 import { parseProposalFromMessage } from "@/tools/create-issue";
-import { storeQAContext, getQAContext, saveFeedback } from "@/lib/feedback";
+import { storeQAContext, getQAContext, saveFeedback, deriveReferenceTypes } from "@/lib/feedback";
 import { formatReferences, rankReferences } from "@/lib/references";
 import { getAllKnowledge } from "@/lib/knowledge";
 import { buildCorrectionActions } from "@/lib/auto-correct";
@@ -209,13 +209,25 @@ export async function POST(request: NextRequest) {
           if (posted.chunks > 0) thinkingTs = undefined;
           rlog("answer_posted", { channel, threadTs, chunks: posted.chunks });
 
-          // Store Q&A context so 👍/👎 reactions can reference it
-          if (posted.firstTs) {
-            await storeQAContext(channel, posted.firstTs, {
-              question: cleanMessage,
-              answer: result.text.slice(0, 500),
-              references: result.references.map((r) => r.label),
-            });
+          // Store Q&A context for EVERY chunk ts (see #114). Reactions
+          // on any chunk resolve to the same question/answer pair.
+          if (posted.firstTs && posted.allTs.length > 0) {
+            const postedAt = Date.now();
+            const referenceTypes = deriveReferenceTypes(result.references);
+            await Promise.all(
+              posted.allTs.map((ts, chunkIndex) =>
+                storeQAContext(channel, ts, {
+                  question: cleanMessage,
+                  answer: result.text.slice(0, 500),
+                  references: result.references.map((r) => r.label),
+                  answerTs: posted.firstTs!,
+                  chunkIndex,
+                  chunkCount: posted.chunks,
+                  postedAt,
+                  referenceTypes,
+                }),
+              ),
+            );
           }
         }
       } catch (err) {
@@ -292,7 +304,20 @@ export async function POST(request: NextRequest) {
 
           // Clear the pending state
           await kv.del(pendingKey);
-          rlog("correction_saved", { entry: userMessage.slice(0, 100) });
+          // Close the 👎 → correction funnel with latency from the
+          // moment 👎 was registered. `pendingAt` was added to the KV
+          // record when the pending state was created (see reaction_thumbsdown
+          // handler); fall back to 0 for records written before that.
+          const pendingAt: number = typeof pending.pendingAt === "number" ? pending.pendingAt : 0;
+          rlog("correction_saved", {
+            channel,
+            threadTs,
+            answerTs: pending.answerTs ?? null,
+            correctionLength: userMessage.length,
+            timeSincePendingMs: pendingAt > 0 ? Date.now() - pendingAt : null,
+            flaggedKBCount: Array.isArray(pending.flaggedKB) ? pending.flaggedKB.length : 0,
+            correctionSample: userMessage.slice(0, 100),
+          });
 
           await replyInThread(
             channel,
@@ -395,12 +420,23 @@ export async function POST(request: NextRequest) {
           if (posted.chunks > 0) thinkTs = undefined;
           rlog("answer_posted", { channel, threadTs, chunks: posted.chunks });
 
-          if (posted.firstTs) {
-            await storeQAContext(channel, posted.firstTs, {
-              question: cleanMessage,
-              answer: result.text.slice(0, 500),
-              references: result.references.map((r) => r.label),
-            });
+          if (posted.firstTs && posted.allTs.length > 0) {
+            const postedAt = Date.now();
+            const referenceTypes = deriveReferenceTypes(result.references);
+            await Promise.all(
+              posted.allTs.map((ts, chunkIndex) =>
+                storeQAContext(channel, ts, {
+                  question: cleanMessage,
+                  answer: result.text.slice(0, 500),
+                  references: result.references.map((r) => r.label),
+                  answerTs: posted.firstTs!,
+                  chunkIndex,
+                  chunkCount: posted.chunks,
+                  postedAt,
+                  referenceTypes,
+                }),
+              ),
+            );
           }
         }
       } catch (err) {
@@ -494,23 +530,43 @@ export async function POST(request: NextRequest) {
   // ── Handle 👍 reaction → save positive feedback ─────────────────────
   if (event.type === "reaction_added" && event.reaction === "+1") {
     const item = event.item;
-    if (item?.type !== "message") return NextResponse.json({ ok: true });
-
-    const channel: string = item.channel;
-    const messageTs: string = item.ts;
-    rlog("reaction_thumbsup", { channel, messageTs });
+    const channel: string = item?.channel;
+    const messageTs: string = item?.ts;
+    rlog("reaction_received", {
+      reaction: "+1",
+      reactingUser: event.user,
+      targetTs: messageTs,
+      channel,
+    });
+    if (item?.type !== "message") {
+      rlog("reaction_skipped", {
+        reaction: "+1",
+        reason: "non_message_item",
+        targetTs: messageTs,
+        channel,
+      });
+      return NextResponse.json({ ok: true });
+    }
 
     after(async () => {
       try {
         const botId = await getBotUserId();
-        if (botId && event.user === botId) return;
+        if (botId && event.user === botId) {
+          rlog("reaction_skipped", { reaction: "+1", reason: "bot_own_reaction", targetTs: messageTs, channel });
+          return;
+        }
 
-        // Only act on bot messages
         const msg = await fetchMessage(channel, messageTs);
-        if (!msg || msg.user !== botId) return;
+        if (!msg || msg.user !== botId) {
+          rlog("reaction_skipped", { reaction: "+1", reason: "target_not_bot_message", targetTs: messageTs, channel });
+          return;
+        }
 
         const context = await getQAContext(channel, messageTs);
-        if (!context) return; // No Q&A context — probably not an answer message
+        if (!context) {
+          rlog("reaction_skipped", { reaction: "+1", reason: "no_qa_context", targetTs: messageTs, channel });
+          return;
+        }
 
         await saveFeedback({
           type: "positive",
@@ -518,13 +574,36 @@ export async function POST(request: NextRequest) {
           detail: `👍 for: "${context.question.slice(0, 80)}" — used: ${context.references.join(", ") || "general knowledge"}`,
           timestamp: new Date().toISOString().split("T")[0],
         });
-        rlog("feedback_positive", { question: context.question.slice(0, 80) });
+        rlog("feedback_saved", {
+          type: "positive",
+          answerTs: context.answerTs,
+          chunkIndex: context.chunkIndex,
+          chunkCount: context.chunkCount,
+          latencyMs: Date.now() - context.postedAt,
+          referenceCount: context.references.length,
+          referenceTypes: context.referenceTypes,
+          questionLength: context.question.length,
+          answerLength: context.answer.length,
+          questionSample: context.question.slice(0, 80),
+        });
 
-        // Silent acknowledgment — just add a checkmark reaction
+        // Reaction ack — emit success/failure so "already_reacted" and
+        // permission errors are no longer silent.
         try {
           const { slack } = await import("@/lib/slack");
           await slack.reactions.add({ channel, name: "brain", timestamp: messageTs });
-        } catch { /* already reacted or can't react — ignore */ }
+          rlog("feedback_ack_added", { reactionName: "brain", chunkTs: messageTs });
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          // Slack returns specific error codes via @slack/web-api — bucket
+          // them for metric-friendliness.
+          const reason = errMsg.includes("already_reacted")
+            ? "already_reacted"
+            : errMsg.includes("not_in_channel") || errMsg.includes("missing_scope")
+            ? "permission_denied"
+            : "unknown";
+          rlog("feedback_ack_failed", { reason, chunkTs: messageTs, errMsg: errMsg.slice(0, 120) });
+        }
       } catch (err) {
         rlog("error", { flow: "reaction_thumbsup", message: err instanceof Error ? err.message : String(err) });
         Sentry.captureException(err, { tags: { flow: "reaction_thumbsup" } });
@@ -539,54 +618,109 @@ export async function POST(request: NextRequest) {
   // ── Handle 👎 reaction → ask for correction, save negative feedback ─
   if (event.type === "reaction_added" && event.reaction === "-1") {
     const item = event.item;
-    if (item?.type !== "message") return NextResponse.json({ ok: true });
-
-    const channel: string = item.channel;
-    const messageTs: string = item.ts;
-    rlog("reaction_thumbsdown", { channel, messageTs });
+    const channel: string = item?.channel;
+    const messageTs: string = item?.ts;
+    rlog("reaction_received", {
+      reaction: "-1",
+      reactingUser: event.user,
+      targetTs: messageTs,
+      channel,
+    });
+    if (item?.type !== "message") {
+      rlog("reaction_skipped", {
+        reaction: "-1",
+        reason: "non_message_item",
+        targetTs: messageTs,
+        channel,
+      });
+      return NextResponse.json({ ok: true });
+    }
 
     after(async () => {
       try {
         const botId = await getBotUserId();
-        if (botId && event.user === botId) return;
+        if (botId && event.user === botId) {
+          rlog("reaction_skipped", { reaction: "-1", reason: "bot_own_reaction", targetTs: messageTs, channel });
+          return;
+        }
 
         const msg = await fetchMessage(channel, messageTs);
-        if (!msg || msg.user !== botId) return;
+        if (!msg || msg.user !== botId) {
+          rlog("reaction_skipped", { reaction: "-1", reason: "target_not_bot_message", targetTs: messageTs, channel });
+          return;
+        }
 
         const context = await getQAContext(channel, messageTs);
-        if (!context) return;
+        if (!context) {
+          rlog("reaction_skipped", { reaction: "-1", reason: "no_qa_context", targetTs: messageTs, channel });
+          return;
+        }
 
         const threadTs = msg.thread_ts || messageTs;
 
-        // Flag possibly related KB entries and docs (don't auto-remove)
+        // Flag possibly related KB entries and docs (don't auto-remove).
         const kbEntries = await getAllKnowledge();
         const actions = buildCorrectionActions(context.references, kbEntries);
-        rlog("feedback_negative", { kbFlagged: actions.kbEntriesToFlag.length, docsFlagged: actions.docsToProposeFix.length });
+
+        await saveFeedback({
+          type: "negative",
+          question: context.question,
+          detail: `👎 for: "${context.question.slice(0, 80)}" — flagged KB entries: ${actions.kbEntriesToFlag.length}, docs: ${actions.docsToProposeFix.length}`,
+          timestamp: new Date().toISOString().split("T")[0],
+        });
+        rlog("feedback_saved", {
+          type: "negative",
+          answerTs: context.answerTs,
+          chunkIndex: context.chunkIndex,
+          chunkCount: context.chunkCount,
+          latencyMs: Date.now() - context.postedAt,
+          referenceCount: context.references.length,
+          referenceTypes: context.referenceTypes,
+          questionLength: context.question.length,
+          answerLength: context.answer.length,
+          questionSample: context.question.slice(0, 80),
+        });
 
         const notes: string[] = [];
-
         if (actions.kbEntriesToFlag.length > 0) {
           notes.push("*Possibly related KB entries* (reply to confirm removal):");
           for (const entry of actions.kbEntriesToFlag) {
             notes.push(`  • _"${entry.entry}"_`);
           }
         }
-
         if (actions.docsToProposeFix.length > 0) {
           const docList = actions.docsToProposeFix.map((d) => `\`${d}\``).join(", ");
           notes.push(`*Docs referenced:* ${docList}`);
         }
-
         const flagText = notes.length > 0 ? `\n\n${notes.join("\n")}` : "";
 
-        // Store pending correction state so the next reply is saved as a KB correction
+        // Store pending correction state so the next reply is saved as a
+        // KB correction. Include a `pendingAt` timestamp so the
+        // correction_saved event can compute timeSincePendingMs when the
+        // user replies (closes the 👎 funnel).
         const pendingKey = `pending-correction:${channel}:${threadTs}`;
+        const pendingAt = Date.now();
+        const ttlSec = 86400;
         const { kv } = await import("@vercel/kv");
-        await kv.set(pendingKey, JSON.stringify({
-          question: context.question,
-          references: context.references,
-          flaggedKB: actions.kbEntriesToFlag.map((e) => e.entry),
-        }), { ex: 86400 }); // 24h TTL
+        await kv.set(
+          pendingKey,
+          JSON.stringify({
+            question: context.question,
+            references: context.references,
+            flaggedKB: actions.kbEntriesToFlag.map((e) => e.entry),
+            pendingAt,
+            answerTs: context.answerTs,
+          }),
+          { ex: ttlSec },
+        );
+        rlog("correction_pending", {
+          channel,
+          threadTs,
+          answerTs: context.answerTs,
+          flaggedKBCount: actions.kbEntriesToFlag.length,
+          flaggedDocCount: actions.docsToProposeFix.length,
+          ttlSec,
+        });
 
         await replyInThread(
           channel,
