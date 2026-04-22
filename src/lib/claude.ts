@@ -37,16 +37,18 @@ export const RECENCY_WINDOW_DAYS = 30;
 // Target character budget for the agent's TEXT answer alone. Composed
 // messages also carry references + optional issue proposal body +
 // optional reply footer; all of that must fit under Slack's 40K hard
-// cap. Math: 20K answer + ~3K refs + ~8K proposal (worst case) + 100
-// footer = ~31K, comfortable under 40K. 20K gives the agent room for
-// structured answers on comparative / analytical questions without
-// encouraging novel-length essays (other prompt guidance — "15 lines
-// typical", "brevity" — steers the common case short).
-export const ANSWER_BUDGET_CHARS = 20_000;
+// Primary lever against msg_too_long: keep any single Slack post well
+// below the 40K limit. 3,000 chars reads as ~60 lines — a scannable
+// Slack answer. Longer answers are split into multiple thread replies
+// by `postReplyInChunks` (see src/lib/slack.ts). The prompt tells the
+// model this happens so it prefers concision over relying on the splitter.
+// See #112.
+export const ANSWER_BUDGET_CHARS = 3_000;
 // Target character budget for an issue proposal body when the agent
-// uses `create_issue`. Title + goal + acceptance criteria + context +
-// 1-2 key files comfortably fit. Not a tight cap.
-export const ISSUE_PROPOSAL_BODY_BUDGET_CHARS = 8_000;
+// uses `create_issue`. Title + goal + acceptance criteria + 1-2 key
+// file paths fit comfortably. Tighter than before (#112) to keep the
+// combined answer+proposal body compact.
+export const ISSUE_PROPOSAL_BODY_BUDGET_CHARS = 4_000;
 
 // Hard cap on any single tool_result before it is appended to the agent's
 // messages array. Prevents broad research prompts (list_issues, list_prs,
@@ -345,9 +347,9 @@ Prefer a single result-focused reply after tool work completes. Don't pre-announ
 - Be direct and technical — this is an engineering team.
 - If the user wants more detail, they'll ask a follow-up.
 
-*Slack message budget — hard limit:*
-- Slack caps a single message at **40,000 characters**. Your answer, plus the reference footer, plus (when applicable) an issue proposal body, are composed into ONE Slack message. If the total exceeds 40K, Slack rejects it and the user sees an error — not your answer.
-- Keep your answer text itself under **~${ANSWER_BUDGET_CHARS.toLocaleString()} characters** (≈150 lines). Comparative or "summarize our X" questions are NOT an exception — condense aggressively.
+*Slack message budget — target one compact reply:*
+- Target **~${ANSWER_BUDGET_CHARS.toLocaleString()} characters** (≈60 lines) for your answer. Comparative or "summarize our X" questions are NOT an exception — condense aggressively.
+- Answers longer than the budget WILL be split across multiple thread replies automatically. That works, but a user absorbs one compact post much better than three long ones. Prefer concision.
 - When you'd want to go long: DON'T. Summarize the 3–5 key points, then point the user at specific files/PRs/issues via references. They can ask a narrower follow-up for detail on any one of them.
 - DO NOT quote or paraphrase tool results verbatim. Don't inline whole files. Don't write an essay comparing two systems when a bulleted contrast list + references will do.
 - When using \`create_issue\`, keep the proposal body under **~${ISSUE_PROPOSAL_BODY_BUDGET_CHARS.toLocaleString()} characters**: title, clear goal, 3–6 acceptance-criteria bullets, and the 1–2 most relevant file paths. Don't paste context dumps.

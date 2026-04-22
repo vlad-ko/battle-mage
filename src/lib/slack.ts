@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { WebClient } from "@slack/web-api";
+import { splitSlackReplyText } from "./split-reply";
 
 // ── Slack client ──────────────────────────────────────────────────────
 const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
@@ -42,62 +43,40 @@ export function verifySlackSignature(
   return crypto.timingSafeEqual(expectedBuf, signatureBuf);
 }
 
-// ── Slack message length guard (safety net) ──────────────────────────
-// Slack's `chat.postMessage` / `chat.update` cap `text` at 40,000 —
-// measured in BYTES, not characters (the docs say "characters" but
-// empirical behavior on msg_too_long rejects aligns with byte count).
-// Unicode content blows this up fast: em-dash `—` = 3 bytes, emoji = 4,
-// divider `─` = 3. A 39K-char answer with moderate unicode density
-// easily crosses 42-45K BYTES, which Slack refuses.
+// ── Slack message length guard (fail-loud boundary) ──────────────────
+// Slack rejects `chat.postMessage` / `chat.update` calls whose `text`
+// exceeds 40,000 with `msg_too_long`. The primary defense against that
+// is the splitter (src/lib/split-reply.ts) which chops long answers
+// into multiple thread posts, each well under the limit. This guard
+// is the last line of defense: if anything ever reaches the wire
+// oversized, we throw so Sentry gets a loud stack with our own frame
+// (rather than a minified Slack SDK frame) and the user sees a clear
+// error rather than silently losing part of their answer.
 //
-// First shipped a char-based cap in #110 — still saw msg_too_long on
-// unicode-heavy answers. Moving to byte-based cap here. See #108.
-//
-// PRIMARY fix for oversized replies still lives in the prompt
-// (ANSWER_BUDGET_CHARS in claude.ts — 20K char target). This function
-// is a last-line-of-defense safety net; when it fires, that's a signal
-// the prompt guidance needs tuning for a class of question.
-export const SLACK_MESSAGE_BYTE_CAP = 36_000;
+// See #112 for the architectural rationale.
+export const SLACK_MESSAGE_CHAR_LIMIT = 40_000;
 
-const TRUNCATION_NOTE =
-  "\n\n_…(answer cut off to fit Slack's message size limit — ask a narrower follow-up for detail on any specific area.)_";
-
-const textEncoder = new TextEncoder();
-// `fatal: false` so a mid-multi-byte-char cut at the budget boundary is
-// gracefully replaced with U+FFFD rather than throwing. `ignoreBOM: true`
-// because Slack messages never need a BOM.
-const textDecoder = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true });
+export class SlackMessageOversizeError extends Error {
+  constructor(action: string, length: number) {
+    super(
+      `${action} text is ${length} chars, exceeds Slack's ${SLACK_MESSAGE_CHAR_LIMIT}-char limit — splitter bug`,
+    );
+    this.name = "SlackMessageOversizeError";
+  }
+}
 
 /**
- * Cap a Slack message body at `SLACK_MESSAGE_BYTE_CAP` BYTES (UTF-8).
- * Short messages pass through unchanged; oversized ones are sliced at
- * a byte-aligned boundary with the partial multi-byte sequence at the
- * cut handled by TextDecoder's replacement behavior, then the
- * truncation note is appended. Result's byte length is guaranteed
- * ≤ SLACK_MESSAGE_BYTE_CAP (the note's bytes are reserved in the
- * initial budget).
+ * Throws SlackMessageOversizeError if `text` would trip Slack's
+ * msg_too_long. The splitter is expected to keep us well under this
+ * bound — anything reaching the guard oversized is a bug worth surfacing.
  *
  * Pure function; no I/O.
  */
-export function capSlackMessage(text: string): string {
-  const textBytes = textEncoder.encode(text);
-  if (textBytes.length <= SLACK_MESSAGE_BYTE_CAP) return text;
-
-  const noteBytes = textEncoder.encode(TRUNCATION_NOTE).length;
-  // When the slice lands inside a multi-byte char, TextDecoder substitutes
-  // U+FFFD (3 UTF-8 bytes) for the partial sequence. That can make the
-  // re-encoded result 2–3 bytes larger than the byte slice itself, so we
-  // pre-reserve 3 bytes for that overhead.
-  const REPLACEMENT_OVERHEAD = 3;
-  const budget = SLACK_MESSAGE_BYTE_CAP - noteBytes - REPLACEMENT_OVERHEAD;
-  let head = textDecoder.decode(textBytes.slice(0, budget));
-  // Defensive trim: in case a pathological input still spills past the cap
-  // (e.g. grapheme clusters across multiple code points), shave chars until
-  // we fit. Finite loop bounded by head.length.
-  while (textEncoder.encode(head + TRUNCATION_NOTE).length > SLACK_MESSAGE_BYTE_CAP) {
-    head = head.slice(0, -1);
+export function requireSlackMessageText(text: string, action: string): string {
+  if (text.length > SLACK_MESSAGE_CHAR_LIMIT) {
+    throw new SlackMessageOversizeError(action, text.length);
   }
-  return head + TRUNCATION_NOTE;
+  return text;
 }
 
 // ── Thread reply helper ───────────────────────────────────────────────
@@ -109,7 +88,7 @@ export async function replyInThread(
   const result = await slack.chat.postMessage({
     channel,
     thread_ts: threadTs,
-    text: capSlackMessage(text),
+    text: requireSlackMessageText(text, "chat.postMessage"),
   });
   return result.ts; // message timestamp — used to track Q&A context for feedback
 }
@@ -120,7 +99,55 @@ export async function updateMessage(
   ts: string,
   text: string,
 ): Promise<void> {
-  await slack.chat.update({ channel, ts, text: capSlackMessage(text) });
+  await slack.chat.update({
+    channel,
+    ts,
+    text: requireSlackMessageText(text, "chat.update"),
+  });
+}
+
+// ── Multi-post delivery (splits long bodies into N thread replies) ───
+// Primary entry point for any final-answer post. Splits `text` into
+// chunks via `splitSlackReplyText`; edits the thinking message with
+// chunk 0 (if `thinkingTs` given) or posts it fresh, then posts the
+// remaining chunks as new thread replies. Returns the TS of chunk 0
+// (for Q&A-context storage).
+//
+// Short answers (the common case) produce one chunk → same UX as before.
+// Long answers produce 2-4 chunks → still one logical answer, split at
+// paragraph boundaries with a "[continued ↓]" hint on intermediate posts.
+export interface PostReplyInChunksInput {
+  channel: string;
+  threadTs: string;
+  thinkingTs?: string;
+  text: string;
+}
+
+export async function postReplyInChunks(
+  input: PostReplyInChunksInput,
+): Promise<{ firstTs: string | undefined; chunks: number }> {
+  const chunks = splitSlackReplyText(input.text);
+  if (chunks.length === 0) {
+    return { firstTs: undefined, chunks: 0 };
+  }
+
+  const first = chunks[0] ?? "";
+  let firstTs: string | undefined;
+  if (input.thinkingTs) {
+    // Edit the thinking message in place — it becomes the first chunk.
+    await updateMessage(input.channel, input.thinkingTs, first);
+    firstTs = input.thinkingTs;
+  } else {
+    firstTs = await replyInThread(input.channel, input.threadTs, first);
+  }
+
+  // Remaining chunks post as fresh thread replies in order.
+  for (let i = 1; i < chunks.length; i++) {
+    const chunk = chunks[i] ?? "";
+    await replyInThread(input.channel, input.threadTs, chunk);
+  }
+
+  return { firstTs, chunks: chunks.length };
 }
 
 // ── Delete a message ──────────────────────────────────────────────────

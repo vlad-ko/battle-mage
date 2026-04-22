@@ -198,18 +198,16 @@ describe("assembleSystemPrompt", () => {
     });
   });
 
-  describe("Slack message budget (output contract, #110)", () => {
-    // Primary guard against msg_too_long is prompt-level: tell the model
-    // about Slack's 40K-char ceiling and give it a conservative answer
-    // budget. The slack.ts cap is a rare safety net; these tests pin
-    // the prompt guidance so a future refactor can't silently weaken it.
+  describe("Slack message budget (output contract, #112)", () => {
+    // Primary lever against msg_too_long is prompt-level: tell the model
+    // to prefer one compact reply, and warn that longer answers WILL be
+    // split. The splitter + fail-loud boundary guard (see slack.ts,
+    // split-reply.ts) back-stop anything the prompt doesn't catch. These
+    // tests pin the guidance so a future refactor can't silently weaken it.
 
-    it("tells the model about Slack's 40,000-char message ceiling", () => {
+    it("tells the model that oversized answers will be split into multiple replies", () => {
       const prompt = assembleSystemPrompt(baseArgs);
-      expect(prompt).toContain("40,000");
-      // Must frame it as something that causes the user to see an error,
-      // not just a soft guideline.
-      expect(prompt).toMatch(/reject|error/i);
+      expect(prompt).toMatch(/split.*multiple|multiple.*replies|continued/i);
     });
 
     it("states an explicit char budget for the answer itself", () => {
