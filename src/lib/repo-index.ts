@@ -1,4 +1,4 @@
-import { kv } from "@vercel/kv";
+import { kv } from "./kv";
 import { log } from "@/lib/logger";
 import {
   type BattleMageConfig,

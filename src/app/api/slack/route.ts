@@ -284,7 +284,7 @@ export async function POST(request: NextRequest) {
       let thinkTs: string | undefined;
       try {
         // Check for pending correction (from a 👎 reaction)
-        const { kv } = await import("@vercel/kv");
+        const { kv } = await import("@/lib/kv");
         const pendingKey = `pending-correction:${channel}:${threadTs}`;
         const pendingRaw = await kv.get<string>(pendingKey);
         if (pendingRaw) {
@@ -701,7 +701,7 @@ export async function POST(request: NextRequest) {
         const pendingKey = `pending-correction:${channel}:${threadTs}`;
         const pendingAt = Date.now();
         const ttlSec = 86400;
-        const { kv } = await import("@vercel/kv");
+        const { kv } = await import("@/lib/kv");
         await kv.set(
           pendingKey,
           JSON.stringify({

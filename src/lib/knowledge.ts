@@ -1,4 +1,4 @@
-import { kv } from "@vercel/kv";
+import { kv } from "./kv";
 
 /**
  * Knowledge Base — Vercel KV storage
