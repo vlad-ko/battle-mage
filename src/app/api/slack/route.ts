@@ -18,11 +18,8 @@ import { formatReferences, rankReferences } from "@/lib/references";
 import { getAllKnowledge } from "@/lib/knowledge";
 import { buildCorrectionActions } from "@/lib/auto-correct";
 import { toSlackMrkdwn } from "@/lib/mrkdwn";
-
-// Initial acknowledgment posted as the thinking message. One-shot per
-// turn — under the minimize-API-calls model (#108) this is the first
-// of exactly two Slack calls per turn (ack + final answer).
-const THINKING_HEADER = "🧠 Battle Mage is working... _(this may take a minute, go grab some tea)_";
+import { buildThinkingMessage, THINKING_HEADER } from "@/lib/progress";
+import { createThrottledUpdater } from "@/lib/slack-throttle";
 import { formatReplyFooter, isReplyFooterEnabled } from "@/lib/reply-footer";
 import {
   extractParticipantIds,
@@ -137,18 +134,30 @@ export async function POST(request: NextRequest) {
           rlog("topic_hints_injected", { topics: topicMatches.map((m) => m.topic), fileCount: topicMatches.reduce((s, m) => s + m.paths.length, 0) });
         }
 
-        // Minimize Slack API calls per turn to 2: one "Thinking…" on ack
-        // (posted above via replyInThread → thinkingTs) and one final
-        // updateMessage below with the answer. No mid-flight progress
-        // updates, no streaming text deltas — see #108 for the rationale.
-        // The agent_tool_call events still fire to Sentry via the agent
-        // loop's logger, so per-round observability is unaffected.
+        // Tool-progress updater. Per #110 review: the streaming flood
+        // from #109 was character-level text deltas, NOT tool-progress
+        // messages. Tool progress at ~1 call per tool round (debounced
+        // to coalesce parallel bursts) is 5-7 calls per turn — well
+        // under Slack's 30/min Tier 2 limit and genuinely informative
+        // for the user. Re-introducing it WITHOUT streaming.
+        const progressThrottle = createThrottledUpdater(async (text) => {
+          if (thinkingTs) {
+            await updateMessage(channel, thinkingTs, text);
+          }
+        }, 1200);
+
         const result = await runAgent(
           augmentedMessage,
           mentionHistory,
           rlog,
           mentionParticipants,
+          (toolName, input) => {
+            progressThrottle.update(buildThinkingMessage(toolName, input));
+          },
         );
+        // Drain any pending progress update before the final write so a
+        // stale progress message can't land on top of the final answer.
+        await progressThrottle.flush();
         // `agent_complete` is already emitted by runAgent with rounds,
         // token usage, and cache metrics — don't duplicate at route level.
 
@@ -321,15 +330,24 @@ export async function POST(request: NextRequest) {
         const followupMatches = matchTopicsToQuestion(cleanMessage, followupTopics);
         const followupMessage = buildQuestionHints(cleanMessage, followupMatches);
 
-        // Minimize Slack API calls per turn — see mention flow above
-        // and #108 for full rationale. Single "Thinking…" post above +
-        // single final updateMessage below; nothing in between.
+        // Mirror of the mention-flow progress updater — see comment
+        // there + #110 for rationale.
+        const followupProgress = createThrottledUpdater(async (text) => {
+          if (thinkTs) {
+            await updateMessage(channel, thinkTs, text);
+          }
+        }, 1200);
+
         const result = await runAgent(
           followupMessage,
           history,
           rlog,
           followupParticipants,
+          (toolName, input) => {
+            followupProgress.update(buildThinkingMessage(toolName, input));
+          },
         );
+        await followupProgress.flush();
 
         const text = toSlackMrkdwn(result.text);
         const rankedRefs = rankReferences(result.references, result.text);

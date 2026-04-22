@@ -37,13 +37,16 @@ export const RECENCY_WINDOW_DAYS = 30;
 // Target character budget for the agent's TEXT answer alone. Composed
 // messages also carry references + optional issue proposal body +
 // optional reply footer; all of that must fit under Slack's 40K hard
-// cap. Telling the model "~6000 chars for the answer" leaves comfortable
-// room for the other components. See `buildOutputContractSection`.
-export const ANSWER_BUDGET_CHARS = 6_000;
+// cap. Math: 20K answer + ~3K refs + ~8K proposal (worst case) + 100
+// footer = ~31K, comfortable under 40K. 20K gives the agent room for
+// structured answers on comparative / analytical questions without
+// encouraging novel-length essays (other prompt guidance — "15 lines
+// typical", "brevity" — steers the common case short).
+export const ANSWER_BUDGET_CHARS = 20_000;
 // Target character budget for an issue proposal body when the agent
-// uses `create_issue`. A focused issue doesn't need 15K chars — title
-// + goal + acceptance criteria + the 1–2 key files is enough.
-export const ISSUE_PROPOSAL_BODY_BUDGET_CHARS = 5_000;
+// uses `create_issue`. Title + goal + acceptance criteria + context +
+// 1-2 key files comfortably fit. Not a tight cap.
+export const ISSUE_PROPOSAL_BODY_BUDGET_CHARS = 8_000;
 
 // Hard cap on any single tool_result before it is appended to the agent's
 // messages array. Prevents broad research prompts (list_issues, list_prs,
@@ -489,6 +492,18 @@ export interface ConversationTurn {
   content: string;
 }
 
+/**
+ * Progress callback invoked once per tool_use block, before the tool
+ * executes. The route passes a throttled Slack updater that renders
+ * "🔍 Searching for X…" / "📖 Reading foo.ts…" style status messages.
+ * Fire-and-forget at the callsite; errors are swallowed inside the
+ * dispatcher so a flaky UX hook can't break agent execution.
+ */
+export type ProgressCallback = (
+  toolName: string,
+  input: Record<string, unknown>,
+) => void | Promise<void>;
+
 // Non-streaming Anthropic call. Previously used `messages.stream` +
 // `finalMessage()` to enable live text-delta forwarding to Slack. With
 // the API-minimization refactor (#108) we no longer stream text to
@@ -511,6 +526,7 @@ export async function runAgent(
   conversationHistory?: ConversationTurn[],
   rlog?: LogFn,
   participants?: Participant[],
+  onProgress?: ProgressCallback,
 ): Promise<AgentResult> {
   // Use request-scoped logger if provided, fall back to bare log. Typed
   // as LogFn because runAgent itself only calls the logger (the route
@@ -689,7 +705,7 @@ export async function runAgent(
     // with no cost impact. See #77.
     const parallelOutcome = await executeToolsInParallel(
       toolUseBlocks.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use"),
-      { round, log: _log },
+      { round, log: _log, onProgress },
     );
     const toolResults: Anthropic.ToolResultBlockParam[] = parallelOutcome.toolResults;
     allReferences.push(...parallelOutcome.references);
@@ -761,6 +777,12 @@ export async function runAgent(
 export interface ParallelToolsContext {
   round: number;
   log: LogFn;
+  /**
+   * UX hook fired once per tool_use block (fire-and-forget, errors
+   * swallowed). The route uses this to push debounced progress
+   * messages into the thinking message. See #110.
+   */
+  onProgress?: ProgressCallback;
   executor?: (name: string, input: Record<string, unknown>) => Promise<ToolResult>;
 }
 
@@ -778,9 +800,9 @@ export async function executeToolsInParallel(
 
   // Fire all tools concurrently. Each task emits its agent_tool_call log
   // synchronously at the top (so the full set of intended calls is
-  // visible in Sentry before any tool finishes), then awaits its
-  // executor. With the API-minimization refactor (#108) there's no UI
-  // progress callback to coordinate with; Sentry is the sole observer.
+  // visible in Sentry before any tool finishes), invokes the UX progress
+  // hook if present (fire-and-forget — a flaky updater cannot serialize
+  // tool dispatch), then awaits its executor.
   const outcomes = await Promise.all(
     blocks.map(async (block) => {
       ctx.log("agent_tool_call", {
@@ -788,6 +810,13 @@ export async function executeToolsInParallel(
         round: ctx.round,
         input: JSON.stringify(block.input).slice(0, 200),
       });
+      if (ctx.onProgress) {
+        Promise.resolve()
+          .then(() => ctx.onProgress!(block.name, block.input as Record<string, unknown>))
+          .catch(() => {
+            // Progress is UX-only; swallow to protect the agent loop.
+          });
+      }
       try {
         const result = await exec(block.name, block.input as Record<string, unknown>);
         return { block, result, error: null as string | null };
