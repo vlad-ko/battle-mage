@@ -32,7 +32,7 @@ npm run dev                  # http://localhost:3000
 
 4. **Verify before asserting** — The agent uses GitHub tools to check that files, methods, and classes actually exist before referencing them. No hallucinated code references.
 
-5. **Issue creation requires confirmation** — The agent can propose a GitHub issue but NEVER creates one without explicit ✅ reaction approval in Slack.
+5. **Issue creation requires confirmation** — The agent can propose one or many GitHub issues in a single turn but NEVER creates any without explicit approval. Approval is either a ✅ reaction on the proposal message or a short thread reply like "confirm all" / "yes". See `docs/features/issue-creation.md`.
 
 6. **Thread follow-ups** — Once the bot is participating in a thread, users can send follow-up messages without re-mentioning. The bot checks for its own prior replies before responding.
 
@@ -49,6 +49,7 @@ src/
     github.ts             — Octokit client (search, read, issues, PRs, commits, tree)
     knowledge.ts          — Knowledge base (Vercel KV sorted set)
     feedback.ts           — Feedback storage (Vercel KV) and Q&A context
+    issue-batch.ts        — Pure helpers for multi-proposal formatting and bulk-confirm matching
     config.ts             — .battle-mage.json loader (path annotations with graduated trust)
     repo-index.ts         — Repository topic index (lazy rebuild on SHA change)
     auto-correct.ts       — Stale KB entry detection and doc reference flagging
@@ -80,6 +81,7 @@ docs/
     auto-correction.md    — Auto-correction on 👎 reactions
     progress-ux.md        — Live progress updates (emoji + status)
     message-splitting.md  — Long-reply chunking architecture (split-reply + boundary guard)
+    issue-creation.md     — Batch issue proposals + bulk-confirm flow
 ```
 
 ## Testing (TDD Required)

@@ -225,6 +225,7 @@ function buildCorePrinciplesSection(): string {
 2. *Cite specifically* — When referencing code, include the file path and line numbers. Link to GitHub when possible.
 3. *Thread-only* — You are responding in a Slack thread. Keep answers concise but thorough.
 4. *Issue creation requires confirmation* — If asked to create a GitHub issue, propose it with title, body, and labels. The user must explicitly confirm before it is created.
+5. *Batch proposals* — When the user asks for multiple issues at once (e.g. "file bugs for X, Y, Z" or "create all these as separate issues"), call \`create_issue\` once for each proposed issue in the SAME turn. All proposals will be shown together and approved with a single :white_check_mark: reaction or by the user saying "confirm all" in the thread. Do not file them one at a time across multiple turns.
 </core-principles>`;
 }
 
@@ -485,7 +486,15 @@ async function buildSystemBlocks(
 
 export interface AgentResult {
   text: string;
-  issueProposal?: IssueProposal;
+  /**
+   * Issue proposals collected during this turn. Always an array — empty
+   * when no `create_issue` tool was used. Length >= 2 means the agent
+   * proposed a batch, which the Slack route renders as a compact
+   * numbered list gated behind a single bulk confirmation. Order
+   * matches the order of `create_issue` tool_use blocks in the
+   * model's response. See #122.
+   */
+  issueProposals: IssueProposal[];
   references: Reference[];
   /**
    * Per-turn telemetry snapshot: duration, token usage, cache reads,
@@ -556,7 +565,7 @@ export async function runAgent(
     { role: "user", content: userMessage },
   ];
 
-  let issueProposal: IssueProposal | undefined;
+  const issueProposals: IssueProposal[] = [];
   const allReferences: Reference[] = [];
   const startTime = Date.now();
   const { blocks: systemBlocks, feedbackMeta } = await buildSystemBlocks(participants);
@@ -603,7 +612,7 @@ export async function runAgent(
       });
       return {
         text: "I've been working on this for a while and want to give you what I have so far rather than keep you waiting. Here's my answer based on what I've found:\n\n_I ran out of time before completing a thorough analysis. Ask a follow-up question if you need more detail on a specific area._",
-        issueProposal,
+        issueProposals,
         references: finalRefs,
         metrics: buildMetrics(round),
       };
@@ -634,7 +643,7 @@ export async function runAgent(
       });
       return {
         text: userErrorMessage(errInfo),
-        issueProposal,
+        issueProposals,
         references: [],
         metrics: buildMetrics(round),
       };
@@ -662,7 +671,7 @@ export async function runAgent(
       _log("agent_complete", {
         rounds: round + 1,
         refCount: allReferences.length,
-        hasProposal: !!issueProposal,
+        proposalCount: issueProposals.length,
         duration_ms: Date.now() - startTime,
         input_tokens: totalInput,
         output_tokens: totalOutput,
@@ -670,7 +679,7 @@ export async function runAgent(
         cache_creation_tokens: totalCacheCreation,
         model: MODEL,
       });
-      return { text, issueProposal, references: dedupeRefs(), metrics: buildMetrics(round + 1) };
+      return { text, issueProposals, references: dedupeRefs(), metrics: buildMetrics(round + 1) };
     }
 
     // Process tool calls
@@ -687,7 +696,7 @@ export async function runAgent(
       }).join("\n");
       return {
         text: text || "I wasn't able to process that request.",
-        issueProposal,
+        issueProposals,
         references: dedupeRefs(),
         metrics: buildMetrics(round + 1),
       };
@@ -704,7 +713,7 @@ export async function runAgent(
         text:
           text ||
           "I gathered a lot of context while researching this. Here's what I've found so far — please ask a narrower follow-up if you need more detail on a specific area.",
-        issueProposal,
+        issueProposals,
         references: dedupeRefs(),
         metrics: buildMetrics(round + 1),
       };
@@ -723,9 +732,9 @@ export async function runAgent(
     );
     const toolResults: Anthropic.ToolResultBlockParam[] = parallelOutcome.toolResults;
     allReferences.push(...parallelOutcome.references);
-    if (parallelOutcome.issueProposal) {
-      issueProposal = parallelOutcome.issueProposal;
-    }
+    // Accumulate across rounds — an agent that spends multiple rounds
+    // proposing issues (rare but possible) still yields a full batch.
+    issueProposals.push(...parallelOutcome.issueProposals);
 
     // Inject time budget warning by appending to the last tool result.
     // Re-run truncateToolResult on the combined string so the cap stays
@@ -772,7 +781,7 @@ export async function runAgent(
   });
   return {
     text: "I hit the maximum number of tool calls for this request. Here's what I found so far — please ask a more specific question if you need more detail.",
-    issueProposal,
+    issueProposals,
     references: finalRefs,
     metrics: buildMetrics(MAX_TOOL_ROUNDS),
   };
@@ -803,7 +812,12 @@ export interface ParallelToolsContext {
 export interface ParallelToolsResult {
   toolResults: Anthropic.ToolResultBlockParam[];
   references: Reference[];
-  issueProposal?: IssueProposal;
+  /**
+   * Every `create_issue` tool_use in this turn yields one proposal.
+   * Order matches the input `blocks` order (i.e. the order Claude
+   * emitted them). See #122 for the bulk-creation flow.
+   */
+  issueProposals: IssueProposal[];
 }
 
 export async function executeToolsInParallel(
@@ -846,12 +860,14 @@ export async function executeToolsInParallel(
 
   const toolResults: Anthropic.ToolResultBlockParam[] = [];
   const references: Reference[] = [];
-  let issueProposal: IssueProposal | undefined;
+  const issueProposals: IssueProposal[] = [];
 
   // Iterate outcomes in original block order so toolResults matches the
   // input sequence. Anthropic's API correlates results to uses by
   // `tool_use_id`, so order isn't strictly required for correctness — but
   // deterministic order eases log readability and test assertions.
+  // For `create_issue` specifically, order IS observable: the UI numbers
+  // proposals 1..N based on this array.
   for (const { block, result, error } of outcomes) {
     if (error !== null) {
       toolResults.push({
@@ -867,7 +883,7 @@ export async function executeToolsInParallel(
       references.push(...r.references);
     }
     if (r.type === "issue_proposal") {
-      issueProposal = r.proposal;
+      issueProposals.push(r.proposal);
       toolResults.push({
         type: "tool_result",
         tool_use_id: block.id,
@@ -891,5 +907,5 @@ export async function executeToolsInParallel(
     }
   }
 
-  return { toolResults, references, issueProposal };
+  return { toolResults, references, issueProposals };
 }
