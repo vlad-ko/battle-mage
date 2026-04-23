@@ -63,12 +63,21 @@ interface PendingIssueBatch {
 
 const BATCH_KEY_PREFIX = "pending-issue-batch";
 const BATCH_TTL_SEC = 86400; // 24h — stale batches fall off naturally
+// Tombstone TTL: long enough to cover any plausible double-tap ✅ window
+// on a single-proposal message whose body still matches the legacy parser.
+// See PR #123 CodeRabbit finding — without this, a second reaction finds
+// the canonical record deleted, falls to parseProposalFromMessage, and
+// re-creates the issue.
+const BATCH_TOMBSTONE_TTL_SEC = 3600;
 
 function batchKey(channel: string, firstTs: string): string {
   return `${BATCH_KEY_PREFIX}:${channel}:${firstTs}`;
 }
 function batchThreadPointerKey(channel: string, threadTs: string): string {
   return `${BATCH_KEY_PREFIX}:thread:${channel}:${threadTs}`;
+}
+function batchTombstoneKey(channel: string, firstTs: string): string {
+  return `${BATCH_KEY_PREFIX}:done:${channel}:${firstTs}`;
 }
 
 /**
@@ -105,6 +114,20 @@ async function executeBatchCreation(
     // Another handler won the race between get and del.
     rlog("issue_batch_claim_lost", { channel, firstTs, confirmVia });
     return { claimed: false };
+  }
+
+  // Tombstone the claim so a second ✅ on the same message can't fall
+  // through to the legacy parser and re-create the issue. The legacy
+  // fallback checks this before parsing message text. 1h is enough for
+  // any plausible double-tap; long-lived record stays under the canonical
+  // 24h TTL of the original batch.
+  try {
+    await kv.set(batchTombstoneKey(channel, firstTs), 1, {
+      ex: BATCH_TOMBSTONE_TTL_SEC,
+    });
+  } catch {
+    // Non-fatal; Sentry already captured via the kv wrapper. Worst case
+    // a racing second reaction takes the legacy path.
   }
 
   // Best-effort cleanup of the thread pointer. We don't care if it was
@@ -695,6 +718,19 @@ export async function POST(request: NextRequest) {
           rlog,
         );
         if (outcome.claimed) return;
+
+        // Tombstone guard: a prior confirmation already claimed this
+        // message's batch. Without this check, a second ✅ on the same
+        // post-#122 single-proposal message would fall through to the
+        // legacy parser (body still inlined in the message text) and
+        // create the issue a second time. See CodeRabbit feedback on
+        // PR #123.
+        const { kv } = await import("@/lib/kv");
+        const tombstone = await kv.get(batchTombstoneKey(channel, messageTs));
+        if (tombstone) {
+          rlog("issue_batch_reaction_after_claim", { channel, messageTs });
+          return;
+        }
 
         // Legacy fallback: in-flight pre-#122 proposal messages whose
         // KV record expired (or never existed). Parse from message text

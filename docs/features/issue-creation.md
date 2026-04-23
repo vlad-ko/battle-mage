@@ -6,8 +6,10 @@ Battle Mage can propose GitHub issues and — on user confirmation — file them
 
 The agent uses the `create_issue` tool to propose an issue. A single turn can emit **one or many** proposals:
 
-- **Single proposal** — the familiar "Proposed Issue:" block with title, labels, and full body inlined. Approved by a :white_check_mark: reaction on the message.
-- **Batch proposal (N > 1)** — a compact numbered list of titles with inline labels, no inlined bodies. Approved by either a :white_check_mark: reaction on the message OR a short thread reply like "confirm all" / "yes" / "create all" / "go ahead" / "approve all".
+- **Single proposal** — the familiar "Proposed Issue:" block with title, labels, and full body inlined.
+- **Batch proposal (N > 1)** — a compact numbered list of titles with inline labels, no inlined bodies.
+
+**Both** cases persist a record in KV and accept the same two approval paths: a :white_check_mark: reaction on the proposal message, OR a short thread reply matched by `isBulkConfirmText` ("yes", "confirm", "confirm all", "create all", "go ahead", "approve all", etc.). The UX footer shown to users surfaces only the reaction path for N=1 to match the pre-#122 style, but the code path is identical to the N>1 case — any valid bulk-confirm phrase in the thread also works.
 
 Bodies are persisted in KV so the confirmation path can create issues without round-tripping the full body through Slack message text.
 
@@ -22,6 +24,7 @@ Bodies are persisted in KV so the confirmation path can create issues without ro
    - `pending-issue-batch:{channel}:{firstTs}` — the canonical record (proposals, timing, requester, thread)
    - `pending-issue-batch:thread:{channel}:{threadTs}` — pointer to `firstTs` for text-command lookup
    - Both with a 24 h TTL.
+   - On successful claim, a third key `pending-issue-batch:done:{channel}:{firstTs}` is written with a 1 h TTL as a tombstone. Any subsequent ✅ reaction on the same message checks this key and exits silently — without it, a double-tap would fall through to the legacy parser and re-create the issue (N=1 messages still have a body in their text).
 5. **User confirms** via one of:
    - :white_check_mark: reaction on the proposal message — reaction handler calls `executeBatchCreation`
    - `"confirm all"` (or synonym) in the thread — thread-followup handler calls `executeBatchCreation`
@@ -47,6 +50,7 @@ Lifecycle events (structured logs; same shape as `kv_op`):
 | `issue_batch_proposed` | After posting a proposal message | `count`, `sampleTitles`, `requestingUser`, `threadTs` |
 | `issue_batch_confirmed` | Claim succeeded | `count`, `confirmVia` (`"reaction"` \| `"text"`), `latencyMs` |
 | `issue_batch_claim_lost` | Claim raced another handler | `channel`, `firstTs`, `confirmVia` |
+| `issue_batch_reaction_after_claim` | ✅ arrived after a successful claim (tombstone hit) | `channel`, `messageTs` |
 | `issue_batch_created` | After all creations settle | `totalCount`, `successCount`, `failureCount`, `durationMs`, `numbers` |
 | `issue_create_error` | Per-issue failure | `title`, `errorClass`, `errorMessage` |
 
