@@ -908,7 +908,7 @@ describe("executeToolsInParallel", () => {
     expect(references.some((r) => r.url.endsWith("pull/42"))).toBe(true);
   });
 
-  it("propagates issue proposal from create_issue tool result", async () => {
+  it("propagates a single issue proposal from create_issue tool result", async () => {
     const executor = vi.fn(async (name: string) => {
       if (name === "create_issue") {
         return {
@@ -921,16 +921,69 @@ describe("executeToolsInParallel", () => {
 
     const blocks: FakeBlock[] = [makeBlock("t1", "create_issue")];
 
-    const { toolResults, issueProposal } = await executeToolsInParallel(blocks, {
+    const { toolResults, issueProposals } = await executeToolsInParallel(blocks, {
       round: 0,
       log: vi.fn(),
       executor,
     });
 
-    expect(issueProposal).toBeDefined();
-    expect(issueProposal?.title).toBe("Test Issue");
+    expect(issueProposals).toHaveLength(1);
+    expect(issueProposals[0].title).toBe("Test Issue");
     expect(String(toolResults[0].content)).toContain("Test Issue");
     expect(String(toolResults[0].content)).toContain("Awaiting user confirmation");
+  });
+
+  it("collects all proposals when create_issue is called multiple times in one turn", async () => {
+    // Bulk-creation flow (#122): the agent may emit N create_issue tool_use
+    // blocks in a single turn. Previously the last one overwrote earlier
+    // ones; now every proposal is captured, in original block order, so
+    // the batch-confirmation path can fire them in parallel on approval.
+    const executor = vi.fn(async (_name: string, input: Record<string, unknown>) => {
+      return {
+        type: "issue_proposal" as const,
+        proposal: {
+          title: input.title as string,
+          body: input.body as string,
+          labels: input.labels as string[] | undefined,
+        },
+      };
+    });
+
+    const blocks: FakeBlock[] = [
+      makeBlock("t1", "create_issue", { title: "fix: one", body: "b1" }),
+      makeBlock("t2", "create_issue", { title: "fix: two", body: "b2", labels: ["bug"] }),
+      makeBlock("t3", "create_issue", { title: "fix: three", body: "b3" }),
+    ];
+
+    const { issueProposals } = await executeToolsInParallel(blocks, {
+      round: 0,
+      log: vi.fn(),
+      executor,
+    });
+
+    expect(issueProposals).toHaveLength(3);
+    // Order must match the original block order — downstream UX numbers
+    // proposals 1..N based on this array.
+    expect(issueProposals.map((p) => p.title)).toEqual([
+      "fix: one",
+      "fix: two",
+      "fix: three",
+    ]);
+    expect(issueProposals[1].labels).toEqual(["bug"]);
+  });
+
+  it("returns an empty issueProposals array when no create_issue block is present", async () => {
+    const executor = vi.fn().mockResolvedValue({ type: "text", text: "ok" });
+    const blocks: FakeBlock[] = [makeBlock("t1", "read_file")];
+
+    const { issueProposals } = await executeToolsInParallel(blocks, {
+      round: 0,
+      log: vi.fn(),
+      executor,
+    });
+
+    // Always an array, never undefined — downstream can always iterate.
+    expect(issueProposals).toEqual([]);
   });
 
   it("truncates oversized tool results and logs the truncation", async () => {

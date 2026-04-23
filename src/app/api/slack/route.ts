@@ -13,7 +13,13 @@ import {
 } from "@/lib/slack";
 import { runAgent } from "@/lib/claude";
 import { createIssue } from "@/lib/github";
-import { parseProposalFromMessage } from "@/tools/create-issue";
+import { parseProposalFromMessage, type IssueProposal } from "@/tools/create-issue";
+import {
+  formatBatchProposalMessage,
+  isBulkConfirmText,
+  summarizeBatchResult,
+  type BatchCreationOutcome,
+} from "@/lib/issue-batch";
 import { storeQAContext, getQAContext, saveFeedback, deriveReferenceTypes } from "@/lib/feedback";
 import { formatReferences, rankReferences } from "@/lib/references";
 import { getAllKnowledge } from "@/lib/knowledge";
@@ -27,7 +33,7 @@ import {
   resolveParticipants,
   type Participant,
 } from "@/lib/slack-users";
-import { createRequestLogger, flushLogs } from "@/lib/logger";
+import { createRequestLogger, flushLogs, type RequestLogger } from "@/lib/logger";
 import { getCachedTopics } from "@/lib/repo-index";
 import { matchTopicsToQuestion, buildQuestionHints } from "@/lib/topic-match";
 import { isAddressedToOtherUser, buildConversationHistory } from "@/lib/thread-filter";
@@ -43,6 +49,125 @@ interface PendingCorrection {
   flaggedKB: string[];
   pendingAt: number;
   answerTs: string;
+}
+
+// Shape of the pending-issue-batch record stored after the bot posts a
+// proposal message. Indexed by the proposal message's first TS. See #122.
+interface PendingIssueBatch {
+  proposals: IssueProposal[];
+  proposedAt: number;
+  requestedBy: string; // Slack user ID of the requester
+  threadTs: string;
+  messageFirstTs: string; // ts of the first chunk of the proposal message
+}
+
+const BATCH_KEY_PREFIX = "pending-issue-batch";
+const BATCH_TTL_SEC = 86400; // 24h — stale batches fall off naturally
+
+function batchKey(channel: string, firstTs: string): string {
+  return `${BATCH_KEY_PREFIX}:${channel}:${firstTs}`;
+}
+function batchThreadPointerKey(channel: string, threadTs: string): string {
+  return `${BATCH_KEY_PREFIX}:thread:${channel}:${threadTs}`;
+}
+
+/**
+ * Atomically claim and execute a pending issue batch.
+ *
+ * Concurrency: the claim uses `kv.del` on the canonical key — Redis
+ * DEL is atomic, so only the first caller sees `deleted === 1`. Any
+ * racing handler (a second reaction, or a racing text command) sees
+ * `0` and aborts without firing GitHub writes.
+ *
+ * Per-issue failures do not abort the rest: we use Promise.allSettled
+ * and surface both creates and errors in the final summary.
+ */
+async function executeBatchCreation(
+  channel: string,
+  threadTs: string,
+  firstTs: string,
+  confirmingUser: string,
+  confirmVia: "reaction" | "text",
+  rlog: RequestLogger,
+): Promise<{ claimed: boolean }> {
+  const { kv } = await import("@/lib/kv");
+  const primaryKey = batchKey(channel, firstTs);
+
+  // Read the batch before claiming so we have the data to create issues
+  // if we win the del race.
+  const batch = await kv.get<PendingIssueBatch>(primaryKey);
+  if (!batch) {
+    return { claimed: false };
+  }
+
+  const deleted = await kv.del(primaryKey);
+  if (deleted === 0) {
+    // Another handler won the race between get and del.
+    rlog("issue_batch_claim_lost", { channel, firstTs, confirmVia });
+    return { claimed: false };
+  }
+
+  // Best-effort cleanup of the thread pointer. We don't care if it was
+  // already removed — TTL would catch it anyway.
+  try {
+    await kv.del(batchThreadPointerKey(channel, threadTs));
+  } catch {
+    // Non-fatal; Sentry already captured via the kv wrapper.
+  }
+
+  rlog("issue_batch_confirmed", {
+    count: batch.proposals.length,
+    confirmVia,
+    confirmingUser,
+    requestedBy: batch.requestedBy,
+    latencyMs: Date.now() - batch.proposedAt,
+    channel,
+    threadTs,
+  });
+
+  const createStart = Date.now();
+  const settled = await Promise.allSettled(
+    batch.proposals.map((p) => createIssue(p.title, p.body, p.labels)),
+  );
+
+  const outcomes: BatchCreationOutcome[] = settled.map((res, i) => {
+    const proposal = batch.proposals[i];
+    if (res.status === "fulfilled") {
+      return { status: "success", proposal, issue: res.value };
+    }
+    const errorMessage =
+      res.reason instanceof Error ? res.reason.message : String(res.reason);
+    // Per-issue Sentry capture so a rate-limit spike on one title doesn't
+    // hide under the summary event. Tagged for dashboard filtering.
+    Sentry.captureException(res.reason, {
+      tags: { flow: "issue_create", batchSize: String(batch.proposals.length) },
+      extra: { proposalTitle: proposal.title },
+    });
+    rlog("issue_create_error", {
+      title: proposal.title,
+      errorClass:
+        res.reason instanceof Error ? res.reason.constructor.name : "Unknown",
+      errorMessage: errorMessage.slice(0, 200),
+    });
+    return { status: "error", proposal, errorMessage };
+  });
+
+  const successCount = outcomes.filter((o) => o.status === "success").length;
+  const failureCount = outcomes.length - successCount;
+  rlog("issue_batch_created", {
+    totalCount: outcomes.length,
+    successCount,
+    failureCount,
+    durationMs: Date.now() - createStart,
+    numbers: outcomes
+      .filter((o) => o.status === "success")
+      .map((o) => (o as Extract<BatchCreationOutcome, { status: "success" }>).issue.number),
+    channel,
+    threadTs,
+  });
+
+  await replyInThread(channel, threadTs, summarizeBatchResult(outcomes));
+  return { claimed: true };
 }
 
 /**
@@ -184,22 +309,10 @@ export async function POST(request: NextRequest) {
           ? formatReplyFooter(result.metrics, rlog.requestId)
           : "";
 
-        if (result.issueProposal) {
-          const proposal = result.issueProposal;
-          const labelsText = proposal.labels?.length
-            ? `\nLabels: ${proposal.labels.join(", ")}`
-            : "";
-
-          const finalBody = [
-            text,
-            "",
-            "───────────────────",
-            `*Proposed Issue:* ${proposal.title}${labelsText}`,
-            "",
-            proposal.body,
-            "",
-            "React with :white_check_mark: to create this issue, or ignore to cancel.",
-          ].join("\n") + refsFooter + replyFooter;
+        if (result.issueProposals.length > 0) {
+          const proposals = result.issueProposals;
+          const proposalBlock = formatBatchProposalMessage(proposals);
+          const finalBody = [text, "", proposalBlock].join("\n") + refsFooter + replyFooter;
 
           const posted = await postReplyInChunks({
             channel,
@@ -210,7 +323,41 @@ export async function POST(request: NextRequest) {
           // Only mark as finalized when we actually posted. A 0-chunk
           // result (empty body) falls through to the finally cleanup.
           if (posted.chunks > 0) thinkingTs = undefined;
-          rlog("answer_posted", { channel, threadTs, chunks: posted.chunks, kind: "proposal" });
+
+          // Persist the batch so confirmation (reaction OR thread text)
+          // can create without re-parsing Slack message text. Key is the
+          // first chunk's ts; thread pointer enables "confirm all" text.
+          if (posted.firstTs) {
+            const { kv } = await import("@/lib/kv");
+            const record: PendingIssueBatch = {
+              proposals,
+              proposedAt: Date.now(),
+              requestedBy: event.user,
+              threadTs,
+              messageFirstTs: posted.firstTs,
+            };
+            await kv.set(batchKey(channel, posted.firstTs), record, { ex: BATCH_TTL_SEC });
+            await kv.set(
+              batchThreadPointerKey(channel, threadTs),
+              posted.firstTs,
+              { ex: BATCH_TTL_SEC },
+            );
+            rlog("issue_batch_proposed", {
+              count: proposals.length,
+              threadTs,
+              channel,
+              firstTs: posted.firstTs,
+              sampleTitles: proposals.slice(0, 3).map((p) => p.title.slice(0, 80)),
+              requestingUser: event.user,
+            });
+          }
+          rlog("answer_posted", {
+            channel,
+            threadTs,
+            chunks: posted.chunks,
+            kind: "proposal",
+            proposalCount: proposals.length,
+          });
         } else {
           const finalBody = text + refsFooter + replyFooter;
           const posted = await postReplyInChunks({
@@ -336,6 +483,31 @@ export async function POST(request: NextRequest) {
           return;
         }
 
+        // ── Bulk-confirm interception (#122) ────────────────────────────
+        // If there's a pending issue batch in this thread AND the user's
+        // reply is a bulk-confirm phrase ("confirm all", "yes", etc.),
+        // create all issues instead of running the agent. `isBulkConfirmText`
+        // is strict (short intent-only phrases) so normal conversation is
+        // unaffected.
+        if (isBulkConfirmText(userMessage)) {
+          const pointerKey = batchThreadPointerKey(channel, threadTs);
+          const batchFirstTs = await kv.get<string>(pointerKey);
+          if (batchFirstTs) {
+            const outcome = await executeBatchCreation(
+              channel,
+              threadTs,
+              batchFirstTs,
+              event.user,
+              "text",
+              rlog,
+            );
+            if (outcome.claimed) return;
+            // Not claimed → either the batch expired or another handler
+            // consumed it. Fall through to the normal agent flow so the
+            // user still gets a response.
+          }
+        }
+
         // Fetch thread messages — used for both participation check and context
         const bid = botId || (await getBotUserId());
         const threadMessages = await fetchThreadMessages(channel, threadTs);
@@ -393,22 +565,10 @@ export async function POST(request: NextRequest) {
           ? formatReplyFooter(result.metrics, rlog.requestId)
           : "";
 
-        if (result.issueProposal) {
-          const proposal = result.issueProposal;
-          const labelsText = proposal.labels?.length
-            ? `\nLabels: ${proposal.labels.join(", ")}`
-            : "";
-
-          const finalBody = [
-            text,
-            "",
-            "───────────────────",
-            `*Proposed Issue:* ${proposal.title}${labelsText}`,
-            "",
-            proposal.body,
-            "",
-            "React with :white_check_mark: to create this issue, or ignore to cancel.",
-          ].join("\n") + refsFooter + replyFooter;
+        if (result.issueProposals.length > 0) {
+          const proposals = result.issueProposals;
+          const proposalBlock = formatBatchProposalMessage(proposals);
+          const finalBody = [text, "", proposalBlock].join("\n") + refsFooter + replyFooter;
 
           const posted = await postReplyInChunks({
             channel,
@@ -417,7 +577,37 @@ export async function POST(request: NextRequest) {
             text: finalBody,
           });
           if (posted.chunks > 0) thinkTs = undefined;
-          rlog("answer_posted", { channel, threadTs, chunks: posted.chunks, kind: "proposal" });
+
+          if (posted.firstTs) {
+            const record: PendingIssueBatch = {
+              proposals,
+              proposedAt: Date.now(),
+              requestedBy: event.user,
+              threadTs,
+              messageFirstTs: posted.firstTs,
+            };
+            await kv.set(batchKey(channel, posted.firstTs), record, { ex: BATCH_TTL_SEC });
+            await kv.set(
+              batchThreadPointerKey(channel, threadTs),
+              posted.firstTs,
+              { ex: BATCH_TTL_SEC },
+            );
+            rlog("issue_batch_proposed", {
+              count: proposals.length,
+              threadTs,
+              channel,
+              firstTs: posted.firstTs,
+              sampleTitles: proposals.slice(0, 3).map((p) => p.title.slice(0, 80)),
+              requestingUser: event.user,
+            });
+          }
+          rlog("answer_posted", {
+            channel,
+            threadTs,
+            chunks: posted.chunks,
+            kind: "proposal",
+            proposalCount: proposals.length,
+          });
         } else {
           const finalBody = text + refsFooter + replyFooter;
           const posted = await postReplyInChunks({
@@ -492,21 +682,33 @@ export async function POST(request: NextRequest) {
         // Only act on our own messages (proposals posted by the bot)
         if (msg.user !== botId) return;
 
-        // Parse the proposal from the message text
+        const threadTs = msg.thread_ts || messageTs;
+
+        // Preferred path (#122): batch record in KV keyed by this message's
+        // ts. Handles 1-proposal AND N-proposal batches uniformly.
+        const outcome = await executeBatchCreation(
+          channel,
+          threadTs,
+          messageTs,
+          reactingUser,
+          "reaction",
+          rlog,
+        );
+        if (outcome.claimed) return;
+
+        // Legacy fallback: in-flight pre-#122 proposal messages whose
+        // KV record expired (or never existed). Parse from message text
+        // exactly as before. Drops out naturally after the 24h TTL
+        // window from rollout.
         const proposal = parseProposalFromMessage(msg.text);
         if (!proposal) return; // Not a proposal message — ignore
 
-        // Create the issue on GitHub
         const issue = await createIssue(
           proposal.title,
           proposal.body,
           proposal.labels,
         );
-
-        rlog("issue_created", { number: issue.number });
-
-        // Reply in the same thread with the new issue link
-        const threadTs = msg.thread_ts || messageTs;
+        rlog("issue_created", { number: issue.number, via: "legacy_parser" });
         await replyInThread(
           channel,
           threadTs,
