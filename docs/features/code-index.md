@@ -4,7 +4,7 @@ The code index (#135, sub-issue of epic #128) extends hybrid retrieval beyond do
 
 ## Architecture
 
-```
+```text
 /api/cron/code-index (every 5 min, maxDuration 240s)
   └─ runCodeIndexTick()                      src/lib/code-index.ts
        ├─ NX claim  srcindex:claim (TTL 270s)          — single writer
@@ -54,7 +54,7 @@ The namespace `{owner}/{repo}:src` is deliberately **not** SHA-scoped (contrast 
 
 `search_repo` now runs three arms: lexical GitHub code search, semantic doc chunks, and semantic src chunks. The two semantic sub-arms share one embedding model, so their raw scores are comparable — `mergeSemanticMatches` (in `src/lib/retrieval.ts`) merges them by descending score (docs win exact ties) before the merged list enters the existing two-arm RRF fusion against the lexical arm. Typed ids (`code:`/`doc:`/`src:`) keep everything disjoint; the same path can legitimately appear as both a `[code]` and a `[src]` line:
 
-```
+```text
 - [src] `src/lib/auth.ts:L40-71` — verifies the session token
 ```
 

@@ -100,13 +100,13 @@ count(event:idempotency_replayed) + count(event:idempotency_in_flight)
 
 Is the source index keeping up with the repo?
 
-```
+```text
 event:src_index_noop           — steady state (head SHA fully indexed)
 event:src_index_tick           — catching up (status: complete | partial | degraded)
 event:src_index_tick_failed    — the tick itself broke
 ```
 
-Healthy: mostly `src_index_noop` every ~5 minutes, with short bursts of `src_index_tick status:partial → complete` after pushes. Persistent `partial` with a non-shrinking `remaining` means the per-tick budgets can't keep up (or one file keeps failing — check `src_index_file_skipped` for a repeated `path`). Any `src_index_degraded` correlates with `vector_error`; `src_index_tree_truncated` on a huge repo means the recursive tree API is truncating and the index cannot safely advance. A **missing** heartbeat means the cron isn't firing — check the Vercel Cron dashboard and look for `src_index_unauthorized`.
+Every ~5 minutes exactly one per-tick terminal event should appear: `src_index_noop` (the healthy steady state) or `src_index_tick` with `status: complete | partial | degraded` (catching up after a push). `src_index_claim_lost` and `src_index_unavailable` are **benign, not page-worthy** — the former is cadence overlap on the NX claim, the latter simply means `UPSTASH_VECTOR_REST_*` isn't provisioned. Persistent `partial` with a non-shrinking `remaining` means the per-tick budgets can't keep up (or one file keeps failing — check `src_index_file_skipped` for a repeated `path`). Any `status: degraded` correlates with `vector_error`; `src_index_tree_truncated` on a huge repo means the recursive tree API is truncating and the index cannot safely advance. **No terminal event at all** for several cadences means the cron isn't firing — check the Vercel Cron dashboard and look for `src_index_unauthorized`.
 
 ### Cross-run correlation
 

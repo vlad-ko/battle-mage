@@ -360,11 +360,29 @@ describe("runCodeIndexTick", () => {
       return { path, content: "export const b = 2;\n" };
     });
     const result = await runCodeIndexTick();
-    expect(result).toMatchObject({ upserted: 1, skipped: 1 });
+    // A skipped file is NOT done — it stays out of the manifest and is
+    // re-diffed next tick, so it counts toward `remaining` (PR #138).
+    expect(result).toMatchObject({ upserted: 1, skipped: 1, remaining: 1 });
     expect(result.status).not.toBe("complete");
     expect(logSpy).toHaveBeenCalledWith("src_index_file_skipped", expect.objectContaining({ path: "src/a.ts" }));
     const manifest = kvData.get("srcindex:manifest") as SrcManifest;
     expect(manifest["src/a.ts"]).toBeUndefined();
+    expect(kvData.get("srcindex:sha")).toBeUndefined();
+  });
+
+  it("all files unreadable: remaining reports the full backlog, not zero (PR #138 review)", async () => {
+    getHeadShaSpy.mockResolvedValue("sha-9");
+    getRepoTreeSnapshotSpy.mockResolvedValue({
+      sha: "sha-9",
+      truncated: false,
+      blobs: [
+        { path: "src/a.ts", sha: "blob-a", size: 50 },
+        { path: "src/b.ts", sha: "blob-b", size: 50 },
+      ],
+    });
+    readFileSpy.mockRejectedValue(new Error("github_unreachable"));
+    const result = await runCodeIndexTick();
+    expect(result).toMatchObject({ status: "partial", upserted: 0, skipped: 2, remaining: 2 });
     expect(kvData.get("srcindex:sha")).toBeUndefined();
   });
 

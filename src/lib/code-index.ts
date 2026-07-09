@@ -243,9 +243,15 @@ export async function runCodeIndexTick(
     let degraded = false;
 
     const finish = async (): Promise<CodeIndexTickResult> => {
+      // A skipped file is NOT done: it never entered the manifest, so
+      // the next tick's diff re-surfaces it — it stays in `remaining`
+      // (PR #138 review: subtracting `skipped` here undercounted the
+      // backlog and could report remaining 0 on an unfinished tick).
       const remaining =
-        diff.toUpsert.length + diff.toDelete.length - upserted - skipped - deleted;
+        diff.toUpsert.length + diff.toDelete.length - upserted - deleted;
       await kv.set(SRC_INDEX_MANIFEST_KEY, working);
+      // `remaining > 0` already covers skips; `skipped === 0` stays as a
+      // defensive second lock on the SHA advance (invariant S4).
       const clean = !degraded && remaining === 0 && skipped === 0;
       if (clean) await kv.set(SRC_INDEX_SHA_KEY, snapshot.sha);
       const status: CodeIndexTickStatus = degraded
