@@ -58,22 +58,30 @@ afterEach(() => {
 });
 
 describe("namespace helpers (pure given env)", () => {
-  it("kbNamespace is {owner}/{repo}:kb", () => {
+  it("kbNamespace is {owner}_{repo}:kb (slash-free — a slash 404s Upstash REST paths, BATTLE-MAGE-4)", () => {
     vi.stubEnv("GITHUB_OWNER", "acme");
     vi.stubEnv("GITHUB_REPO", "backend");
-    expect(kbNamespace()).toBe("acme/backend:kb");
+    expect(kbNamespace()).toBe("acme_backend:kb");
   });
 
-  it("docsNamespace is {owner}/{repo}:docs:{sha}", () => {
+  it("docsNamespace is {owner}_{repo}:docs:{sha}", () => {
     vi.stubEnv("GITHUB_OWNER", "acme");
     vi.stubEnv("GITHUB_REPO", "backend");
-    expect(docsNamespace("abc1234")).toBe("acme/backend:docs:abc1234");
+    expect(docsNamespace("abc1234")).toBe("acme_backend:docs:abc1234");
   });
 
-  it("srcNamespace is the stable owner/repo:src namespace (no SHA suffix)", () => {
+  it("srcNamespace is the stable {owner}_{repo}:src namespace (no SHA suffix)", () => {
     vi.stubEnv("GITHUB_OWNER", "acme");
     vi.stubEnv("GITHUB_REPO", "backend");
-    expect(srcNamespace()).toBe("acme/backend:src");
+    expect(srcNamespace()).toBe("acme_backend:src");
+  });
+
+  it("no namespace ever contains a slash — Upstash routes it as a path segment (BATTLE-MAGE-4)", () => {
+    vi.stubEnv("GITHUB_OWNER", "acme");
+    vi.stubEnv("GITHUB_REPO", "backend");
+    for (const ns of [kbNamespace(), docsNamespace("abc1234"), srcNamespace()]) {
+      expect(ns).not.toContain("/");
+    }
   });
 });
 
@@ -106,7 +114,7 @@ describe("degradation: not configured", () => {
     const factory = vi.fn(() => makeFakeStore());
     __setVectorStoreFactoryForTests(factory);
 
-    const result = await vectorQuery("acme/backend:kb", "how does auth work", 10);
+    const result = await vectorQuery("acme_backend:kb", "how does auth work", 10);
     expect(result).toBeNull();
     expect(factory).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(
@@ -119,7 +127,7 @@ describe("degradation: not configured", () => {
     const factory = vi.fn(() => makeFakeStore());
     __setVectorStoreFactoryForTests(factory);
 
-    const ok = await vectorUpsert("acme/backend:kb", [{ id: "e1", text: "fact" }]);
+    const ok = await vectorUpsert("acme_backend:kb", [{ id: "e1", text: "fact" }]);
     expect(ok).toBe(false);
     expect(factory).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(
@@ -140,7 +148,7 @@ describe("happy path observability", () => {
 
   it("vectorQuery returns matches and logs vector_op with op/namespace/durationMs/count", async () => {
     __setVectorStoreFactoryForTests(() => makeFakeStore());
-    const matches = await vectorQuery("acme/backend:docs:abc", "deployment flow", 10);
+    const matches = await vectorQuery("acme_backend:docs:abc", "deployment flow", 10);
     expect(matches).toHaveLength(2);
     expect(matches![0]).toEqual(
       expect.objectContaining({ id: "doc-1", score: 0.91 }),
@@ -149,7 +157,7 @@ describe("happy path observability", () => {
     expect(call).toBeDefined();
     const payload = call![1] as Record<string, unknown>;
     expect(payload.op).toBe("query");
-    expect(payload.namespace).toBe("acme/backend:docs:abc");
+    expect(payload.namespace).toBe("acme_backend:docs:abc");
     expect(payload.count).toBe(2);
     expect(typeof payload.durationMs).toBe("number");
   });
@@ -178,9 +186,9 @@ describe("happy path observability", () => {
       { id: "e1", text: "fact one", metadata: { timestamp: "2026-07-01" } },
       { id: "e2", text: "fact two", metadata: { timestamp: "2026-07-02" } },
     ];
-    const ok = await vectorUpsert("acme/backend:kb", items);
+    const ok = await vectorUpsert("acme_backend:kb", items);
     expect(ok).toBe(true);
-    expect(store.upsert).toHaveBeenCalledWith("acme/backend:kb", items);
+    expect(store.upsert).toHaveBeenCalledWith("acme_backend:kb", items);
     expect(logSpy).toHaveBeenCalledWith(
       "vector_op",
       expect.objectContaining({ op: "upsert", count: 2 }),
@@ -190,7 +198,7 @@ describe("happy path observability", () => {
   it("vectorUpsert with an empty item list short-circuits true without touching the store", async () => {
     const store = makeFakeStore();
     __setVectorStoreFactoryForTests(() => store);
-    const ok = await vectorUpsert("acme/backend:kb", []);
+    const ok = await vectorUpsert("acme_backend:kb", []);
     expect(ok).toBe(true);
     expect(store.upsert).not.toHaveBeenCalled();
   });
@@ -198,10 +206,10 @@ describe("happy path observability", () => {
   it("vectorDelete and vectorDeleteNamespace return true and log their ops", async () => {
     const store = makeFakeStore();
     __setVectorStoreFactoryForTests(() => store);
-    expect(await vectorDelete("acme/backend:kb", ["e1"])).toBe(true);
-    expect(await vectorDeleteNamespace("acme/backend:docs:old")).toBe(true);
-    expect(store.delete).toHaveBeenCalledWith("acme/backend:kb", ["e1"]);
-    expect(store.deleteNamespace).toHaveBeenCalledWith("acme/backend:docs:old");
+    expect(await vectorDelete("acme_backend:kb", ["e1"])).toBe(true);
+    expect(await vectorDeleteNamespace("acme_backend:docs:old")).toBe(true);
+    expect(store.delete).toHaveBeenCalledWith("acme_backend:kb", ["e1"]);
+    expect(store.deleteNamespace).toHaveBeenCalledWith("acme_backend:docs:old");
   });
 });
 
@@ -213,7 +221,7 @@ describe("degradation: store errors never throw", () => {
     __setVectorStoreFactoryForTests(() =>
       makeFakeStore({ query: vi.fn(async () => { throw err; }) }),
     );
-    const result = await vectorQuery("acme/backend:kb", "q", 10);
+    const result = await vectorQuery("acme_backend:kb", "q", 10);
     expect(result).toBeNull();
     expect(logSpy).toHaveBeenCalledWith(
       "vector_error",
@@ -264,7 +272,7 @@ describe("degradation: timeout", () => {
     __setVectorStoreFactoryForTests(() =>
       makeFakeStore({ query: () => new Promise(() => {}) }), // never resolves
     );
-    const pending = vectorQuery("acme/backend:kb", "slow question", 10);
+    const pending = vectorQuery("acme_backend:kb", "slow question", 10);
     await vi.advanceTimersByTimeAsync(VECTOR_OP_TIMEOUT_MS + 1);
     await expect(pending).resolves.toBeNull();
     expect(logSpy).toHaveBeenCalledWith(
@@ -279,8 +287,8 @@ describe("privacy: content never reaches logs", () => {
 
   it("neither query text nor upserted text appears in any log payload", async () => {
     __setVectorStoreFactoryForTests(() => makeFakeStore());
-    await vectorQuery("acme/backend:kb", "SECRET_QUESTION_TEXT", 10);
-    await vectorUpsert("acme/backend:kb", [
+    await vectorQuery("acme_backend:kb", "SECRET_QUESTION_TEXT", 10);
+    await vectorUpsert("acme_backend:kb", [
       { id: "e1", text: "SECRET_KB_ENTRY_BODY" },
     ]);
     for (const call of logSpy.mock.calls) {

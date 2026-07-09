@@ -40,7 +40,7 @@ vi.mock("./kv", () => ({
 
 vi.mock("./vector", () => ({
   isVectorConfigured: () => true,
-  docsNamespace: (sha: string) => `acme/backend:docs:${sha}`,
+  docsNamespace: (sha: string) => `acme_backend:docs:${sha}`,
   vectorUpsert: (...a: unknown[]) => vectorUpsertSpy(...a),
   vectorDeleteNamespace: (...a: unknown[]) => vectorDeleteNamespaceSpy(...a),
 }));
@@ -590,7 +590,7 @@ describe("getOrRebuildIndex — doc embedding hook (#127)", () => {
 
   it("SHA changed → upserts chunks into the new SHA namespace, THEN repoints, THEN deletes the previous namespace (N1 order)", async () => {
     kvData.set("index:sha", "old-sha");
-    kvData.set("index:vector_docs_ns", "acme/backend:docs:old-sha");
+    kvData.set("index:vector_docs_ns", "acme_backend:docs:old-sha");
     getHeadShaSpy.mockResolvedValue("new-sha");
     getRepoTreeSpy.mockResolvedValue([
       treeBlob("docs/setup.md"),
@@ -610,12 +610,12 @@ describe("getOrRebuildIndex — doc embedding hook (#127)", () => {
       expect(logSpy).toHaveBeenCalledWith("docs_embedded", expect.anything()),
     );
 
-    expect(vectorUpsertSpy).toHaveBeenCalledWith("acme/backend:docs:new-sha", [
+    expect(vectorUpsertSpy).toHaveBeenCalledWith("acme_backend:docs:new-sha", [
       expect.objectContaining({ id: "docs/setup.md#0" }),
     ]);
-    expect(kvData.get("index:vector_docs_ns")).toBe("acme/backend:docs:new-sha");
+    expect(kvData.get("index:vector_docs_ns")).toBe("acme_backend:docs:new-sha");
     expect(vectorDeleteNamespaceSpy).toHaveBeenCalledWith(
-      "acme/backend:docs:old-sha",
+      "acme_backend:docs:old-sha",
     );
     // N1: upsert → pointer swap → old-namespace cleanup, in that order.
     const upsertIdx = callOrder.indexOf("vectorUpsert");
@@ -632,7 +632,7 @@ describe("getOrRebuildIndex — doc embedding hook (#127)", () => {
 
   it("upsert failure → pointer untouched, docs_embed_failed logged, rebuild still succeeds", async () => {
     kvData.set("index:sha", "old-sha");
-    kvData.set("index:vector_docs_ns", "acme/backend:docs:old-sha");
+    kvData.set("index:vector_docs_ns", "acme_backend:docs:old-sha");
     getHeadShaSpy.mockResolvedValue("new-sha");
     getRepoTreeSpy.mockResolvedValue([treeBlob("docs/setup.md")]);
     readFileSpy.mockImplementation(async (path: string) => {
@@ -654,7 +654,7 @@ describe("getOrRebuildIndex — doc embedding hook (#127)", () => {
       ),
     );
 
-    expect(kvData.get("index:vector_docs_ns")).toBe("acme/backend:docs:old-sha");
+    expect(kvData.get("index:vector_docs_ns")).toBe("acme_backend:docs:old-sha");
     expect(vectorDeleteNamespaceSpy).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith("index_rebuilt", expect.anything());
     expect(typeof summary).toBe("string");
@@ -662,7 +662,7 @@ describe("getOrRebuildIndex — doc embedding hook (#127)", () => {
 
   it("empty chunk set (all doc reads fail) → docs_embed_empty, pointer untouched, previous namespace NOT deleted (#127 review)", async () => {
     kvData.set("index:sha", "old-sha");
-    kvData.set("index:vector_docs_ns", "acme/backend:docs:old-sha");
+    kvData.set("index:vector_docs_ns", "acme_backend:docs:old-sha");
     getHeadShaSpy.mockResolvedValue("new-sha");
     getRepoTreeSpy.mockResolvedValue([
       treeBlob("docs/a.md"),
@@ -681,7 +681,7 @@ describe("getOrRebuildIndex — doc embedding hook (#127)", () => {
     );
 
     expect(vectorUpsertSpy).not.toHaveBeenCalled();
-    expect(kvData.get("index:vector_docs_ns")).toBe("acme/backend:docs:old-sha");
+    expect(kvData.get("index:vector_docs_ns")).toBe("acme_backend:docs:old-sha");
     expect(vectorDeleteNamespaceSpy).not.toHaveBeenCalled();
   });
 
@@ -743,7 +743,7 @@ describe("getOrRebuildIndex — doc embedding hook (#127)", () => {
 describe("getDocsVectorNamespace (#127)", () => {
   it("returns the stored pointer, or null when the index has never embedded docs", async () => {
     expect(await getDocsVectorNamespace()).toBeNull();
-    kvData.set("index:vector_docs_ns", "acme/backend:docs:abc");
-    expect(await getDocsVectorNamespace()).toBe("acme/backend:docs:abc");
+    kvData.set("index:vector_docs_ns", "acme_backend:docs:abc");
+    expect(await getDocsVectorNamespace()).toBe("acme_backend:docs:abc");
   });
 });

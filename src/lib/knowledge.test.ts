@@ -59,7 +59,7 @@ vi.mock("./vector", () => ({
   vectorUpsert: (...a: unknown[]) => vectorUpsertSpy(...a),
   vectorDelete: (...a: unknown[]) => vectorDeleteSpy(...a),
   vectorQuery: (...a: unknown[]) => vectorQuerySpy(...a),
-  kbNamespace: () => "acme/backend:kb",
+  kbNamespace: () => "acme_backend:kb",
 }));
 
 import {
@@ -319,7 +319,7 @@ describe("getKnowledgeAsMarkdown", () => {
 describe("saveKnowledgeEntry — vector embedding (#127)", () => {
   it("upserts the entry into the KB namespace keyed by its id, with text and timestamp metadata", async () => {
     const id = await saveKnowledgeEntry("Auth lives in src/lib/auth.ts");
-    expect(vectorUpsertSpy).toHaveBeenCalledWith("acme/backend:kb", [
+    expect(vectorUpsertSpy).toHaveBeenCalledWith("acme_backend:kb", [
       expect.objectContaining({
         id,
         text: "Auth lives in src/lib/auth.ts",
@@ -351,13 +351,13 @@ describe("retire flows remove KB vectors (#127)", () => {
   it("supersedeKnowledgeEntry best-effort-deletes the OLD entry's vector", async () => {
     const oldId = await saveKnowledgeEntry("stale fact");
     await supersedeKnowledgeEntry(oldId, "fresh fact");
-    expect(vectorDeleteSpy).toHaveBeenCalledWith("acme/backend:kb", [oldId]);
+    expect(vectorDeleteSpy).toHaveBeenCalledWith("acme_backend:kb", [oldId]);
   });
 
   it("archiveKnowledgeEntry best-effort-deletes the entry's vector", async () => {
     const id = await saveKnowledgeEntry("obsolete fact");
     await archiveKnowledgeEntry(id, "cleanup");
-    expect(vectorDeleteSpy).toHaveBeenCalledWith("acme/backend:kb", [id]);
+    expect(vectorDeleteSpy).toHaveBeenCalledWith("acme_backend:kb", [id]);
   });
 
   it("retire still succeeds when vector delete fails", async () => {
@@ -403,7 +403,7 @@ describe("getKnowledgeRecallAsMarkdown (#127)", () => {
     injectSixEntries();
     await getKnowledgeRecallAsMarkdown("where is the redis wrapper");
     expect(vectorQuerySpy).toHaveBeenCalledWith(
-      "acme/backend:kb",
+      "acme_backend:kb",
       "where is the redis wrapper",
       10, // MAX_ARM_RESULTS
     );

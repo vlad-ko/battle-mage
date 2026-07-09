@@ -64,9 +64,22 @@ export function isVectorConfigured(): boolean {
   );
 }
 
+/**
+ * Owner/repo prefix shared by every namespace. Joined with `_`, NOT `/`:
+ * the Upstash Vector REST client inserts the namespace into the URL path
+ * verbatim, so a slash splits the route and every operation 404s
+ * ("Endpoint POST /upsert-data/<owner> not found" — Sentry BATTLE-MAGE-4).
+ * GitHub owner/repo names can't contain `_`-vs-`/` ambiguity collisions
+ * in practice for a single-target bot, and nothing was ever successfully
+ * written under the slashed namespaces, so no migration is needed.
+ */
+function namespacePrefix(): string {
+  return `${process.env.GITHUB_OWNER}_${process.env.GITHUB_REPO}`;
+}
+
 /** Namespace holding one embedding per visible KB entry. */
 export function kbNamespace(): string {
-  return `${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}:kb`;
+  return `${namespacePrefix()}:kb`;
 }
 
 /**
@@ -74,7 +87,7 @@ export function kbNamespace(): string {
  * writes a fresh namespace and atomically repoints (see repo-index.ts).
  */
 export function docsNamespace(sha: string): string {
-  return `${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}:docs:${sha}`;
+  return `${namespacePrefix()}:docs:${sha}`;
 }
 
 /**
@@ -84,7 +97,7 @@ export function docsNamespace(sha: string): string {
  * survive across ticks instead of being rebuilt per generation.
  */
 export function srcNamespace(): string {
-  return `${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}:src`;
+  return `${namespacePrefix()}:src`;
 }
 
 // ── Store construction (lazy + memoized; SDK confined here) ──────────

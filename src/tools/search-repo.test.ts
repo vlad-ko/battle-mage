@@ -13,7 +13,7 @@ vi.mock("@/lib/github", () => ({
 }));
 vi.mock("@/lib/vector", () => ({
   vectorQuery: (...a: unknown[]) => vectorQuerySpy(...a),
-  srcNamespace: () => "acme/backend:src",
+  srcNamespace: () => "acme_backend:src",
 }));
 vi.mock("@/lib/repo-index", () => ({
   getDocsVectorNamespace: (...a: unknown[]) => getDocsVectorNamespaceSpy(...a),
@@ -55,7 +55,7 @@ function mockVectorArms(arms: {
   src?: FakeMatch[] | null;
 }): void {
   vectorQuerySpy.mockImplementation(async (namespace: string) =>
-    namespace === "acme/backend:src" ? arms.src ?? null : arms.docs ?? null,
+    namespace === "acme_backend:src" ? arms.src ?? null : arms.docs ?? null,
   );
 }
 
@@ -79,7 +79,7 @@ describe("executeSearchRepo — hybrid fusion", () => {
     // wins ties by enumeration order — hand-computed:
     //   code:a 1/61, doc:x 1/61, code:b 1/62, doc:y 1/62.
     searchCodeSpy.mockResolvedValue([codeResult("src/a.ts"), codeResult("src/b.ts")]);
-    getDocsVectorNamespaceSpy.mockResolvedValue("acme/backend:docs:sha1");
+    getDocsVectorNamespaceSpy.mockResolvedValue("acme_backend:docs:sha1");
     mockVectorArms({
       docs: [
         docMatch("docs/x.md#0", 0.9, "X Heading", "x excerpt"),
@@ -98,22 +98,22 @@ describe("executeSearchRepo — hybrid fusion", () => {
   });
 
   it("queries the docs namespace from the pointer with MAX_ARM_RESULTS", async () => {
-    getDocsVectorNamespaceSpy.mockResolvedValue("acme/backend:docs:sha1");
+    getDocsVectorNamespaceSpy.mockResolvedValue("acme_backend:docs:sha1");
     vectorQuerySpy.mockResolvedValue([]);
     await executeSearchRepo({ query: "deployment" });
     expect(vectorQuerySpy).toHaveBeenCalledWith(
-      "acme/backend:docs:sha1",
+      "acme_backend:docs:sha1",
       "deployment",
       MAX_ARM_RESULTS,
     );
   });
 
   it("queries the src namespace with MAX_ARM_RESULTS alongside the docs arm", async () => {
-    getDocsVectorNamespaceSpy.mockResolvedValue("acme/backend:docs:sha1");
+    getDocsVectorNamespaceSpy.mockResolvedValue("acme_backend:docs:sha1");
     vectorQuerySpy.mockResolvedValue([]);
     await executeSearchRepo({ query: "auth flow" });
     expect(vectorQuerySpy).toHaveBeenCalledWith(
-      "acme/backend:src",
+      "acme_backend:src",
       "auth flow",
       MAX_ARM_RESULTS,
     );
@@ -142,7 +142,7 @@ describe("executeSearchRepo — hybrid fusion", () => {
   });
 
   it("semantic arm merges docs and src by score before fusion", async () => {
-    getDocsVectorNamespaceSpy.mockResolvedValue("acme/backend:docs:sha1");
+    getDocsVectorNamespaceSpy.mockResolvedValue("acme_backend:docs:sha1");
     mockVectorArms({
       docs: [
         docMatch("docs/x.md#0", 0.9, "X Heading", "x excerpt"),
@@ -161,7 +161,7 @@ describe("executeSearchRepo — hybrid fusion", () => {
 
   it("src-arm degradation collapses to docs-only; both semantic arms degraded collapses to lexical-only (never throws)", async () => {
     // src arm degraded (null), docs arm healthy → doc lines still present.
-    getDocsVectorNamespaceSpy.mockResolvedValue("acme/backend:docs:sha1");
+    getDocsVectorNamespaceSpy.mockResolvedValue("acme_backend:docs:sha1");
     mockVectorArms({
       docs: [docMatch("docs/x.md#0", 0.9, "X Heading", "x excerpt")],
       src: null,
@@ -224,7 +224,7 @@ describe("executeSearchRepo — degradation", () => {
     // The src arm queries its STABLE namespace regardless of the docs
     // pointer — only the docs namespace must stay untouched (#135).
     for (const call of vectorQuerySpy.mock.calls) {
-      expect(call[0]).toBe("acme/backend:src");
+      expect(call[0]).toBe("acme_backend:src");
     }
   });
 
