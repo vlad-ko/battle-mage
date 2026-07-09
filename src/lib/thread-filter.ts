@@ -149,10 +149,14 @@ export function extractTranscriptTail(
   const entries: string[] = [];
   for (let i = messages.length - 1; i >= 0 && entries.length < TRANSCRIPT_TAIL_MAX; i--) {
     const m = messages[i];
-    const text = truncate(cleanText(m.text ?? ""), TRANSCRIPT_ENTRY_MAX_CHARS);
+    const speaker = m.user === botUserId || m.bot_id ? "bot" : "user";
+    // Same rule as buildConversationHistory (#146): bot replies drop the
+    // system footer so reference bullets can't eat the classifier's
+    // per-entry budget or skew the gate.
+    const raw = speaker === "bot" ? stripReferencesFooter(m.text ?? "") : m.text ?? "";
+    const text = truncate(cleanText(raw), TRANSCRIPT_ENTRY_MAX_CHARS);
     if (!text) continue; // Skip empty messages
 
-    const speaker = m.user === botUserId || m.bot_id ? "bot" : "user";
     entries.push(`${speaker}: ${text}`);
   }
   return entries.reverse().join("\n");
