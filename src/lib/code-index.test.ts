@@ -6,6 +6,7 @@
 // tree snapshot SHA.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { VECTOR_BACKGROUND_TIMEOUT_MS } from "./vector";
 import type { BattleMageConfig } from "./config";
 
 const h = vi.hoisted(() => {
@@ -50,8 +51,10 @@ vi.mock("./logger", () => ({
   log: (...args: unknown[]) => h.logSpy(...args),
 }));
 
-vi.mock("./vector", () => ({
-  isVectorConfigured: (...args: unknown[]) => h.isVectorConfiguredMock(...args),
+vi.mock("./vector", async (importOriginal) => ({
+  // Real constants flow through; only the side-effectful fns are mocked.
+  ...(await importOriginal<typeof import("./vector")>()),
+    isVectorConfigured: (...args: unknown[]) => h.isVectorConfiguredMock(...args),
   srcNamespace: () => "acme_backend:src",
   docsNamespace: (sha: string) => `acme_backend:docs:${sha}`,
   kbNamespace: () => "acme_backend:kb",
@@ -221,6 +224,8 @@ describe("runCodeIndexTick", () => {
     expect(vectorUpsertSpy).toHaveBeenCalledWith(
       "acme_backend:src",
       [expect.objectContaining({ id: "src/a.ts#0", metadata: expect.objectContaining({ path: "src/a.ts", startLine: 1 }) })],
+      // Background pipeline uses the generous embed budget (BATTLE-MAGE-5).
+      { timeoutMs: VECTOR_BACKGROUND_TIMEOUT_MS },
     );
     expect(kvData.get("srcindex:manifest")).toEqual({ "src/a.ts": { sha: "blob-a", chunks: 1 } });
     expect(kvData.get("srcindex:sha")).toBe("sha-2");
