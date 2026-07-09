@@ -295,8 +295,17 @@ export function chunkMarkdownByHeadings(path: string, content: string): DocChunk
       sections.push({ heading: currentHeading, body });
     }
   };
+  // Fence tracking (#127 review): `# comment` lines inside ``` / ~~~
+  // fenced blocks are code, not headings — never split on them.
+  let inFence = false;
   for (const line of content.split("\n")) {
-    const m = /^#{1,3} (.+)$/.exec(line);
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+      inFence = !inFence;
+      buf.push(line);
+      continue;
+    }
+    const m = inFence ? null : /^#{1,3} (.+)$/.exec(line);
     if (m) {
       flushSection();
       currentHeading = m[1].trim();
@@ -420,10 +429,23 @@ export async function getOrRebuildIndex(): Promise<string> {
     });
 
     // #127: embed doc chunks for hybrid retrieval. Runs ONLY on the
-    // SHA-changed path, after every KV write above, and is internally
-    // non-throwing — an embed failure degrades semantic doc search but
-    // never fails the index rebuild.
-    await embedDocChunks(currentSha, filterDocPaths(paths, config));
+    // SHA-changed path, after every KV write above. Fire-and-forget:
+    // embedding (up to MAX_DOCS_TO_EMBED content fetches + an upsert)
+    // must NOT sit on the agent's critical path — the rebuild returns
+    // the summary immediately and the embed completes in the background
+    // within the invocation window. Tradeoff: if the container is
+    // killed mid-embed, the docs pointer stays on the previous SHA's
+    // namespace until the next SHA change — acceptable, the doc arm
+    // just serves slightly stale chunks (or degrades if none exist).
+    // embedDocChunks is internally non-throwing; the catch is
+    // belt-and-braces so a contract violation can never surface as an
+    // unhandled rejection.
+    void embedDocChunks(currentSha, filterDocPaths(paths, config)).catch((err) => {
+      log("docs_embed_failed", {
+        sha: currentSha,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    });
 
     return summary;
   } catch (err) {
@@ -488,8 +510,17 @@ async function embedDocChunks(sha: string, docPaths: string[]): Promise<void> {
       }
     }
 
-    const namespace = docsNamespace(sha);
+    // Guard (#127 review): an empty chunk set (every readFile failed, or
+    // every doc was empty) must NOT swap the pointer — vectorUpsert([])
+    // short-circuits true, which would repoint queries at an EMPTY
+    // namespace and delete the previous working generation.
     const items = chunks.map((c) => ({ id: c.id, text: c.text, metadata: c.metadata }));
+    if (items.length === 0) {
+      log("docs_embed_empty", { sha, docCount });
+      return;
+    }
+
+    const namespace = docsNamespace(sha);
     const ok = await vectorUpsert(namespace, items);
     if (!ok) {
       log("docs_embed_failed", { sha, docCount, chunkCount: chunks.length });

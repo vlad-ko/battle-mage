@@ -60,7 +60,12 @@ async function runDocArm(query: string): Promise<VectorMatch[]> {
 export async function executeSearchRepo(
   input: Record<string, unknown>,
 ): Promise<SearchRepoResult> {
-  const query = input.query as string;
+  // Guard (#127 review): the model can emit a malformed tool call —
+  // a missing/non-string/blank query must not reach searchCode.
+  const query = typeof input.query === "string" ? input.query.trim() : "";
+  if (query.length === 0) {
+    return { text: "No search query provided.", references: [] };
+  }
 
   const [codeItems, docMatches] = await Promise.all([
     runCodeArm(query),

@@ -136,6 +136,8 @@ const STOPWORDS = new Set([
   "whom", "why", "how",
 ]);
 
+const ISO_DATE_PREFIX_RE = /^\d{4}-\d{2}-\d{2}/;
+
 /**
  * Lexical arm: rank candidates by how many DISTINCT question tokens
  * substring-match their text (case-insensitive). Tokens are lowercase
@@ -158,13 +160,18 @@ export function lexicalRank(question: string, candidates: RecallCandidate[]): st
     .map((c) => {
       const text = c.text.toLowerCase();
       const score = tokens.filter((t) => text.includes(t)).length;
-      return { id: c.id, score, timestamp: c.timestamp ?? "" };
+      // Non-ISO timestamps (missing, or the legacy "unknown" sentinel)
+      // coerce to "" so they sort as the OLDEST bucket — a raw string
+      // compare would rank "unknown" above every real date (#127 review).
+      const timestamp =
+        c.timestamp && ISO_DATE_PREFIX_RE.test(c.timestamp) ? c.timestamp : "";
+      return { id: c.id, score, timestamp };
     })
     .filter((c) => c.score > 0)
     .sort(
       (a, b) =>
         b.score - a.score ||
-        // ISO dates compare correctly as strings; missing sorts oldest.
+        // ISO dates compare correctly as strings; "" sorts oldest.
         b.timestamp.localeCompare(a.timestamp),
     )
     .slice(0, MAX_ARM_RESULTS)

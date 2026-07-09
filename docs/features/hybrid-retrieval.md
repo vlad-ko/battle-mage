@@ -16,7 +16,7 @@ Both are powered by [Upstash Vector](https://upstash.com/docs/vector) with a **b
 
 ### Doc chunks (write path: `src/lib/repo-index.ts`)
 
-Doc embedding runs **only inside the SHA-changed branch** of `getOrRebuildIndex()`, after the topic-index KV writes:
+Doc embedding runs **only inside the SHA-changed branch** of `getOrRebuildIndex()`, after the topic-index KV writes, and is **fire-and-forget**: the rebuild returns its summary immediately and the embed (content fetches + upsert) completes in the background within the invocation window, so it never delays the agent's turn. Tradeoff: a container killed mid-embed leaves the docs pointer on the previous SHA's namespace until the next SHA change — the doc arm serves slightly stale chunks, never a half-written namespace.
 
 1. `chunkMarkdownByHeadings(path, content)` splits each `docs/**/*.md` on `#`/`##`/`###` headings (`####` stays inside its parent section). Preamble content before the first heading becomes a chunk titled from the path. Sections over `MAX_CHUNK_CHARS` (1500) are re-split on paragraph boundaries. Ids are deterministic `${path}#${ordinal}`; metadata carries `{path, heading, excerpt}`.
 2. Content fetches are capped at `MAX_DOCS_TO_EMBED` (50) per rebuild — the same GitHub fan-out lesson as #108. Exceeding the cap logs `docs_embed_capped`.
@@ -32,7 +32,7 @@ upsert chunks into {owner}/{repo}:docs:{newSha}     (1)
        └─ best-effort deleteNamespace(previous)      (3)
 ```
 
-If the upsert fails, the pointer is untouched — queries keep serving the previous generation — and `docs_embed_failed` records the gap. The index rebuild itself still succeeds; embedding is never a hard dependency.
+If the upsert fails, the pointer is untouched — queries keep serving the previous generation — and `docs_embed_failed` records the gap. Likewise, an **empty chunk set** (every doc read failed, or all docs were empty) aborts before any pointer/namespace mutation with `docs_embed_empty` — the pointer must never swap to an empty namespace. The index rebuild itself always succeeds; embedding is never a hard dependency.
 
 ## Retrieval and Fusion (`src/lib/retrieval.ts`)
 
@@ -48,6 +48,8 @@ Both retrieval surfaces fuse two ranked arms with **Reciprocal Rank Fusion**: ea
 The age boost is deliberately smaller than the smallest adjacent-rank RRF gap a single arm can produce, so freshness only ever breaks ties between effectively-equal candidates — it never overrides relevance. Exact ties keep enumeration order: lexical-arm candidates first.
 
 ### KB recall (`getKnowledgeRecallAsMarkdown(question)`)
+
+Recall keys off the user's **clean question**: the turn runner passes it as `recallQuestion` in `RunAgentOptions`, because the `userMessage` the model receives is augmented with topic/effort hints that would pollute both the lexical tokens and the embedding query.
 
 - 0 visible entries → section omitted (null).
 - ≤ `RECALL_TOP_K` entries → render all; **no vector call** (the full KB already fits).
@@ -74,6 +76,7 @@ All Upstash Vector access flows through one chokepoint mirroring `kv.ts` (#117),
 | Vector op error or >2s timeout | `vector_error` (op, namespace, durationMs, errorClass, errorMessage) + Sentry tagged `vector.op` | Same as above for that one call; saves/rebuilds still succeed |
 | Docs never embedded (no pointer) | none — `getDocsVectorNamespace()` returns null | `search_repo` lexical-only; vector store never queried |
 | Doc upsert failure during rebuild | `docs_embed_failed` | Pointer untouched — previous generation keeps serving; rebuild succeeds |
+| Rebuild produces zero chunks | `docs_embed_empty` | Pointer/namespace untouched — previous generation keeps serving |
 | > 50 docs in repo | `docs_embed_capped` | Only the first 50 docs are embedded |
 
 The bot always keeps working lexically — the vector layer is an accelerator, never a dependency.
@@ -85,6 +88,7 @@ The bot always keeps working lexically — the vector layer is an accelerator, n
 - `vector_error` — `{op, namespace, durationMs, errorClass, errorMessage}` + Sentry tag `vector.op`
 - `docs_embedded` — `{sha, docCount, chunkCount, duration_ms}`
 - `docs_embed_capped` — `{totalDocs, cap}`
+- `docs_embed_empty` — `{sha, docCount}` (zero chunks — pointer untouched)
 - `docs_embed_failed` — `{sha, ...}`
 
 See [Observability](../observability.md) for the full catalog.

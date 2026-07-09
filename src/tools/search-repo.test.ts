@@ -128,6 +128,26 @@ describe("executeSearchRepo — degradation", () => {
     expect(result.references).toEqual([]);
   });
 
+  it("guards a missing query without calling any arm (#127 review)", async () => {
+    const result = await executeSearchRepo({});
+    expect(result.text).toBe("No search query provided.");
+    expect(result.references).toEqual([]);
+    expect(searchCodeSpy).not.toHaveBeenCalled();
+    expect(getDocsVectorNamespaceSpy).not.toHaveBeenCalled();
+  });
+
+  it("guards a blank query without calling any arm (#127 review)", async () => {
+    const result = await executeSearchRepo({ query: "   " });
+    expect(result.text).toBe("No search query provided.");
+    expect(searchCodeSpy).not.toHaveBeenCalled();
+  });
+
+  it("guards a non-string query", async () => {
+    const result = await executeSearchRepo({ query: 42 });
+    expect(result.text).toBe("No search query provided.");
+    expect(searchCodeSpy).not.toHaveBeenCalled();
+  });
+
   it("filters tooling paths from the lexical arm", async () => {
     searchCodeSpy.mockResolvedValue([
       codeResult(".claude/skills/wizard/SKILL.md"),

@@ -220,4 +220,14 @@ describe("lexicalRank", () => {
     }));
     expect(lexicalRank("vercel deployment", many)).toHaveLength(MAX_ARM_RESULTS);
   });
+
+  it('legacy "unknown" timestamps lose ties to real ISO dates (#127 review)', () => {
+    // "unknown" > "2026-..." as a raw string — the tie-break must coerce
+    // non-ISO timestamps to the OLDEST bucket, not let them win.
+    const cands: RecallCandidate[] = [
+      { id: "legacy", text: "vercel deploy fact", timestamp: "unknown" },
+      { id: "dated", text: "vercel deploy note", timestamp: "2026-01-01" },
+    ];
+    expect(lexicalRank("vercel deploy", cands)).toEqual(["dated", "legacy"]);
+  });
 });

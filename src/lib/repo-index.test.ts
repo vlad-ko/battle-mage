@@ -544,6 +544,32 @@ describe("chunkMarkdownByHeadings (#127)", () => {
       expect(c.metadata.excerpt.length).toBeGreaterThan(0);
     }
   });
+
+  it("does not treat # lines inside fenced code blocks as headings (#127 review)", () => {
+    const content = [
+      "# Real Heading",
+      "intro text",
+      "```bash",
+      "# not a heading",
+      "echo hi",
+      "```",
+      "tail text",
+    ].join("\n");
+    const chunks = chunkMarkdownByHeadings("docs/x.md", content);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].metadata.heading).toBe("Real Heading");
+    expect(chunks.map((c) => c.metadata.heading)).not.toContain("not a heading");
+    // The fenced content stays inside the section body, un-split.
+    expect(chunks[0].text).toContain("# not a heading");
+    expect(chunks[0].text).toContain("tail text");
+  });
+
+  it("tracks ~~~ fences the same way", () => {
+    const content = ["# Top", "~~~", "## fenced pseudo-heading", "~~~", "after"].join("\n");
+    const chunks = chunkMarkdownByHeadings("docs/x.md", content);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].metadata.heading).toBe("Top");
+  });
 });
 
 describe("getOrRebuildIndex — doc embedding hook (#127)", () => {
@@ -578,6 +604,11 @@ describe("getOrRebuildIndex — doc embedding hook (#127)", () => {
     });
 
     await getOrRebuildIndex();
+    // Embedding is fire-and-forget (#127 review) — wait for the
+    // background pipeline to finish before asserting on its effects.
+    await vi.waitFor(() =>
+      expect(logSpy).toHaveBeenCalledWith("docs_embedded", expect.anything()),
+    );
 
     expect(vectorUpsertSpy).toHaveBeenCalledWith("acme/backend:docs:new-sha", [
       expect.objectContaining({ id: "docs/setup.md#0" }),
@@ -616,15 +647,69 @@ describe("getOrRebuildIndex — doc embedding hook (#127)", () => {
     });
 
     const summary = await getOrRebuildIndex();
+    await vi.waitFor(() =>
+      expect(logSpy).toHaveBeenCalledWith(
+        "docs_embed_failed",
+        expect.objectContaining({ sha: "new-sha" }),
+      ),
+    );
 
     expect(kvData.get("index:vector_docs_ns")).toBe("acme/backend:docs:old-sha");
     expect(vectorDeleteNamespaceSpy).not.toHaveBeenCalled();
-    expect(logSpy).toHaveBeenCalledWith(
-      "docs_embed_failed",
-      expect.objectContaining({ sha: "new-sha" }),
-    );
     expect(logSpy).toHaveBeenCalledWith("index_rebuilt", expect.anything());
     expect(typeof summary).toBe("string");
+  });
+
+  it("empty chunk set (all doc reads fail) → docs_embed_empty, pointer untouched, previous namespace NOT deleted (#127 review)", async () => {
+    kvData.set("index:sha", "old-sha");
+    kvData.set("index:vector_docs_ns", "acme/backend:docs:old-sha");
+    getHeadShaSpy.mockResolvedValue("new-sha");
+    getRepoTreeSpy.mockResolvedValue([
+      treeBlob("docs/a.md"),
+      treeBlob("docs/b.md"),
+    ]);
+    // Every content read fails — chunks come out empty. Swapping the
+    // pointer to an empty namespace would silently kill the doc arm.
+    readFileSpy.mockRejectedValue(new Error("read failed"));
+
+    await getOrRebuildIndex();
+    await vi.waitFor(() =>
+      expect(logSpy).toHaveBeenCalledWith(
+        "docs_embed_empty",
+        expect.objectContaining({ sha: "new-sha" }),
+      ),
+    );
+
+    expect(vectorUpsertSpy).not.toHaveBeenCalled();
+    expect(kvData.get("index:vector_docs_ns")).toBe("acme/backend:docs:old-sha");
+    expect(vectorDeleteNamespaceSpy).not.toHaveBeenCalled();
+  });
+
+  it("a hung embed does NOT delay getOrRebuildIndex's return (#127 review)", async () => {
+    kvData.set("index:sha", "old-sha");
+    getHeadShaSpy.mockResolvedValue("new-sha");
+    getRepoTreeSpy.mockResolvedValue([treeBlob("docs/setup.md")]);
+    readFileSpy.mockImplementation(async (path: string) => {
+      if (path === "docs/setup.md") {
+        return { path, content: "# Setup\n\nbody" };
+      }
+      throw new Error(`unexpected read: ${path}`);
+    });
+    // The upsert never resolves — embedding is stuck.
+    vectorUpsertSpy.mockImplementation(() => {
+      callOrder.push("vectorUpsert");
+      return new Promise(() => {});
+    });
+
+    // Must resolve promptly with the summary while the embed promise is
+    // still pending (the test itself would time out otherwise).
+    const summary = await getOrRebuildIndex();
+    expect(typeof summary).toBe("string");
+    expect(logSpy).toHaveBeenCalledWith("index_rebuilt", expect.anything());
+    // Embed was INITIATED but has not completed.
+    await vi.waitFor(() => expect(vectorUpsertSpy).toHaveBeenCalled());
+    expect(logSpy).not.toHaveBeenCalledWith("docs_embedded", expect.anything());
+    expect(kvData.get("index:vector_docs_ns")).toBeUndefined();
   });
 
   it("caps content fetches at MAX_DOCS_TO_EMBED and logs docs_embed_capped (the #108 fan-out lesson)", async () => {
@@ -640,6 +725,9 @@ describe("getOrRebuildIndex — doc embedding hook (#127)", () => {
     });
 
     await getOrRebuildIndex();
+    await vi.waitFor(() =>
+      expect(logSpy).toHaveBeenCalledWith("docs_embedded", expect.anything()),
+    );
 
     const docReads = readFileSpy.mock.calls.filter(([p]) =>
       String(p).startsWith("docs/"),

@@ -537,6 +537,14 @@ export interface RunAgentOptions {
   maxRounds?: number;
   /** Effort bucket label — observability only (agent_start/agent_complete). */
   effort?: string;
+  /**
+   * The user's CLEAN question for KB recall (#127). The `userMessage`
+   * the route passes is augmented with topic/effort hints, which would
+   * pollute the lexical tokens and the embedding query — recall must
+   * key off what the user actually asked. Falls back to `userMessage`
+   * when absent.
+   */
+  recallQuestion?: string;
 }
 
 // Pure resolver for the per-turn round cap: floor → clamp to
@@ -603,7 +611,10 @@ export async function runAgent(
   const issueProposals: IssueProposal[] = [];
   const allReferences: Reference[] = [];
   const startTime = Date.now();
-  const { blocks: systemBlocks, feedbackMeta } = await buildSystemBlocks(participants, userMessage);
+  const { blocks: systemBlocks, feedbackMeta } = await buildSystemBlocks(
+    participants,
+    options?.recallQuestion ?? userMessage,
+  );
   const promptLength = systemBlocks.reduce((n, b) => n + b.text.length, 0);
 
   _log("agent_start", {

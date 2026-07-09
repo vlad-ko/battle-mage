@@ -110,6 +110,7 @@ The `effort` / `max_rounds` fields on `agent_start` and `agent_complete` come fr
 | `index_build_error` | Index build failed | message |
 | `docs_embedded` | Doc chunks embedded into the new SHA namespace after a rebuild (#127) | sha, docCount, chunkCount, duration_ms |
 | `docs_embed_capped` | More docs than `MAX_DOCS_TO_EMBED` (50) — only the first 50 were fetched/embedded | totalDocs, cap |
+| `docs_embed_empty` | The rebuild produced zero chunks (every doc read failed or all docs were empty) — pointer/namespace left untouched so the previous generation keeps serving | sha, docCount |
 | `docs_embed_failed` | Chunk upsert (or the embed pipeline) failed — namespace pointer left untouched, rebuild still succeeded | sha, docCount, chunkCount (or message) |
 
 ### Response Events (route.ts)
