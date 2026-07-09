@@ -69,7 +69,7 @@ Clean up the implementation while keeping tests green. Run `npm test` after ever
 - **Colocated**: test files live next to source files (`foo.ts` -> `foo.test.ts`)
 - **Run all tests**: `npm test` (single run, CI mode)
 - **Watch mode**: `npm run test:watch` (re-runs on file changes)
-- **Current count**: 148 tests across 9 test files
+- **Current count**: 945 tests across 47 files (as of July 2026)
 
 ### What to Test
 
@@ -108,7 +108,7 @@ steps:
 All three checks must pass:
 
 1. **Typecheck** -- no TypeScript errors
-2. **Test** -- all 100+ tests pass
+2. **Test** -- the full Vitest suite passes
 3. **Build** -- the Next.js app compiles successfully
 
 CI runs on:
@@ -173,40 +173,7 @@ refactor: Extract keyword matching into pure function
 
 ## Project Structure
 
-```
-src/
-  app/
-    api/slack/route.ts    -- Webhook handler (side-effect layer)
-    page.tsx              -- Landing page
-  lib/
-    claude.ts             -- System prompt + agent loop
-    claude.test.ts        -- 30+ tests for prompt assembly
-    slack.ts              -- Slack API helpers
-    github.ts             -- GitHub API helpers
-    knowledge.ts          -- KV knowledge base
-    feedback.ts           -- KV feedback storage
-    repo-index.ts         -- Topic classification
-    repo-index.test.ts    -- Classification tests
-    auto-correct.ts       -- Stale entry detection
-    auto-correct.test.ts  -- Auto-correction tests
-    progress.ts           -- Progress message formatting
-    progress.test.ts      -- Progress formatting tests
-    mrkdwn.ts             -- Markdown to Slack converter
-    mrkdwn.test.ts        -- Conversion tests
-    references.ts         -- Reference formatting
-    references.test.ts    -- Reference tests
-  tools/
-    index.ts              -- Tool registry + executor
-    search-code.ts        -- search_code tool
-    search-repo.ts        -- search_repo tool (hybrid code + docs)
-    read-file.ts          -- read_file tool
-    list-issues.ts        -- list_issues tool
-    list-commits.ts       -- list_commits tool
-    list-prs.ts           -- list_prs tool
-    create-issue.ts       -- create_issue tool
-    create-issue.test.ts  -- Proposal parsing tests
-    save-knowledge.ts     -- save_knowledge tool
-```
+The canonical, annotated file tree lives in [CLAUDE.md](../CLAUDE.md#project-structure) at the repo root — one listing, one place to keep current. Test files are colocated next to their source files (`foo.ts` -> `foo.test.ts`) and are not repeated in the tree.
 
 ## Local Development Tips
 

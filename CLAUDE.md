@@ -8,9 +8,9 @@ A Slack agent with Claude AI intelligence and full GitHub repo access — reads 
 - **Slack**: Webhook mode via Next.js API route (`/api/slack`), ack-then-process via `after()`
 - **AI**: Anthropic Claude API with tool use (8 tools, adaptive per-turn round budget: quick 4 / standard 10 / deep 15)
 - **GitHub**: Octokit REST API (fine-grained PAT, read-only for code/PRs, read-write for issues)
-- **Knowledge**: Vercel KV (corrections, feedback, repo index cache) + Upstash Vector (semantic recall for KB + docs + source code, graceful lexical-only degradation)
+- **Knowledge**: Upstash Redis (Vercel Marketplace — corrections, feedback, repo index cache) + Upstash Vector (semantic recall for KB + docs + source code, graceful lexical-only degradation)
 - **Context**: CLAUDE.md + KB + feedback + repo index + source hierarchy + search strategy + recency/brevity rules
-- **Progress**: Live thinking messages with contextual emoji, deleted on answer
+- **Progress**: Live thinking messages with contextual emoji, reused in place as the first chunk of the answer
 - **Formatting**: Markdown-to-Slack mrkdwn conversion, typed references with emoji (📄📖🎫🔀📜), ranked by source-of-truth hierarchy, capped at 7
 - **Auto-correct**: Thumbs-down flags stale KB entries for user confirmation, stores pending correction state
 
@@ -51,13 +51,22 @@ src/
     slack.ts              — Slack client, signature verification, message helpers
     claude.ts             — Anthropic client, system prompt assembly, agent loop
     github.ts             — Octokit client (search, read, issues, PRs, commits, tree)
-    knowledge.ts          — Knowledge base (Vercel KV sorted set)
-    feedback.ts           — Feedback storage (Vercel KV) and Q&A context
+    knowledge.ts          — Knowledge base (Upstash Redis sorted set)
+    feedback.ts           — Feedback storage (Upstash Redis) and Q&A context
     issue-batch.ts        — Pure helpers for multi-proposal formatting and bulk-confirm matching
     effort-routing.ts     — Turn classifier (follow-up shouldReply gate + effort buckets → round/answer budgets)
     idempotency.ts        — Content-addressed idempotent execution (issue creation, #125)
     recovery.ts           — Processing markers + sweep decisions for died turns (#125)
     turn-runner.ts        — Mention/follow-up turn bodies (shared by webhook route + sweep)
+    compaction.ts         — Thread-history compaction (Haiku one-shot summary inside first preserved turn)
+    thread-filter.ts      — Pure follow-up gating + multi-turn history building from Slack threads
+    slack-throttle.ts     — Coalesces progress updates (~1 Slack edit / 1.2 s, serialized flushes)
+    slack-users.ts        — Slack user ID → display name resolution with KV caching
+    time-budget.ts        — Per-turn wall-clock budget (warn at 80%, force-stop at 100%)
+    topic-match.ts        — Question → repo-index topic pre-matching (injects starting paths)
+    path-filter.ts        — Excludes tooling/metadata paths from search, reads, and indexing
+    api-error.ts          — Anthropic API error classification + user-facing messages
+    reply-footer.ts       — Opt-in telemetry footer for replies (BM_REPLY_FOOTER=1)
     kb-extract.ts         — Passive-KB transcript rendering + fast-model extractor (#136)
     kb-gate.ts            — Deterministic provenance gate for passive KB candidates (pure)
     kb-proposals.ts       — Pure passive-KB lifecycle helpers (KV keys, idle decision, formatters)
@@ -84,7 +93,7 @@ src/
     list-commits.ts       — Recent commits on main (with dates)
     list-prs.ts           — Recent pull requests (open/merged/closed)
     create-issue.ts       — GitHub issue proposal + parser
-    save-knowledge.ts     — Knowledge base save (Vercel KV)
+    save-knowledge.ts     — Knowledge base save (Upstash Redis)
   evals/
     behavior/
       harness/            — Record/replay harness: cassette hashing, contracts, fakes, scenario runner
@@ -96,14 +105,17 @@ docs/
   architecture.md         — How the internals work (agent loop, prompt, tools)
   contributing.md         — Contributing guide (TDD, CI, fork workflow)
   troubleshooting.md      — Common issues and fixes
+  observability.md        — Structured JSON logs, Sentry integration, event catalog
+  evals.md                — Judge-lite output-contract rubric harness
   features/
     repo-index.md         — Lazy-rebuilt topic map (KV-cached)
-    knowledge-base.md     — Vercel KV knowledge base
+    knowledge-base.md     — Upstash Redis knowledge base (supersession lifecycle, top-k recall)
     source-hierarchy.md   — Source-of-truth hierarchy (5 levels)
     auto-correction.md    — Auto-correction on 👎 reactions
     progress-ux.md        — Live progress updates (emoji + status)
     message-splitting.md  — Long-reply chunking architecture (split-reply + boundary guard)
     issue-creation.md     — Batch issue proposals + bulk-confirm flow
+    config.md             — .battle-mage.json path annotations (graduated trust)
     effort-routing.md     — Fast-model follow-up gate + per-turn effort budgets
     hybrid-retrieval.md   — Lexical + semantic retrieval (Upstash Vector, RRF fusion, degradation)
     code-index.md         — Incremental semantic code index (manifest cursor, cron tick, src arm)
@@ -149,6 +161,9 @@ npm run eval:behavior:record  # Re-record against live APIs (local only; refuses
 | `GITHUB_PAT_BM` | Fine-grained PAT for target repo |
 | `GITHUB_OWNER` | GitHub org/user |
 | `GITHUB_REPO` | Repository name |
-| `CRON_SECRET` | Bearer token for `/api/cron/sweep` (unset = sweep denies all requests) |
+| `CRON_SECRET` | Bearer token for `/api/cron/*` (sweep + code-index; unset = deny all requests) |
+| `UPSTASH_REDIS_REST_URL` | Upstash Redis endpoint (Vercel Marketplace integration; legacy `KV_REST_API_*` also read) |
+| `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis token |
 | `UPSTASH_VECTOR_REST_URL` | Optional — Upstash Vector index (built-in embedding model) for hybrid retrieval |
 | `UPSTASH_VECTOR_REST_TOKEN` | Optional — Vector index token; unset pair degrades to lexical-only |
+| `SENTRY_DSN` | Optional — overrides the hardcoded DSN for structured log capture (see `docs/observability.md`) |

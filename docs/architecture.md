@@ -63,8 +63,8 @@ When a user types `@bm <question>`, Slack sends an `app_mention` event. The hand
 1. Strips the `<@BOT_ID>` mention from the message text
 2. Posts a thinking message in the thread
 3. Runs the agent loop with live progress updates
-4. Deletes the thinking message
-5. Posts the final answer with references
+4. Edits the thinking message in place with the first chunk of the final answer (reused as chunk 0 — see [One-answer lifecycle](#one-answer-lifecycle))
+5. Posts any remaining chunks as additional thread replies
 
 ### `message` (thread reply) -- Follow-up without re-mention
 
@@ -73,7 +73,8 @@ When a user posts in a thread where the bot has already replied, Slack sends a `
 1. Checks this is a thread reply (not a top-level message)
 2. Skips messages that @mention the bot (those are handled by `app_mention`)
 3. Checks if the bot has previously replied in this thread (via `conversations.replies`)
-4. If yes, processes the message the same way as an `app_mention`
+4. Runs the fail-closed follow-up classifier (Haiku, #126) to decide whether the message is actually addressed to the bot — a decline produces zero Slack output
+5. If yes, processes the message the same way as an `app_mention`
 
 ### `reaction_added` with `white_check_mark` -- Issue creation confirmation
 
@@ -95,13 +96,13 @@ When a user reacts with :white_check_mark: to a bot message containing an issue 
 **Thumbs down (-1)**:
 1. Fetches the Q&A context
 2. Saves a negative feedback entry
-3. Runs auto-correction: identifies stale KB entries (keyword matching) and doc references
-4. Removes stale KB entries from Vercel KV
-5. Replies asking the user what was wrong
+3. Runs auto-correction: identifies stale KB entry candidates (keyword matching) and doc references
+4. Flags the candidates and stores a pending-correction record in KV — nothing is removed
+5. Replies asking the user what was wrong; when the user answers, the correction is saved to the KB and each flagged entry is marked **superseded** by it (retired but kept in history — supersession, not deletion, see #124)
 
 ## The Recovery Sweep — `GET /api/cron/sweep`
 
-A second entry point alongside `/api/slack`, invoked by Vercel Cron every 5 minutes (`vercel.json`) and authenticated via `Authorization: Bearer $CRON_SECRET` (exact match, fail closed). It exists because Vercel can kill the container mid-`after()` — the answer then silently dies.
+A cron entry point alongside `/api/slack` (there are three HTTP entry points in total: `/api/slack`, `/api/cron/sweep`, `/api/cron/code-index`), invoked by Vercel Cron every 5 minutes (`vercel.json`) and authenticated via `Authorization: Bearer $CRON_SECRET` (exact match, fail closed). It exists because Vercel can kill the container mid-`after()` — the answer then silently dies.
 
 1. Every mention/follow-up turn writes a processing marker (`processing:{channel}:{threadTs}` + a `processing:index` zset entry) as the **first step of the `after()` body** and clears it in the `after()` `finally` — so only container death leaves a marker behind. The write stays off the ack path (KV latency must never push the 200 OK past Slack's 3-second deadline); the tiny ack→`after()` death window is an accepted trade
 2. The sweep walks the index and classifies each marker: younger than 15 minutes → wait (could still be a live invocation; the route's `maxDuration` is 300 s, so >15 min is provably dead); stale first attempt → retry; stale retry → give up with a visible failure notice in the thread; index entry without a marker → orphan cleanup
@@ -109,6 +110,10 @@ A second entry point alongside `/api/slack`, invoked by Vercel Cron every 5 minu
 4. Retries verify the bot didn't already answer after the marker was written, then re-run the turn through the **same** turn-runner code path (`src/lib/turn-runner.ts`) the webhook uses — idempotent issue creation makes this safe even for turns that had already filed issues
 
 See `src/lib/recovery.ts` for the marker/staleness model and `TELEMETRY.md` for the recovery-funnel queries.
+
+## The Code Indexer — `GET /api/cron/code-index`
+
+The third entry point, also invoked by Vercel Cron every 5 minutes (`vercel.json`) with the same `Authorization: Bearer $CRON_SECRET` fail-closed auth as the sweep. Each invocation runs one bounded incremental tick: diff the repo tree against the stored manifest cursor, embed/delete the difference into the `{owner}_{repo}:src` vector namespace, persist progress. The route only does auth, dispatch, and observability — indexing invariants live in `src/lib/code-index.ts`. See [Code Index](./features/code-index.md).
 
 ## System Prompt Assembly
 
@@ -120,9 +125,9 @@ The function `assembleSystemPrompt()` takes these inputs:
 |-------|--------|-------------|------|
 | `owner` / `repo` | Environment variables | Target GitHub repository | both |
 | `claudeMd` | `CLAUDE.md` in the target repo | Project-specific context (cached per cold start) | volatile |
-| `knowledge` | Vercel KV + Upstash Vector | Top-k KB recall — the ≤5 entries most relevant to the current question (hybrid lexical + semantic retrieval, see [Hybrid Retrieval](./features/hybrid-retrieval.md)), not the full KB | volatile |
-| `feedback` | Vercel KV | Recent thumbs up/down feedback summaries | volatile |
-| `repoIndex` | Vercel KV (lazy-rebuilt) | Auto-generated topic map of the repository | volatile |
+| `knowledge` | Upstash Redis (Vercel Marketplace) + Upstash Vector | Top-k KB recall — the ≤5 entries most relevant to the current question (hybrid lexical + semantic retrieval, see [Hybrid Retrieval](./features/hybrid-retrieval.md)), not the full KB | volatile |
+| `feedback` | Upstash Redis | Recent thumbs up/down feedback summaries | volatile |
+| `repoIndex` | Upstash Redis (lazy-rebuilt) | Auto-generated topic map of the repository | volatile |
 | `pathAnnotations` | `.battle-mage.json` in target repo | Per-path trust annotations | volatile |
 
 ### Stable zone (XML-tagged, ordered)
@@ -221,7 +226,7 @@ Long threads (Slack Q&A with the bot accumulating over many follow-ups) used to 
 - **Action:** oldest turns are summarized and the summary is embedded as leading context INSIDE the first preserved user turn, prefixed with `[Conversation summary — earlier turns condensed]`. This preserves Anthropic's "first message must be role=user" invariant without needing a synthetic assistant turn. The remaining preserved turns are verbatim so local context (references to "that file we read", etc.) stays intact.
 - **Model:** Haiku 4.5 (`FAST_MODEL`). Runs a single non-streaming `messages.create` with a summarization prompt.
 - **Fail-safe:** if the compactor throws (rate limit, Haiku down), `compactThread` returns the original history and logs `thread_compaction_error`. The agent still runs — uncompacted, which is expensive but correct.
-- **One-shot, not rolling.** Junior's reference implementation uses rolling compaction (up to 16 layers). For battle-mage's QA-shaped threads, one compaction is sufficient; we'll revisit if we ever see a thread that trips the trigger twice.
+- **One-shot, not rolling.** Rolling compaction (re-compacting repeatedly, many layers deep) is an alternative design. For battle-mage's QA-shaped threads, one compaction is sufficient; we'll revisit if we ever see a thread that trips the trigger twice.
 
 Integration point: `runAgent` in `src/lib/claude.ts`. Single check at the top of the function, before the round loop. Covers both mention-follow-up and thread-follow-up flows because both path through `runAgent`.
 
@@ -266,7 +271,9 @@ Eight tools are registered with Claude's tool-use API:
 | `list_prs` | `pulls.list` | Yes — typed as `pr`, includes number + title |
 | `create_issue` | None (proposal only) | No |
 | `search_repo` | `search.code` + Upstash Vector | No (discovery only) — hybrid code + docs search, see [Hybrid Retrieval](./features/hybrid-retrieval.md) |
-| `save_knowledge` | None (Vercel KV + Upstash Vector) | No |
+| `save_knowledge` | None (Upstash Redis + Upstash Vector) | No |
+
+Hybrid retrieval (KB recall and `search_repo`) fuses a lexical arm with a semantic arm backed by Upstash Vector across three namespaces: `{owner}_{repo}:kb` (knowledge entries), `{owner}_{repo}:docs:{sha}` (doc chunks, SHA-pinned and atomically repointed on rebuild), and `{owner}_{repo}:src` (code chunks from the incremental indexer). If the vector layer is unconfigured or errors, retrieval degrades to lexical-only instead of failing the turn. See [Hybrid Retrieval](./features/hybrid-retrieval.md).
 
 The tool registry is in `src/tools/index.ts`. Each tool is a separate file that exports:
 - A `Tool` definition (name, description, input schema) for Claude's API
@@ -342,40 +349,10 @@ This ensures users see the most authoritative sources first.
 | **Search first, read second** | The system prompt instructs Claude to search for code patterns before reading files. A single search returns multiple paths with context, avoiding blind file reads. |
 | **Adaptive tool round budget** | An effort classifier sizes each turn's round cap (quick 4 / standard 10 / deep 15). The hard ceiling of 15 prevents runaway tool loops, and the system prompt instructs Claude to synthesize early rather than exhausting all rounds. See [Effort Routing](./features/effort-routing.md). |
 | **References from reads only** | Search results are discovery aids and do not appear in references. Only files the agent actually reads (via `read_file`) are cited. |
-| **KV for knowledge, not GitHub** | The knowledge base lives in Vercel KV, not in the GitHub repo. The GitHub PAT does not need Contents: Write permission. |
+| **KV for knowledge, not GitHub** | The knowledge base lives in Upstash Redis (Vercel Marketplace), not in the GitHub repo. The GitHub PAT does not need Contents: Write permission. |
 | **Split long answers, don't truncate** | Answers over ~3K chars post as multiple thread replies (`[continued ↓]`) instead of being silently cut off. Makes Slack's `msg_too_long` architecturally unreachable on the happy path. See [Message Splitting](./features/message-splitting.md). |
 | **Thinking message reused as chunk 0** | The "🧠 Battle Mage is working…" message is edited in place with the first chunk of the answer — no delete-and-repost flicker. Subsequent chunks post as new thread replies. |
 
 ## Project Structure
 
-```
-src/
-  app/
-    api/slack/route.ts    -- Webhook handler (mention, reaction, thread follow-up)
-    page.tsx              -- Landing page
-    layout.tsx            -- Root layout
-  lib/
-    slack.ts              -- Slack client, signature verification, message helpers
-    claude.ts             -- Anthropic client, system prompt assembly, agent loop
-    github.ts             -- Octokit client (search, read, issues, PRs, commits, tree)
-    knowledge.ts          -- Knowledge base (Vercel KV sorted set + vector embedding)
-    feedback.ts           -- Feedback storage (Vercel KV) and Q&A context
-    repo-index.ts         -- Repository topic index (lazy rebuild on SHA change) + doc chunk embedding
-    vector.ts             -- Upstash Vector wrapper (non-throwing, observability, timeout)
-    retrieval.ts          -- Pure RRF fusion, age boost, lexical ranking
-    auto-correct.ts       -- Stale KB entry detection and doc reference flagging
-    progress.ts           -- Progress message formatter (tool name to emoji + status)
-    mrkdwn.ts             -- Markdown to Slack mrkdwn converter
-    references.ts         -- Reference deduplication, capping, and formatting
-    split-reply.ts        -- Pure splitter for long Slack replies (paragraph/line/word/fence-aware)
-  tools/
-    index.ts              -- Tool registry and executor
-    search-code.ts        -- GitHub code search
-    search-repo.ts        -- Hybrid code + docs search (lexical + semantic, RRF-fused)
-    read-file.ts          -- GitHub file/directory read
-    list-issues.ts        -- GitHub issue list and lookup
-    list-commits.ts       -- Recent commits on main
-    list-prs.ts           -- Recent pull requests
-    create-issue.ts       -- Issue proposal drafting and message parsing
-    save-knowledge.ts     -- Knowledge base save (Vercel KV)
-```
+The canonical, annotated file tree lives in [CLAUDE.md](../CLAUDE.md#project-structure) at the repo root — one listing, one place to keep current.

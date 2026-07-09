@@ -10,7 +10,7 @@ A Slack agent powered by Claude AI that reads your GitHub repo in real time — 
 - **Issue and PR awareness** — lists recent issues, PRs, and commits sorted by date
 - **Issue creation** — drafts issues with a preview; creates only after ✅ reaction
 - **Thread conversations** — follow up without re-mentioning the bot
-- **Persistent knowledge base** — remembers corrections across conversations (Vercel KV)
+- **Persistent knowledge base** — remembers corrections across conversations (Upstash Redis via the Vercel Marketplace)
 - **Repo index** — auto-built topic map for fast navigation, rebuilt lazily on push
 - **Source-of-truth hierarchy** — weights code over docs over KB when sources conflict
 - **Auto-correction** — flags possibly stale knowledge entries on 👎, saves corrections directly to KB
@@ -55,6 +55,11 @@ See the [full setup guide](docs/setup.md) for Slack app creation, GitHub PAT, Ve
 | Hybrid Retrieval (lexical + semantic) | [docs/features/hybrid-retrieval.md](docs/features/hybrid-retrieval.md) |
 | Path Annotations (.battle-mage.json) | [docs/features/config.md](docs/features/config.md) |
 | Adaptive Effort Routing | [docs/features/effort-routing.md](docs/features/effort-routing.md) |
+| Message Splitting (long replies) | [docs/features/message-splitting.md](docs/features/message-splitting.md) |
+| Issue Creation (batch + bulk confirm) | [docs/features/issue-creation.md](docs/features/issue-creation.md) |
+| Incremental Code Index | [docs/features/code-index.md](docs/features/code-index.md) |
+| Passive KB Learning | [docs/features/passive-kb-learning.md](docs/features/passive-kb-learning.md) |
+| Behavior Evals (record/replay) | [docs/features/behavior-evals.md](docs/features/behavior-evals.md) |
 
 ## Environment Variables
 
@@ -66,17 +71,21 @@ See the [full setup guide](docs/setup.md) for Slack app creation, GitHub PAT, Ve
 | `GITHUB_PAT_BM` | Fine-grained PAT scoped to your target repo |
 | `GITHUB_OWNER` | GitHub org or username |
 | `GITHUB_REPO` | Repository name |
+| `UPSTASH_REDIS_REST_URL` | Upstash Redis endpoint (Vercel Marketplace integration; legacy `KV_REST_API_*` also read) |
+| `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis token |
+| `CRON_SECRET` | Bearer token for the cron routes (recovery sweep + code-index tick) |
 | `UPSTASH_VECTOR_REST_URL` | Optional — Upstash Vector index (built-in embedding model) for hybrid retrieval |
 | `UPSTASH_VECTOR_REST_TOKEN` | Optional — token for the Vector index; without the pair, search degrades to lexical-only |
+| `SENTRY_DSN` | Optional — structured log capture and error tracking (see [docs/observability.md](docs/observability.md)) |
 
 ## How It Works
 
 ```
 User @mentions @bm in Slack
   → Webhook received, ack'd within 3 seconds
-  → Live progress: 🧠 → 🔍 → 👓 → ✏️
+  → Live progress: 🧠 → 🔍 → 👓
   → Claude reads code, issues, PRs via GitHub API
-  → Answer posted in thread, progress message deleted
+  → Progress message edited in place to become the answer (long answers continue in extra replies)
 ```
 
 For the full architecture walkthrough, see [docs/architecture.md](docs/architecture.md).

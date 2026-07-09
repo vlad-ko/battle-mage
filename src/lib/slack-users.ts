@@ -1,7 +1,7 @@
 /**
  * Slack user ID → display name resolution with KV caching.
  *
- * Junior's pattern (see #80): pre-resolve every Slack user in a thread and
+ * Approach (see #80): pre-resolve every Slack user in a thread and
  * inject their IDs into the system prompt as `<@USERID>` tokens so the
  * model can @-mention teammates correctly without a separate tool call.
  *

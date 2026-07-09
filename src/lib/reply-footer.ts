@@ -3,8 +3,8 @@
  *
  * Appends a single italic Slack line showing duration, token usage, cache
  * metrics, and request ID to answer messages. Disabled by default; enable
- * with `BM_REPLY_FOOTER=1`. Junior's `_45s · 3.2k in · 0.8k out · abc12345_`
- * pattern — turns a black-box agent reply into something you can debug at
+ * with `BM_REPLY_FOOTER=1`. The `_45s · 3.2k in · 0.8k out · abc12345_`
+ * format turns a black-box agent reply into something you can debug at
  * a glance.
  *
  * See #79.
