@@ -59,8 +59,15 @@ export interface VectorStore {
  * (not at module load) so tests and late-injected env both work.
  */
 export function isVectorConfigured(): boolean {
+  // GitHub identity is part of "configured": namespaces are derived from
+  // GITHUB_OWNER/GITHUB_REPO, and running vector ops without them would
+  // silently read/write a shared "undefined_undefined:*" namespace. A
+  // missing identity degrades exactly like missing Upstash creds.
   return Boolean(
-    process.env.UPSTASH_VECTOR_REST_URL && process.env.UPSTASH_VECTOR_REST_TOKEN,
+    process.env.UPSTASH_VECTOR_REST_URL &&
+      process.env.UPSTASH_VECTOR_REST_TOKEN &&
+      process.env.GITHUB_OWNER &&
+      process.env.GITHUB_REPO,
   );
 }
 

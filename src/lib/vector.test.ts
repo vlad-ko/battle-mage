@@ -42,6 +42,8 @@ function makeFakeStore(overrides: Partial<VectorStore> = {}): VectorStore {
 function stubVectorEnv(): void {
   vi.stubEnv("UPSTASH_VECTOR_REST_URL", "https://example-vector.upstash.io");
   vi.stubEnv("UPSTASH_VECTOR_REST_TOKEN", "test-token");
+  vi.stubEnv("GITHUB_OWNER", "acme");
+  vi.stubEnv("GITHUB_REPO", "backend");
 }
 
 beforeEach(() => {
@@ -101,6 +103,17 @@ describe("isVectorConfigured", () => {
   it("true when both are set", () => {
     stubVectorEnv();
     expect(isVectorConfigured()).toBe(true);
+  });
+
+  it("false when Upstash creds are set but the GitHub repo identity is missing — prevents a shared undefined_undefined:* namespace", () => {
+    vi.stubEnv("UPSTASH_VECTOR_REST_URL", "https://example-vector.upstash.io");
+    vi.stubEnv("UPSTASH_VECTOR_REST_TOKEN", "test-token");
+    vi.stubEnv("GITHUB_OWNER", "");
+    vi.stubEnv("GITHUB_REPO", "backend");
+    expect(isVectorConfigured()).toBe(false);
+    vi.stubEnv("GITHUB_OWNER", "acme");
+    vi.stubEnv("GITHUB_REPO", "");
+    expect(isVectorConfigured()).toBe(false);
   });
 });
 
