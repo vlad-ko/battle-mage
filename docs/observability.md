@@ -233,6 +233,7 @@ without a human ✅ / "confirm all". See
 | `kb_batch_confirmed` | A user claimed a pending KB batch (✅ or "confirm all") | count, confirmVia, confirmingUser, latencyMs, channel, threadTs |
 | `kb_batch_saved` | The claimed batch finished saving | totalCount, successCount, failureCount, supersededTotal, durationMs |
 | `kb_save_error` | One entry in a claimed batch failed to save (batch continues) | entrySample, errorClass, errorMessage |
+| `kb_supersede_error` | A flagged entry failed to retire AFTER its correction saved — the save still reports success (best-effort, mirrors `correction_supersede_error`) | channel, threadTs, entrySample, flaggedSample, errorMessage |
 | `kb_batch_claim_lost` | A racing confirmation won the DEL claim — benign skip | channel, firstTs, confirmVia |
 | `kb_batch_reaction_after_claim` | A second ✅ hit an already-claimed KB proposal (tombstone) — silent return | channel, messageTs |
 | `kb_extract_claim_lost` | Another sweep instance holds the NX claim (`kb-extract:claim:*`, 120 s TTL) — benign skip | channel, threadTs |

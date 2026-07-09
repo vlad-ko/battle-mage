@@ -230,6 +230,57 @@ export async function fetchThreadMessages(
   }
 }
 
+// ── Paginated thread-tail fetch (#136 / PR #139 review) ──────────────
+// conversations.replies pages OLDEST-first. fetchThreadMessages above
+// deliberately keeps its single-page/50 behavior for the turn flows;
+// passive-KB extraction needs the MOST RECENT MAX_EXTRACTION_MESSAGES
+// (60 > 50), so this helper follows next_cursor to the thread end
+// (bounded) and keeps a rolling tail.
+
+/** Per-page fetch size. Must stay >= kb-extract's
+ *  MAX_EXTRACTION_MESSAGES (pinned by a test) so one page can always
+ *  fill the extraction window. */
+export const THREAD_TAIL_PAGE_LIMIT = 200;
+
+/** Traversal bound: at most this many pages are followed (5 × 200 =
+ *  1000 messages). A pathological mega-thread returns the tail of the
+ *  traversed window instead of hanging the sweep. */
+export const MAX_THREAD_TAIL_PAGES = 5;
+
+export async function fetchThreadTail(
+  channel: string,
+  threadTs: string,
+  maxMessages: number,
+): Promise<ThreadMessage[]> {
+  try {
+    const tail: ThreadMessage[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_THREAD_TAIL_PAGES; page++) {
+      const result = await slack.conversations.replies({
+        channel,
+        ts: threadTs,
+        limit: THREAD_TAIL_PAGE_LIMIT,
+        cursor,
+      });
+      for (const m of result.messages ?? []) {
+        tail.push({ user: m.user, text: m.text ?? "", bot_id: m.bot_id, ts: m.ts });
+      }
+      // Keep only the most recent maxMessages — pages arrive
+      // oldest-first, so trimming the head preserves the tail.
+      if (tail.length > maxMessages) {
+        tail.splice(0, tail.length - maxMessages);
+      }
+      cursor = result.response_metadata?.next_cursor || undefined;
+      if (!cursor) break;
+    }
+    return tail;
+  } catch {
+    // Same degradation contract as fetchThreadMessages: an API error
+    // yields an empty transcript, never a throw.
+    return [];
+  }
+}
+
 // ── Check if bot is participating in a thread ────────────────────────
 export async function isBotInThread(
   channel: string,

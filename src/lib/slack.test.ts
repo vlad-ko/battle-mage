@@ -4,8 +4,12 @@ import {
   SLACK_MESSAGE_CHAR_LIMIT,
   SlackMessageOversizeError,
   postReplyInChunks,
+  fetchThreadTail,
+  THREAD_TAIL_PAGE_LIMIT,
+  MAX_THREAD_TAIL_PAGES,
   slack,
 } from "./slack";
+import { MAX_EXTRACTION_MESSAGES } from "./kb-extract";
 
 describe("requireSlackMessageText (fail-loud boundary guard)", () => {
   it("returns the text unchanged when under the limit", () => {
@@ -145,5 +149,76 @@ describe("postReplyInChunks returns every posted TS", () => {
       text: bigText,
     });
     expect(result.allTs.length).toBe(result.chunks);
+  });
+});
+
+// ── Paginated thread-tail fetch (#136 / PR #139 review) ─────────────
+// conversations.replies pages OLDEST-first, capped per request. The
+// passive-KB extraction window (MAX_EXTRACTION_MESSAGES = 60) exceeds
+// the old single-page fetch of 50, so the extraction path uses this
+// helper: follow next_cursor to the thread end (bounded) and keep only
+// the most recent `maxMessages`.
+describe("fetchThreadTail (paginated, most-recent tail)", () => {
+  const msg = (i: number) => ({ user: "U1", text: `m${i}`, ts: `${i}.0` });
+  const range = (from: number, to: number) =>
+    Array.from({ length: to - from }, (_, k) => msg(from + k));
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("follows next_cursor to the thread end and returns the most recent maxMessages", async () => {
+    const pages = [
+      { messages: range(0, 50), response_metadata: { next_cursor: "c1" } },
+      { messages: range(50, 100), response_metadata: { next_cursor: "c2" } },
+      { messages: range(100, 130), response_metadata: { next_cursor: "" } },
+    ];
+    const seenCursors: (string | undefined)[] = [];
+    let call = 0;
+    vi.spyOn(slack.conversations, "replies").mockImplementation((async (args: {
+      cursor?: string;
+    }) => {
+      seenCursors.push(args.cursor);
+      return pages[call++];
+    }) as never);
+
+    const tail = await fetchThreadTail("C1", "17.1", 60);
+    expect(seenCursors).toEqual([undefined, "c1", "c2"]);
+    expect(tail).toHaveLength(60);
+    // The tail of a 130-message thread is m70..m129 — NOT the first page.
+    expect(tail[0].text).toBe("m70");
+    expect(tail[59].text).toBe("m129");
+  });
+
+  it("returns the whole thread when it is shorter than maxMessages", async () => {
+    vi.spyOn(slack.conversations, "replies").mockResolvedValue({
+      messages: range(0, 3),
+      response_metadata: { next_cursor: "" },
+    } as never);
+    const tail = await fetchThreadTail("C1", "17.1", 60);
+    expect(tail.map((m) => m.text)).toEqual(["m0", "m1", "m2"]);
+  });
+
+  it("stops after MAX_THREAD_TAIL_PAGES even when a cursor remains (bounded traversal)", async () => {
+    const replies = vi
+      .spyOn(slack.conversations, "replies")
+      .mockResolvedValue({
+        messages: range(0, THREAD_TAIL_PAGE_LIMIT),
+        response_metadata: { next_cursor: "more" },
+      } as never);
+    const tail = await fetchThreadTail("C1", "17.1", 60);
+    expect(replies).toHaveBeenCalledTimes(MAX_THREAD_TAIL_PAGES);
+    expect(tail).toHaveLength(60);
+  });
+
+  it("returns [] on API error (same degradation as fetchThreadMessages)", async () => {
+    vi.spyOn(slack.conversations, "replies").mockRejectedValue(new Error("boom"));
+    expect(await fetchThreadTail("C1", "17.1", 60)).toEqual([]);
+  });
+
+  it("pins the constant relation: one page covers the extraction window", () => {
+    // If MAX_EXTRACTION_MESSAGES ever grows past the per-page fetch
+    // size, the tail could silently under-fill from a single page.
+    expect(THREAD_TAIL_PAGE_LIMIT).toBeGreaterThanOrEqual(MAX_EXTRACTION_MESSAGES);
   });
 });

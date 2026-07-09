@@ -35,6 +35,13 @@ export const KB_EXTRACT_IDLE_MS = 14_400_000;
  *  10s cap, and the sweep shares its budget with recovery work. */
 export const MAX_KB_EXTRACT_PER_SWEEP = 3;
 
+/** Discovery-scan window per sweep (PR #139): the sweep reads only the
+ *  first N zset members ASCENDING by score. Score = last activity, so
+ *  the window holds the oldest/most-idle threads — exactly the
+ *  extract/prune candidates. Recent members past the window are simply
+ *  untouched until they age into it; a full (0, -1) scan is O(n). */
+export const KB_EXTRACT_SCAN_LIMIT = 50;
+
 /** Failed extraction attempts before the thread is given up on
  *  (until new activity re-arms it). `>=` gives up. */
 export const MAX_KB_EXTRACTION_ATTEMPTS = 2;
@@ -137,6 +144,28 @@ export interface PendingKbBatch {
   messageFirstTs: string;
 }
 
+// ── Slack mention-token escaping (PR #139 security finding) ─────────
+
+/**
+ * Neutralize Slack control sequences in model-produced / user-quoted
+ * text before it is posted. Candidate entries, evidence quotes, and
+ * flagged KB texts come from an untrusted extractor reading arbitrary
+ * thread content — a literal `<!channel>`, `<!here>`, `<@U…>`, or
+ * `<#C…>` in any of them would trigger real pings when posted.
+ *
+ * Per Slack's escaping rules only three characters need encoding, and
+ * `&` MUST go first so pre-existing entities double-escape predictably:
+ * `&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`. This neutralizes ALL
+ * `<…>` control sequences (mentions, broadcasts, channel links, URLs).
+ * Pure function.
+ */
+export function escapeSlackMentions(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 // ── Proposal message formatter ────────────────────────────────────────
 
 const DIVIDER = "───────────────────";
@@ -162,13 +191,15 @@ export function formatKbProposalMessage(
     "",
   ];
   candidates.forEach((c, i) => {
-    lines.push(`${i + 1}. _"${c.entry}"_ (${c.kind})`);
+    // Everything model-produced or thread-quoted is escaped — see
+    // escapeSlackMentions above (PR #139 security finding).
+    lines.push(`${i + 1}. _"${escapeSlackMentions(c.entry)}"_ (${c.kind})`);
     for (const quote of c.evidenceQuotes) {
-      lines.push(`    > ${quote}`);
+      lines.push(`    > ${escapeSlackMentions(quote)}`);
     }
     if (c.flaggedKbEntries.length > 0) {
       lines.push(
-        `    ↳ retires: ${c.flaggedKbEntries.map((e) => `_"${e}"_`).join(", ")}`,
+        `    ↳ retires: ${c.flaggedKbEntries.map((e) => `_"${escapeSlackMentions(e)}"_`).join(", ")}`,
       );
     }
   });
@@ -202,7 +233,7 @@ export function summarizeKbSaveResult(outcomes: KbSaveOutcome[]): string {
         s.supersededCount > 0
           ? ` — retired ${s.supersededCount} stale ${s.supersededCount === 1 ? "entry" : "entries"}`
           : "";
-      lines.push(`  • _"${s.entry}"_${retired}`);
+      lines.push(`  • _"${escapeSlackMentions(s.entry)}"_${retired}`);
     }
   }
   if (failed.length > 0) {
@@ -210,7 +241,7 @@ export function summarizeKbSaveResult(outcomes: KbSaveOutcome[]): string {
     const noun = failed.length === 1 ? "entry" : "entries";
     lines.push(`:warning: ${failed.length} ${noun} failed to save:`);
     for (const f of failed) {
-      lines.push(`  • _"${f.entry}"_ — ${f.errorMessage}`);
+      lines.push(`  • _"${escapeSlackMentions(f.entry)}"_ — ${f.errorMessage}`);
     }
   }
   return lines.join("\n");

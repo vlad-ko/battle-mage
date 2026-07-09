@@ -28,13 +28,14 @@ import { log as defaultLog, type LogFn, type RequestLogger } from "./logger";
 import {
   slack,
   replyInThread,
-  fetchThreadMessages,
+  fetchThreadTail,
   getBotUserId,
 } from "./slack";
 import { indexMember, parseIndexMember } from "./recovery";
 import {
   extractKbCandidates,
   buildExtractionTranscript,
+  MAX_EXTRACTION_MESSAGES,
 } from "./kb-extract";
 import {
   gateKbCandidates,
@@ -51,6 +52,7 @@ import {
   kbBatchThreadPointerKey,
   kbBatchTombstoneKey,
   KB_EXTRACT_INDEX_KEY,
+  KB_EXTRACT_SCAN_LIMIT,
   MAX_KB_EXTRACT_PER_SWEEP,
   MAX_KB_EXTRACTION_ATTEMPTS,
   KB_STATE_TTL_SEC,
@@ -187,7 +189,14 @@ export async function runKbExtractionSweep(
     skipped: 0,
   };
 
-  const members = (await kv.zrange(KB_EXTRACT_INDEX_KEY, 0, -1)) as string[];
+  // Bounded window (PR #139): ascending score = oldest activity first,
+  // so the first KB_EXTRACT_SCAN_LIMIT members are the most-idle
+  // threads — the extract/prune candidates. Never a full (0, -1) scan.
+  const members = (await kv.zrange(
+    KB_EXTRACT_INDEX_KEY,
+    0,
+    KB_EXTRACT_SCAN_LIMIT - 1,
+  )) as string[];
   const now = Date.now();
   // conversations.info once per channel per sweep.
   const publicnessCache = new Map<string, "public" | "non_public" | "unknown">();
@@ -308,7 +317,14 @@ export async function runKbExtractionSweep(
       // ── Extract ───────────────────────────────────────────────────
       const priorHashes = state?.proposedHashes ?? [];
       const botId = await getBotUserId();
-      const threadMsgs = await fetchThreadMessages(channel, threadTs);
+      // Paginated tail (PR #139): fetchThreadMessages caps at 50
+      // unpaginated, below the 60-message extraction window — the tail
+      // helper follows next_cursor and keeps the most recent messages.
+      const threadMsgs = await fetchThreadTail(
+        channel,
+        threadTs,
+        MAX_EXTRACTION_MESSAGES,
+      );
       const { rendered, entries } = buildExtractionTranscript(threadMsgs, botId ?? "");
 
       if (entries.length === 0) {
@@ -499,9 +515,26 @@ export async function executeKbBatchSave(
       const id = await saveKnowledgeEntry(c.entry);
       let supersededCount = 0;
       if (c.kind === "correction") {
+        // Best-effort retirement (PR #139): the entry IS durably saved
+        // at this point — a KV flake while retiring flagged entries
+        // must never reject this promise and misreport the save as a
+        // failure. Mirrors the 👎 correction flow's semantics
+        // (correction_supersede_error in turn-runner.ts). Worst case a
+        // stale entry stays visible — observable via the count below.
         for (const flaggedText of c.flaggedKbEntries) {
-          if (await markKnowledgeSuperseded(flaggedText, id)) {
-            supersededCount++;
+          try {
+            if (await markKnowledgeSuperseded(flaggedText, id)) {
+              supersededCount++;
+            }
+          } catch (err) {
+            rlog("kb_supersede_error", {
+              channel,
+              threadTs,
+              entrySample: c.entry.slice(0, 80),
+              flaggedSample: flaggedText.slice(0, 80),
+              errorMessage:
+                err instanceof Error ? err.message.slice(0, 200) : String(err),
+            });
           }
         }
       }

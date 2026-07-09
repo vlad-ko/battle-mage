@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   decideKbExtraction,
+  escapeSlackMentions,
   formatKbProposalMessage,
   summarizeKbSaveResult,
   kbStateKey,
@@ -111,6 +112,59 @@ describe("formatKbProposalMessage", () => {
     const msg = formatKbProposalMessage([C]);
     expect(msg).not.toContain(SINGLE_PROPOSAL_ANCHOR);
     expect(msg).not.toContain(BATCH_PROPOSAL_HEADER);
+  });
+});
+
+describe("escapeSlackMentions", () => {
+  it("escapes & FIRST, then < and > (pre-existing entities double-escape predictably)", () => {
+    expect(escapeSlackMentions("a & b")).toBe("a &amp; b");
+    expect(escapeSlackMentions("&lt;")).toBe("&amp;lt;");
+    expect(escapeSlackMentions("a < b > c & d")).toBe("a &lt; b &gt; c &amp; d");
+  });
+  it("neutralizes every Slack control sequence", () => {
+    expect(escapeSlackMentions("<!channel> <!here> <@U123> <#C42|general>")).toBe(
+      "&lt;!channel&gt; &lt;!here&gt; &lt;@U123&gt; &lt;#C42|general&gt;",
+    );
+  });
+  it("leaves plain text untouched", () => {
+    expect(escapeSlackMentions("The auth module lives in app/Services/Auth")).toBe(
+      "The auth module lives in app/Services/Auth",
+    );
+  });
+});
+
+describe("formatKbProposalMessage — mention-token escaping", () => {
+  const HOSTILE: EligibleKbCandidate = {
+    entry: "Ping <!channel> when deploys fail",
+    kind: "correction",
+    evidence: [1],
+    confidence: 0.9,
+    hash: "h1",
+    flaggedKbEntries: ["Notify <!here> on rollback"],
+    evidenceQuotes: ["ask <@U123> about the deploy pings"],
+  };
+
+  it("renders entry, quotes, and flagged entries with escaped tokens — no raw control sequences", () => {
+    const msg = formatKbProposalMessage([HOSTILE]);
+    expect(msg).not.toContain("<!channel>");
+    expect(msg).not.toContain("<@U123>");
+    expect(msg).not.toContain("<!here>");
+    expect(msg).toContain("&lt;!channel&gt;");
+    expect(msg).toContain("&lt;@U123&gt;");
+    expect(msg).toContain("&lt;!here&gt;");
+  });
+});
+
+describe("summarizeKbSaveResult — mention-token escaping", () => {
+  it("escapes model-produced entry text in both saved and failed lines", () => {
+    const msg = summarizeKbSaveResult([
+      { status: "saved", entry: "Ping <!channel> on deploys", id: "id-1", supersededCount: 0 },
+      { status: "error", entry: "Ask <@U123> first", errorMessage: "kv down" },
+    ]);
+    expect(msg).not.toContain("<!channel>");
+    expect(msg).not.toContain("<@U123>");
+    expect(msg).toContain("&lt;!channel&gt;");
+    expect(msg).toContain("&lt;@U123&gt;");
   });
 });
 

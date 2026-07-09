@@ -99,7 +99,16 @@ try/catch — a KB failure can never fail recovery.
   (4h) of quiet. Strict `>` — and a FUTURE score (clock skew) always
   waits.
 - **Budget**: at most `MAX_KB_EXTRACT_PER_SWEEP` (3) model calls per
-  sweep; each capped at `KB_EXTRACTOR_TIMEOUT_MS` (10s).
+  sweep; each capped at `KB_EXTRACTOR_TIMEOUT_MS` (10s). The index scan
+  itself is bounded too: only the first `KB_EXTRACT_SCAN_LIMIT` (50)
+  zset members per sweep, ascending by score — i.e. the most-idle
+  threads first; recent members age into the window naturally.
+- **Transcript fetch**: `fetchThreadTail` (slack.ts) paginates
+  `conversations.replies` (oldest-first) following `next_cursor` up to
+  `MAX_THREAD_TAIL_PAGES` (5) pages of `THREAD_TAIL_PAGE_LIMIT` (200)
+  and keeps the most recent `MAX_EXTRACTION_MESSAGES` (60) — the
+  single-page 50-message `fetchThreadMessages` would truncate the
+  extraction window.
 - **Retries**: a failed extraction retries on later sweeps up to
   `MAX_KB_EXTRACTION_ATTEMPTS` (2), then gives up until new thread
   activity re-arms it (attempt counter resets).
@@ -145,7 +154,14 @@ user can't confirm, never a save the user didn't approve.
 `executeKbBatchSave` clones `executeBatchCreation`'s claim protocol
 (get → atomic `DEL` claim → tombstone → pointer cleanup →
 `Promise.allSettled` saves → summary post). Correction-kind saves run
-`saveKnowledgeEntry` then `markKnowledgeSuperseded` per flagged entry.
+`saveKnowledgeEntry` then `markKnowledgeSuperseded` per flagged entry;
+retirement is best-effort — a supersession failure logs
+`kb_supersede_error` but never misreports the (already durable) save.
+
+All model-produced and thread-quoted text in the proposal and summary
+messages passes through `escapeSlackMentions` (`&` → `&amp;`, `<` →
+`&lt;`, `>` → `&gt;`) so a candidate containing `<!channel>` /
+`<@U…>` / `<#C…>` can never trigger real pings when posted.
 
 The ✅ handler chain in `route.ts` is: issue batch →
 `executeKbBatchSave` → issue tombstone → KB tombstone (silent return)
