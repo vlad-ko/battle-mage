@@ -7,8 +7,7 @@
 // Vercel's log drain before they reach stdout — a known serverless
 // quirk tracked in #90. Sentry's Next.js SDK internally calls
 // `vercelWaitUntil(Sentry.flush())` to keep the function alive until
-// events are transmitted, so after() events land reliably. Same
-// approach getsentry/junior uses on the same stack.
+// events are transmitted, so after() events land reliably.
 //
 // When SENTRY_DSN is unset the SDK falls back to the hardcoded public
 // DSN below (which is safe — it's already in every client bundle).

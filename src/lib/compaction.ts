@@ -9,7 +9,7 @@
  * — NOT a synthetic assistant message, which would break Anthropic's
  * "first message must be role=user" invariant.
  *
- * Design choices (vs junior's reference):
+ * Design choices:
  * - One-shot compaction, not rolling. If threads ever compact twice we'll
  *   revisit; today's QA-shaped threads rarely exceed the trigger.
  * - Character-based trigger (not tokens). `estimateConversationSize` sums

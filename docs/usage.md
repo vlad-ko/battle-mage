@@ -22,7 +22,7 @@ The bot will:
 
 1. Post a thinking message with live status updates
 2. Search your codebase, read relevant files, and check issues/PRs
-3. Delete the thinking message and post the final answer with reference links
+3. Edit the thinking message in place so it becomes the final answer with reference links (long answers continue in additional replies)
 
 All replies go in-thread. The bot never posts at channel root.
 
@@ -125,7 +125,7 @@ No, we moved that to config/app.php last month.
   [bot saves correction to knowledge base]
 ```
 
-The bot uses the `save_knowledge` tool to persist the correction in Vercel KV. Future answers will include this correction in the system prompt.
+The bot uses the `save_knowledge` tool to persist the correction in Upstash Redis (Vercel Marketplace). Future answers will include this correction in the system prompt.
 
 ### Option 2: Thumbs down and explain
 
@@ -156,7 +156,7 @@ React to any bot answer with:
 
 - **:thumbsdown:** -- The bot flags possibly related KB entries and docs, asks what was wrong, and saves your correction directly to the knowledge base when you reply. See [auto-correction](features/auto-correction.md) for the full flow.
 
-Feedback is stored in Vercel KV and injected into the system prompt. The bot sees a summary of what worked and what did not when composing future answers.
+Feedback is stored in Upstash Redis and injected into the system prompt. The bot sees a summary of what worked and what did not when composing future answers.
 
 > **Note**: Feedback context expires after 7 days. If you react to a very old message, the bot will not have the Q&A context to process the feedback.
 

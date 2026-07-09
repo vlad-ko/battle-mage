@@ -103,7 +103,7 @@ Configuration:
 
 Click **Generate token** and copy it immediately. This is your `GITHUB_PAT_BM`.
 
-> **Tip**: The PAT does NOT need Contents: Write. Battle Mage never pushes code. The knowledge base lives in Vercel KV, not in the GitHub repo.
+> **Tip**: The PAT does NOT need Contents: Write. Battle Mage never pushes code. The knowledge base lives in Upstash Redis (Vercel Marketplace), not in the GitHub repo.
 
 > **Gotcha**: If you select "All repositories" instead of scoping to one repo, Battle Mage will still only operate on the repo specified by `GITHUB_OWNER` and `GITHUB_REPO`. But scoping the PAT to a single repo is better security practice.
 
@@ -247,8 +247,8 @@ You should see:
 
 1. A thinking message appear with a brain emoji header
 2. The status line updating as the bot searches and reads files (magnifying glass for search, glasses for file reads)
-3. The thinking message disappear
-4. A final answer with the project structure, followed by reference links
+3. The thinking message transform in place into the final answer
+4. The answer includes the project structure, followed by reference links
 
 If the bot does not respond, check the [Troubleshooting Guide](./troubleshooting.md).
 

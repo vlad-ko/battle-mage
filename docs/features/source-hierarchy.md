@@ -75,10 +75,10 @@ Additionally, the knowledge base data section includes a staleness warning, and 
 
 When a user thumbs-down an answer, the [auto-correction system](./auto-correction.md) uses the hierarchy implicitly:
 
-- KB entries that share keywords with the answer's references are presumed stale and removed
+- KB entries that share keywords with the answer's references are flagged as stale candidates; when the user replies with a correction, each flagged entry is marked **superseded** by the new correction entry (retired from recall but kept in history — supersession, not deletion)
 - Documentation files referenced in the answer are flagged as potentially outdated
 
-This creates a self-correcting loop: the bot answers using KB + docs, the user signals the answer was wrong, and the system removes the lower-ranked sources that may have contributed to the bad answer.
+This creates a self-correcting loop: the bot answers using KB + docs, the user signals the answer was wrong, and the system retires the lower-ranked sources that may have contributed to the bad answer — replacing them with the user's correction rather than erasing them.
 
 ## Alignment with Reference Ranking
 

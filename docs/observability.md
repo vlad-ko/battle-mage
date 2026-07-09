@@ -27,7 +27,7 @@ vercel logs --prod --follow # Live tail
 
 **Operator note — data that flows to Sentry.** Structured log payloads include Slack question snippets (first 100 chars), tool input parameters, and GitHub repo paths. `sendDefaultPii` is off by default so IP and user-agent are NOT attached. If your compliance posture forbids this data leaving your tenant, you must (a) remove the hardcoded DSN fallback in the three Sentry config files and leave `SENTRY_DSN` unset so `Sentry.init` receives no DSN and becomes a no-op, (b) self-host Sentry via their on-prem offering, or (c) add a redaction layer inside `src/lib/logger.ts` before the `console.log` call. Simply unsetting `SENTRY_DSN` without removing the fallback will NOT stop data egress.
 
-Why this works on Vercel when stdout doesn't: `@sentry/nextjs` internally calls `vercelWaitUntil(Sentry.flush())` to hold the function container open until events are transmitted. That's the same mechanism `getsentry/junior` uses on their Vercel-hosted Hono agent.
+Why this works on Vercel when stdout doesn't: `@sentry/nextjs` internally calls `vercelWaitUntil(Sentry.flush())` to hold the function container open until events are transmitted.
 
 ### The `after()` tail-drop gotcha (#98)
 

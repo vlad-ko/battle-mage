@@ -4,7 +4,7 @@ The knowledge base stores corrections and learned facts from Slack conversations
 
 ## Storage
 
-The knowledge base uses Vercel KV (Upstash Redis). Entries are stored in a sorted set with the key `knowledge:entries`, scored by Unix timestamp (newest first).
+The knowledge base uses Upstash Redis, provisioned via the Vercel Marketplace (post-#117; older deployments provisioned it as "Vercel KV"). Entries are stored in a sorted set with the key `knowledge:entries`, scored by Unix timestamp (newest first).
 
 Each entry is a JSON string:
 
@@ -95,12 +95,12 @@ Each entry should be self-contained -- readable and useful without any surroundi
 
 ## Viewing and Managing Entries
 
-### Via Vercel KV Browser
+### Via the Upstash Data Browser
 
-You can inspect and edit knowledge base entries directly in the Vercel dashboard:
+You can inspect and edit knowledge base entries directly from the Vercel dashboard:
 
 1. Go to your project's **Storage** tab
-2. Open the KV database
+2. Open your Upstash Redis resource (this opens the Upstash data browser)
 3. Find the key `knowledge:entries`
 4. Browse the sorted set members
 
@@ -125,11 +125,11 @@ If you need to retire a KB entry:
 
 1. Let the auto-correction system handle it -- thumbs-down an answer that relied on stale KB data and reply with the correction; flagged entries are superseded by it automatically
 2. Or call `archiveKnowledgeEntry(idOrText, reason)` to soft-delete with a reason
-3. Deleting the raw member in the Vercel KV browser still works but erases history -- prefer the lifecycle functions
+3. Deleting the raw member in the Upstash data browser still works but erases history -- prefer the lifecycle functions
 
 ## Graceful Degradation
 
-If Vercel KV is not configured (common during local development without KV credentials), `getKnowledgeRecallAsMarkdown()` (and `getKnowledgeAsMarkdown()`) catches the error silently and returns `null`. The bot works normally without a knowledge base -- it just does not have persistent memory. If only the *vector* layer is unconfigured, saves and recall still work — recall just runs lexical-only (see [Hybrid Retrieval](./hybrid-retrieval.md)).
+If Upstash Redis is not configured (common during local development without KV credentials), `getKnowledgeRecallAsMarkdown()` (and `getKnowledgeAsMarkdown()`) catches the error silently and returns `null`. The bot works normally without a knowledge base -- it just does not have persistent memory. If only the *vector* layer is unconfigured, saves and recall still work — recall just runs lexical-only (see [Hybrid Retrieval](./hybrid-retrieval.md)).
 
 The knowledge base section is simply omitted from the system prompt when there are no entries.
 
@@ -140,4 +140,4 @@ The knowledge base and the feedback system are separate:
 - **Knowledge base** stores factual corrections ("X lives in Y, not Z"). These are high-signal, specific, and actionable.
 - **Feedback** stores thumbs up/down signals with question/answer context. These are lower-signal and used to calibrate tone and approach.
 
-Both are stored in Vercel KV but under different keys (`knowledge:entries` vs `feedback:entries`). Both are injected into the system prompt but with different headings and different trust levels.
+Both are stored in Upstash Redis but under different keys (`knowledge:entries` vs `feedback:entries`). Both are injected into the system prompt but with different headings and different trust levels.

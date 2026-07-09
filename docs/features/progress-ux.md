@@ -8,8 +8,8 @@ When the bot starts processing a question:
 
 1. A "thinking" message is posted immediately in the thread
 2. As each tool is called, the message is updated in place with a new status line
-3. When the answer is ready, the thinking message is deleted
-4. The final answer is posted as a new message
+3. When the answer is ready, the thinking message is edited in place to become the first chunk of the final answer (reused as chunk 0 — no delete-and-repost flicker)
+4. If the answer is long, the remaining chunks are posted as new thread replies
 
 The user sees something like:
 
@@ -25,7 +25,7 @@ Then a few seconds later:
 👓 Reading src/middleware/auth.ts...
 ```
 
-Then the thinking message disappears and the final answer appears.
+Then the thinking message transforms into the final answer (the same Slack message, edited in place).
 
 ## Header + Status Line
 
@@ -95,15 +95,17 @@ const result = await runAgent(cleanMessage, async (toolName, input) => {
 
 Before each tool is executed, the callback fires. The route handler uses `updateMessage()` (which calls `slack.chat.update`) to edit the thinking message in place.
 
-After the final answer is ready, a "composing" status is shown briefly, then the thinking message is deleted via `deleteMessage()` and replaced with the final answer.
+After the agent loop returns, the progress throttle is flushed (so no stale status overwrites the answer), and `postReplyInChunks` edits the thinking message in place with the first chunk of the final answer. Remaining chunks, if any, post as new thread replies (see [Message Splitting](./message-splitting.md)).
 
-## Why Delete Instead of Edit?
+## Why Edit Instead of Delete-and-Repost?
 
-The thinking message is deleted rather than edited into the final answer because:
+The thinking message is reused as chunk 0 of the final answer rather than deleted and reposted:
 
-1. The thinking message has a different visual style (emoji + italics) that would need to be completely replaced
-2. Deleting and reposting ensures the message appears at the bottom of the thread, in chronological order
-3. It keeps the thread clean -- only the final answer remains
+1. No flicker — the message never disappears; users watching the thread see the status transform into the answer
+2. The message timestamp (`ts`) is stable, so the Q&A context stored for 👍/👎 reactions keys off the same message users react to
+3. It keeps the thread clean — one message carries both the progress phase and the answer
+
+`deleteMessage()` still runs as a safety net in the `finally` block, but only if the turn crashed before any answer chunk was posted.
 
 ## Testing
 
