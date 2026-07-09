@@ -52,9 +52,9 @@ vi.mock("./logger", () => ({
 
 vi.mock("./vector", () => ({
   isVectorConfigured: (...args: unknown[]) => h.isVectorConfiguredMock(...args),
-  srcNamespace: () => "acme/backend:src",
-  docsNamespace: (sha: string) => `acme/backend:docs:${sha}`,
-  kbNamespace: () => "acme/backend:kb",
+  srcNamespace: () => "acme_backend:src",
+  docsNamespace: (sha: string) => `acme_backend:docs:${sha}`,
+  kbNamespace: () => "acme_backend:kb",
   vectorUpsert: (...args: unknown[]) => h.vectorUpsertSpy(...args),
   vectorDelete: (...args: unknown[]) => h.vectorDeleteSpy(...args),
   vectorDeleteNamespace: vi.fn(async () => true),
@@ -219,7 +219,7 @@ describe("runCodeIndexTick", () => {
     // S5: content read pinned to the snapshot sha
     expect(readFileSpy).toHaveBeenCalledWith("src/a.ts", "sha-2");
     expect(vectorUpsertSpy).toHaveBeenCalledWith(
-      "acme/backend:src",
+      "acme_backend:src",
       [expect.objectContaining({ id: "src/a.ts#0", metadata: expect.objectContaining({ path: "src/a.ts", startLine: 1 }) })],
     );
     expect(kvData.get("srcindex:manifest")).toEqual({ "src/a.ts": { sha: "blob-a", chunks: 1 } });
@@ -263,7 +263,7 @@ describe("runCodeIndexTick", () => {
     });
     readFileSpy.mockResolvedValue({ path: "src/b.ts", content: "export const b = 2;\n" });
     await runCodeIndexTick();
-    expect(vectorDeleteSpy).toHaveBeenCalledWith("acme/backend:src", ["src/b.ts#1", "src/b.ts#2"]);
+    expect(vectorDeleteSpy).toHaveBeenCalledWith("acme_backend:src", ["src/b.ts#1", "src/b.ts#2"]);
     expect(callOrder.indexOf("vectorUpsert")).toBeLessThan(callOrder.indexOf("vectorDelete"));
     expect(kvData.get("srcindex:manifest")).toEqual({ "src/b.ts": { sha: "blob-b-new", chunks: 1 } });
   });
@@ -274,7 +274,7 @@ describe("runCodeIndexTick", () => {
     getRepoTreeSnapshotSpy.mockResolvedValue({ sha: "sha-4", truncated: false, blobs: [] });
     const result = await runCodeIndexTick();
     expect(result).toMatchObject({ status: "complete", deleted: 1 });
-    expect(vectorDeleteSpy).toHaveBeenCalledWith("acme/backend:src", ["src/gone.ts#0", "src/gone.ts#1"]);
+    expect(vectorDeleteSpy).toHaveBeenCalledWith("acme_backend:src", ["src/gone.ts#0", "src/gone.ts#1"]);
     expect(readFileSpy).not.toHaveBeenCalled();
     expect(kvData.get("srcindex:manifest")).toEqual({});
   });
