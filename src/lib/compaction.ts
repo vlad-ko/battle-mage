@@ -114,7 +114,10 @@ export async function compactThread(
     .map((t) => `${t.role === "user" ? "User" : "Assistant"}: ${t.content}`)
     .join("\n\n");
 
-  const prompt = COMPACTION_PROMPT.replace("<TRANSCRIPT>", transcript);
+  // Replacer FUNCTION, not a string — turn content containing $-patterns
+  // ($&, $`, $1, …) must arrive in the prompt verbatim, not be expanded
+  // as replacement directives. See #132 (same fix as effort-routing.ts).
+  const prompt = COMPACTION_PROMPT.replace("<TRANSCRIPT>", () => transcript);
 
   let summary: string;
   try {
