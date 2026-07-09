@@ -40,7 +40,11 @@ import * as Sentry from "@sentry/nextjs";
 export function log(event: string, data?: Record<string, unknown>): void {
   const payload = { event, ...data, ts: Date.now() };
   const entry = JSON.stringify(payload);
-  if (event.includes("error")) {
+  // Severity routing: "error" and "failed" event names go to stderr so
+  // Sentry/Vercel classify them as errors (#125 introduced *_failed
+  // names — agent_turn_failed, webhook_handler_failed, tool_call_failed,
+  // recovery_marker_*_failed).
+  if (event.includes("error") || event.includes("failed")) {
     console.error(entry);
   } else {
     console.log(entry);

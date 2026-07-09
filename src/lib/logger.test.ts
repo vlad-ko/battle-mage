@@ -57,6 +57,15 @@ describe("log", () => {
     expect(parsed.status).toBe(500);
   });
 
+  it("routes *_failed events to console.error", () => {
+    log("agent_turn_failed", { flow: "mention" });
+    expect(consoleErrorSpy).toHaveBeenCalledOnce();
+    expect(consoleSpy).not.toHaveBeenCalled();
+    const parsed = JSON.parse(consoleErrorSpy.mock.calls[0][0] as string);
+    expect(parsed.event).toBe("agent_turn_failed");
+    expect(parsed.flow).toBe("mention");
+  });
+
   it("routes non-error events to console.log", () => {
     log("agent_complete", { rounds: 3 });
     expect(consoleSpy).toHaveBeenCalledOnce();

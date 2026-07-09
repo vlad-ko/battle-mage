@@ -37,6 +37,8 @@ The SDK's auto-flush above fires at **route-handler response time** — which ru
 
 If you add a new `after()` callback, **you must end it with `flushLogs`** or its logs will tail-drop. The unit test at `src/lib/logger.test.ts` pins the explicit-flush behavior so accidental regression fails loudly in CI.
 
+The same rule applies to the cron route: `/api/cron/sweep` does its work in the handler body (no `after()`), but its container freezes just as aggressively after the response — so it too ends with `await flushLogs(rlog, "cron_sweep")` in a `finally` block.
+
 ## Log Format
 
 Every log entry is a single JSON line:
@@ -85,6 +87,7 @@ Filter: requestId=a3f2b1c4
 |-------|------|----------|
 | `agent_start` | Agent loop begins | promptLength, question, model, effort, max_rounds |
 | `agent_tool_call` | Each tool execution | tool, round, input (truncated) |
+| `tool_call_failed` | A tool executor threw (the error is also returned to the model as a `tool_result`) | tool, round, errorMessage |
 | `agent_complete` | Agent produces final answer | rounds, refCount, hasProposal, duration_ms, effort, max_rounds |
 | `prompt_feedback_included` | System prompt assembled — fires **every** turn, even when no entries | positiveCount, negativeCount, totalEntries, promptZone |
 
@@ -150,13 +153,45 @@ Every reaction flows through this event funnel. `reaction_skipped` and `feedback
 - **Feedback feature value:** correlate `prompt_feedback_included.totalEntries > 0` turns with subsequent `feedback_saved.type = "positive"` rates — does having feedback in context correlate with higher-quality answers?
 - **Reaction latency:** bucket `feedback_saved.latencyMs` — immediate reactions (<30s) are higher signal than day-later reactions.
 
-### Error Events (all flows)
+### Idempotency Events (lib/idempotency.ts) — #125
+
+Every `createIssue` call is wrapped in `executeIdempotent` with a content-addressed key (`idem:issue:<sha256 of {title, body, labels}>`).
 
 | Event | When | Key data |
 |-------|------|----------|
-| `error` | Any unhandled error in a flow | flow, message |
+| `idempotency_replayed` | A duplicate creation was suppressed; the recorded result was returned | key |
+| `idempotency_in_flight` | A concurrent holder owns the pending lock for the same content | key |
+| `idempotency_degraded` | KV unavailable — the operation ran unguarded (fail open) | key, phase (`lock`/`unlock`/`record`), errorMessage |
+| `issue_create_in_flight` | The legacy-parser ✅ path hit an in-flight lock and stayed silent | via, channel, messageTs |
 
-The `flow` field identifies which handler failed: `mention`, `thread_followup`, `reaction_checkmark`, `reaction_thumbsup`, `reaction_thumbsdown`.
+### Recovery Events (lib/recovery.ts + /api/cron/sweep) — #125
+
+Mention and follow-up turns write a processing marker as the first step of the `after()` body (off the ack path — Slack's 3-second deadline) and clear it in the `finally`; the cron sweep retries what container death left behind. Before acting on a stale marker, the sweep wins a non-destructive `SET NX` claim on `processing:claim:{channel}:{threadTs}` (120 s TTL) — the marker is only cleared after the action completes, so post-claim failures stay recoverable.
+
+| Event | When | Key data |
+|-------|------|----------|
+| `recovery_marker_write_failed` | Marker write failed (turn proceeds unprotected) | channel, threadTs, errorMessage |
+| `recovery_marker_clear_failed` | Marker cleanup failed (sweep guard + 24 h TTL mop up) | channel, threadTs, errorMessage |
+| `recovery_marker_orphaned` | Index entry with no marker record (marker TTL expired) — dropped | channel, threadTs |
+| `recovery_sweep_retried` | A stale first-attempt turn was re-run through the turn-runner | channel, threadTs, eventType, attempt, originalRequestId |
+| `recovery_sweep_already_answered` | Stale marker, but the bot already answered after `startedAt` — no retry | channel, threadTs |
+| `recovery_sweep_gave_up` | The retry also died — visible failure notice posted to the thread | channel, threadTs, attempt, requestId |
+| `recovery_sweep_claim_lost` | Another sweep instance holds the NX claim for this member — skipped | channel, threadTs |
+| `recovery_sweep_member_failed` | One index member threw mid-sweep (sweep continues; marker + index intact — the next sweep retries after the claim TTL) | member, errorMessage |
+| `recovery_sweep_complete` | End of every sweep run | scanned, retried, gaveUp, orphaned |
+| `recovery_sweep_failed` | The whole sweep aborted | errorMessage |
+| `recovery_sweep_unauthorized` | Request without a valid `Bearer $CRON_SECRET` header | — |
+
+### Error Events (all flows)
+
+Renamed in #125 (previously a single generic `error` event) so severity routing and dashboards can distinguish agent-turn failures from webhook plumbing failures. Any event name containing `error` or `failed` is routed to `console.error` by the logger.
+
+| Event | When | Key data |
+|-------|------|----------|
+| `agent_turn_failed` | Unhandled error in a mention or thread-followup agent turn | flow (`mention` \| `thread_followup`), message |
+| `webhook_handler_failed` | Unhandled error in a reaction handler | flow (`reaction_checkmark` \| `reaction_thumbsup` \| `reaction_thumbsdown`), message |
+
+See `TELEMETRY.md` (repo root) for the incident-response view: the stable event vocabulary and ready-made Sentry query recipes (failure rate, recovery funnel, duplicate-suppression rate).
 
 ## Debugging Common Issues
 
@@ -205,6 +240,6 @@ rlog("step_two", { data: "..." });
 // Both entries have the same requestId
 ```
 
-Every call goes through one code path — `console.log` (or `console.error` for events containing "error") with a JSON payload. In prod with a DSN configured, Sentry's `consoleLoggingIntegration` captures each call and ships it to the Logs UI; in local dev/CI the integration is a silent no-op and logs only reach stdout. Either way, the application code is the same.
+Every call goes through one code path — `console.log` (or `console.error` for events containing "error" or "failed") with a JSON payload. In prod with a DSN configured, Sentry's `consoleLoggingIntegration` captures each call and ships it to the Logs UI; in local dev/CI the integration is a silent no-op and logs only reach stdout. Either way, the application code is the same.
 
 Sentry init lives in `sentry.server.config.ts` (project root) and is loaded via `instrumentation.ts` on the Node runtime. See those files for tunable options (`SENTRY_TRACES_SAMPLE_RATE`, etc.).

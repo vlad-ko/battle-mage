@@ -5,7 +5,7 @@ Two per-turn decisions, one cheap Haiku call (see #126):
 1. **shouldReply** — is a thread follow-up actually addressed to the bot? The old heuristic (bot has a prior reply in the thread) made the bot answer human-to-human chatter. Now a fast-model classifier reads the recent transcript and the new message and gates the reply.
 2. **effort** — bucket the question into `quick | standard | deep`, sizing the agent's tool-round budget and answer-length target so trivial questions stop costing 15 rounds and hard ones stop being squeezed into a 3K-char answer.
 
-All logic lives in `src/lib/effort-routing.ts`; the Slack route (`src/app/api/slack/route.ts`) composes it.
+All logic lives in `src/lib/effort-routing.ts`; the turn runner (`src/lib/turn-runner.ts` — the mention/follow-up turn bodies shared by the webhook route and the recovery sweep, #125) composes it.
 
 ## The classifier call
 
@@ -55,13 +55,13 @@ The asymmetry is deliberate: a wrongly-silent bot costs one re-mention; a wrongl
 
 Two delivery mechanisms:
 
-- **Round cap** — the route passes `{ maxRounds, effort }` as `runAgent`'s optional 6th parameter. `resolveMaxRounds` (pure, exported from `claude.ts`) floors, clamps to `[1, MAX_TOOL_ROUNDS]`, and defaults to `MAX_TOOL_ROUNDS` when absent — so `claude.ts` never trusts a raw number and stays classifier-agnostic.
+- **Round cap** — the turn runner passes `{ maxRounds, effort }` as `runAgent`'s optional 6th parameter. `resolveMaxRounds` (pure, exported from `claude.ts`) floors, clamps to `[1, MAX_TOOL_ROUNDS]`, and defaults to `MAX_TOOL_ROUNDS` when absent — so `claude.ts` never trusts a raw number and stays classifier-agnostic.
 - **Answer-length steering** — `buildEffortHint(effort)` is appended to the **user message** (like `buildQuestionHints`), never the system prompt: the stable prompt zone stays byte-identical so prompt caching keeps hitting. For `standard` the hint is `""` — the default path is byte-for-byte unchanged.
 
-## Route wiring
+## Turn-runner wiring
 
 - **Mention path** (`app_mention`): `classifyTurn` runs with `invocation: "mention"` in a `Promise.all` with the topic fetch, and **shouldReply is never consulted** — an explicit @mention always gets an answer. Only `decideEffort` is used.
-- **Follow-up path** (`message` in a bot thread): after the structural checks (bot-in-thread, not addressed to another user) and AFTER the pending-correction / bulk-confirm branches short-circuit, `evaluateFollowup` runs **before** the thinking message is posted. A decline produces **zero Slack writes** — just a `followup_reply_declined` log event (`reason`: `not_addressed` | `low_confidence` | `classifier_unavailable`) and a silent return.
+- **Follow-up path** (`message` in a bot thread): after the structural checks (bot-in-thread, not addressed to another user) and AFTER the pending-correction / bulk-confirm branches short-circuit, `evaluateFollowup` runs **before** the thinking message is posted. A decline produces **zero Slack writes** — just a `followup_reply_declined` log event (`reason`: `not_addressed` | `low_confidence` | `classifier_unavailable`) and a silent return. Because the gate lives in the turn runner, a **sweep-retried** follow-up (#125) re-runs it — a message that shouldn't be answered stays silent on retry too, and the decline's clean return still lets the caller's `finally` clear the processing marker.
 
 ## Observability
 

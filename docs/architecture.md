@@ -81,9 +81,9 @@ When a user reacts with :white_check_mark: to a bot message containing an issue 
 
 1. Fetches the message text
 2. Verifies it was posted by the bot (not by someone else)
-3. Parses the proposal title, body, and labels from the message format
-4. Creates the issue on GitHub via `octokit.rest.issues.create`
-5. Replies with a link to the new issue
+3. Atomically claims the pending batch record in KV (`kv.del` — racing confirmations lose the claim and exit); falls back to parsing the proposal from the message text for pre-#122 messages
+4. Creates each issue through the idempotency layer (`executeIdempotent` keyed on a sha256 of `{title, body, labels}`) — a duplicate confirmation replays the recorded issue instead of filing a second one; a concurrent in-flight creation is reported instead of raced (#125)
+5. Replies with a link to the new issue (or a batch summary)
 
 ### `reaction_added` with `+1` or `-1` -- Feedback
 
@@ -98,6 +98,17 @@ When a user reacts with :white_check_mark: to a bot message containing an issue 
 3. Runs auto-correction: identifies stale KB entries (keyword matching) and doc references
 4. Removes stale KB entries from Vercel KV
 5. Replies asking the user what was wrong
+
+## The Recovery Sweep — `GET /api/cron/sweep`
+
+A second entry point alongside `/api/slack`, invoked by Vercel Cron every 5 minutes (`vercel.json`) and authenticated via `Authorization: Bearer $CRON_SECRET` (exact match, fail closed). It exists because Vercel can kill the container mid-`after()` — the answer then silently dies.
+
+1. Every mention/follow-up turn writes a processing marker (`processing:{channel}:{threadTs}` + a `processing:index` zset entry) as the **first step of the `after()` body** and clears it in the `after()` `finally` — so only container death leaves a marker behind. The write stays off the ack path (KV latency must never push the 200 OK past Slack's 3-second deadline); the tiny ack→`after()` death window is an accepted trade
+2. The sweep walks the index and classifies each marker: younger than 15 minutes → wait (could still be a live invocation; the route's `maxDuration` is 300 s, so >15 min is provably dead); stale first attempt → retry; stale retry → give up with a visible failure notice in the thread; index entry without a marker → orphan cleanup
+3. Stale markers are claimed **non-destructively**: `SET NX` on `processing:claim:{channel}:{threadTs}` with a 120 s TTL — concurrent sweeps lose NX and skip (`recovery_sweep_claim_lost`). The marker and index entry are cleared only **after** the action completes (give-up notice posted before deletion; a retry overwrites the marker key in place), so a failure after a won claim leaves the turn recoverable by the next sweep once the claim expires
+4. Retries verify the bot didn't already answer after the marker was written, then re-run the turn through the **same** turn-runner code path (`src/lib/turn-runner.ts`) the webhook uses — idempotent issue creation makes this safe even for turns that had already filed issues
+
+See `src/lib/recovery.ts` for the marker/staleness model and `TELEMETRY.md` for the recovery-funnel queries.
 
 ## System Prompt Assembly
 
