@@ -168,6 +168,7 @@ const GITHUB_FNS = [
   "listRecentCommits",
   "listRecentPRs",
   "getRepoTree",
+  "getRepoTreeSnapshot", // added by #135 (code index) — not on the turn path, kept for mock-surface completeness
   "getHeadSha",
 ] as const;
 
