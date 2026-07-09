@@ -94,6 +94,26 @@ describe("compactThread", () => {
     expect(result.slice(1)).toEqual(originalPreserved.slice(1));
   });
 
+  it("passes $-replacement patterns in turn content through to the prompt verbatim (#132)", async () => {
+    // String.replace(string, replacement) interprets $&, $`, $', $1..$9 in
+    // the REPLACEMENT — a pasted shell/regex snippet in a compacted turn
+    // must not garble the summarizer prompt.
+    const history = makeTurns(MIN_PRESERVED_TURNS + 6, 100);
+    history[0] = {
+      role: "user",
+      content: "regex tip: use $& for the match, $` before, $1 for group one, and $$ for a dollar",
+    };
+    const compactor = vi.fn().mockResolvedValue("summary");
+
+    await compactThread(history, { compactor, log: vi.fn() });
+
+    const prompt = compactor.mock.calls[0][0] as string;
+    expect(prompt).toContain(
+      "regex tip: use $& for the match, $` before, $1 for group one, and $$ for a dollar",
+    );
+    expect(prompt).not.toContain("<TRANSCRIPT>");
+  });
+
   it("embeds summary into the first preserved turn with the marker", async () => {
     const history = makeTurns(MIN_PRESERVED_TURNS + 6, 100);
     const compactor = vi.fn().mockResolvedValue("summary of early turns");
