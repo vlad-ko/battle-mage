@@ -175,7 +175,8 @@ The repo ships a `vercel.json` that schedules the recovery sweep — the endpoin
 ```json
 {
   "crons": [
-    { "path": "/api/cron/sweep", "schedule": "*/5 * * * *" }
+    { "path": "/api/cron/sweep", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/code-index", "schedule": "*/5 * * * *" }
   ]
 }
 ```
@@ -186,7 +187,7 @@ Vercel picks this up automatically on deploy — but the sweep authenticates eve
 vercel env add CRON_SECRET   # any long random string, e.g. `openssl rand -hex 32`
 ```
 
-Vercel sends `Authorization: Bearer $CRON_SECRET` with each cron invocation; the sweep **denies all requests** (401) when the variable is unset — a missing secret disables recovery rather than exposing the endpoint.
+Vercel sends `Authorization: Bearer $CRON_SECRET` with each cron invocation; **both cron routes** (`/api/cron/sweep` and `/api/cron/code-index`) **deny all requests** (401) when the variable is unset — a missing secret disables recovery and code indexing rather than exposing the endpoints.
 
 > **Hobby plan note**: Hobby allows at most one cron invocation per day, so the `*/5` schedule degrades to roughly daily. Recovery stays **correct** on any cadence — the sweep's decisions depend only on marker age, never on how often it runs — you just wait longer for a stuck question to be retried. On Pro the 5-minute cadence applies as written.
 
@@ -268,7 +269,7 @@ If the bot does not respond, check the [Troubleshooting Guide](./troubleshooting
 | `UPSTASH_VECTOR_REST_TOKEN` | Optional | `ABcD3...` | Token for the Vector index -- both must be set or neither |
 | `KV_REST_API_URL` | Legacy | `https://...upstash.io` | Read as a fallback by `@upstash/redis` for projects that still provision "Vercel KV" |
 | `KV_REST_API_TOKEN` | Legacy | `AaB1Cc2...` | Read as a fallback — either pair works |
-| `CRON_SECRET` | Yes (for recovery) | `f3a9...64 hex chars` | Auth for `/api/cron/sweep` (Vercel Cron sends it as a Bearer token). Unset = sweep denies all requests, recovery disabled |
+| `CRON_SECRET` | Yes (for recovery) | `f3a9...64 hex chars` | Auth for both `/api/cron/*` routes — sweep and code-index (Vercel Cron sends it as a Bearer token). Unset = both deny all requests: recovery and code indexing disabled |
 
 ## Security Notes
 
