@@ -13,6 +13,10 @@
 //   give_up → the retry also died: post a visible failure notice so
 //             the user is never left with silence.
 //
+// Phase 2 (#136): after recovery, the same sweep runs passive KB
+// extraction (see src/lib/kb-runner.ts) under its own try/catch — a KB
+// failure never fails recovery.
+//
 // Auth: Vercel Cron sends `Authorization: Bearer $CRON_SECRET`. Exact
 // match, fail closed (unset secret denies everything).
 
@@ -35,6 +39,7 @@ import {
   type ProcessingMarker,
 } from "@/lib/recovery";
 import { runMentionTurn, runFollowupTurn } from "@/lib/turn-runner";
+import { runKbExtractionSweep, type KbSweepSummary } from "@/lib/kb-runner";
 
 // A retried turn is a full agent run — give the sweep the same budget
 // as the Slack route.
@@ -205,8 +210,22 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    rlog("recovery_sweep_complete", { scanned, retried, gaveUp, orphaned });
-    return NextResponse.json({ ok: true, scanned, retried, gaveUp, orphaned });
+    // ── Phase 2: passive KB extraction (#136) ─────────────────────────
+    // Piggybacks on the same cron cadence. Own try/catch — a KB-side
+    // failure must NEVER fail recovery: phase 1's results stand and the
+    // sweep still returns 200 so Vercel Cron doesn't flag the job.
+    let kb: KbSweepSummary | null = null;
+    try {
+      kb = await runKbExtractionSweep(rlog);
+    } catch (err) {
+      rlog("kb_extract_sweep_failed", {
+        errorMessage: err instanceof Error ? err.message.slice(0, 200) : String(err),
+      });
+      Sentry.captureException(err, { tags: { flow: "kb_extract_sweep" } });
+    }
+
+    rlog("recovery_sweep_complete", { scanned, retried, gaveUp, orphaned, kb });
+    return NextResponse.json({ ok: true, scanned, retried, gaveUp, orphaned, kb });
   } catch (err) {
     rlog("recovery_sweep_failed", {
       errorMessage: err instanceof Error ? err.message.slice(0, 200) : String(err),

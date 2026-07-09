@@ -36,6 +36,8 @@ npm run dev                  # http://localhost:3000
 
 6. **Thread follow-ups** — Once the bot is participating in a thread, users can send follow-up messages without re-mentioning. The bot checks for its own prior replies, then a fast-model classifier decides whether the message is actually addressed to the bot — anything else (human-to-human chatter, classifier errors) fails closed to silence. See `docs/features/effort-routing.md`.
 
+7. **Passive KB learning is proposal-only** — After a thread goes quiet (4h), the cron sweep's second phase extracts KB candidates from the transcript with a fast model. Every candidate must cite human evidence (verified by a deterministic non-LLM gate), extraction only runs in positively-confirmed PUBLIC channels (fail closed), and NOTHING writes to the KB without an explicit ✅ / "confirm all" — the same confirmation-before-write principle as issue creation. See `docs/features/passive-kb-learning.md`.
+
 ## Project Structure
 
 ```
@@ -56,6 +58,10 @@ src/
     idempotency.ts        — Content-addressed idempotent execution (issue creation, #125)
     recovery.ts           — Processing markers + sweep decisions for died turns (#125)
     turn-runner.ts        — Mention/follow-up turn bodies (shared by webhook route + sweep)
+    kb-extract.ts         — Passive-KB transcript rendering + fast-model extractor (#136)
+    kb-gate.ts            — Deterministic provenance gate for passive KB candidates (pure)
+    kb-proposals.ts       — Pure passive-KB lifecycle helpers (KV keys, idle decision, formatters)
+    kb-runner.ts          — Passive-KB orchestration (sweep phase 2, activity index, batch save)
     config.ts             — .battle-mage.json loader (path annotations with graduated trust)
     repo-index.ts         — Repository topic index (lazy rebuild on SHA change)
     auto-correct.ts       — Stale KB entry detection and doc reference flagging
@@ -96,6 +102,7 @@ docs/
     effort-routing.md     — Fast-model follow-up gate + per-turn effort budgets
     hybrid-retrieval.md   — Lexical + semantic retrieval (Upstash Vector, RRF fusion, degradation)
     code-index.md         — Incremental semantic code index (manifest cursor, cron tick, src arm)
+    passive-kb-learning.md — Evidence-cited passive KB proposals (sweep phase 2, confirm-before-write)
 TELEMETRY.md              — Incident-response event vocabulary + Sentry query recipes
 vercel.json               — Vercel Cron schedules (recovery sweep + code-index tick)
 ```

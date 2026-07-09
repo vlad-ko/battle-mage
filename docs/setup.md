@@ -74,12 +74,14 @@ From your app's settings page:
 |-------|-----|
 | `app_mentions:read` | Detect when someone @mentions the bot |
 | `channels:history` | Read thread messages for follow-up context |
-| `channels:read` | Access channel info |
+| `channels:read` | Access channel info — also required by passive KB learning to positively confirm a channel is public before extracting from it |
 | `chat:write` | Post replies in threads |
 | `groups:history` | Same as channels:history but for private channels |
 | `groups:read` | Same as channels:read but for private channels |
 | `reactions:read` | Detect thumbs up/down and checkmark reactions |
 | `reactions:write` | Add brain emoji to acknowledge positive feedback |
+
+> **Passive KB learning and channel privacy (#136):** the extraction sweep only runs against channels it can positively confirm are PUBLIC via `conversations.info`. If the app lacks `channels:read` (or the info call fails), the sweep **fails closed** — it skips the channel and logs `kb_extraction_skipped` with reason `private_channel`. Private channels, DMs, and group DMs are never extracted from. See [features/passive-kb-learning.md](features/passive-kb-learning.md).
 
 ## 2. Create a GitHub Fine-Grained PAT
 

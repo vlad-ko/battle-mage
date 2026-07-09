@@ -26,6 +26,8 @@ import {
   batchTombstoneKey,
   type PendingCorrection,
 } from "@/lib/turn-runner";
+import { executeKbBatchSave } from "@/lib/kb-runner";
+import { kbBatchTombstoneKey } from "@/lib/kb-proposals";
 
 // Give the after() bodies the full Fluid-compute budget. Next.js reads
 // this statically, so it must be a literal — SLACK_ROUTE_MAX_DURATION_SEC
@@ -227,6 +229,19 @@ export async function POST(request: NextRequest) {
         );
         if (outcome.claimed) return;
 
+        // KB proposal batch (#136): the reacted-on message may be a
+        // passive-KB proposal instead of an issue proposal. Same claim
+        // protocol, checked second so issue batches keep precedence.
+        const kbOutcome = await executeKbBatchSave(
+          channel,
+          threadTs,
+          messageTs,
+          reactingUser,
+          "reaction",
+          rlog,
+        );
+        if (kbOutcome.claimed) return;
+
         // Tombstone guard: a prior confirmation already claimed this
         // message's batch. Without this check, a second ✅ on the same
         // post-#122 single-proposal message would fall through to the
@@ -237,6 +252,16 @@ export async function POST(request: NextRequest) {
         const tombstone = await kv.get(batchTombstoneKey(channel, messageTs));
         if (tombstone) {
           rlog("issue_batch_reaction_after_claim", { channel, messageTs });
+          return;
+        }
+
+        // KB tombstone (#136): a second ✅ on an already-claimed KB
+        // proposal returns SILENTLY — there is deliberately no
+        // text-parse fallback for KB proposals (K-P4), so nothing
+        // below this line may act on one.
+        const kbTombstone = await kv.get(kbBatchTombstoneKey(channel, messageTs));
+        if (kbTombstone) {
+          rlog("kb_batch_reaction_after_claim", { channel, messageTs });
           return;
         }
 
