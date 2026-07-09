@@ -41,7 +41,7 @@ export function keyPrefix(key: string): string {
 
 // ── Core wrap helpers (private) ──────────────────────────────────────
 
-type KVOp = "get" | "set" | "del" | "zadd" | "zrange" | "zrem";
+type KVOp = "get" | "set" | "del" | "zadd" | "zrange" | "zrem" | "zscore";
 
 function sentryTags(op: KVOp, prefix: string): Sentry.CaptureContext {
   return { tags: { "kv.op": op, "kv.keyPrefix": prefix } };
@@ -169,6 +169,24 @@ export const kv = {
       return result;
     } catch (err) {
       logError("zrem", prefix, startedAt, err);
+      throw err;
+    }
+  },
+
+  async zscore(key: string, member: string): Promise<number | null> {
+    const prefix = keyPrefix(key);
+    const startedAt = Date.now();
+    try {
+      const result = await client.zscore(key, member);
+      log("kv_op", {
+        op: "zscore",
+        keyPrefix: prefix,
+        durationMs: Date.now() - startedAt,
+        found: result !== null && result !== undefined,
+      });
+      return result ?? null;
+    } catch (err) {
+      logError("zscore", prefix, startedAt, err);
       throw err;
     }
   },

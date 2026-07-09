@@ -472,9 +472,22 @@ export async function POST(request: NextRequest) {
         const pending = await kv.get<PendingCorrection>(pendingKey);
         if (pending) {
           // This reply is a correction — save directly to KB
-          const { saveKnowledgeEntry } = await import("@/lib/knowledge");
+          const { saveKnowledgeEntry, markKnowledgeSuperseded } = await import(
+            "@/lib/knowledge"
+          );
 
-          await saveKnowledgeEntry(userMessage);
+          const correctionId = await saveKnowledgeEntry(userMessage);
+
+          // Retire the KB entries flagged at 👎 time: mark them superseded
+          // by the correction instead of leaving them visible (or deleting
+          // them and losing history). Text-matched; entries already
+          // superseded or archived in the meantime are skipped. See #124.
+          let supersededCount = 0;
+          for (const flaggedText of pending.flaggedKB) {
+            if (await markKnowledgeSuperseded(flaggedText, correctionId)) {
+              supersededCount++;
+            }
+          }
 
           // Save the negative feedback NOW with the actual correction text
           await saveFeedback({
@@ -495,6 +508,7 @@ export async function POST(request: NextRequest) {
             correctionLength: userMessage.length,
             timeSincePendingMs: Date.now() - pending.pendingAt,
             flaggedKBCount: pending.flaggedKB.length,
+            supersededCount,
             correctionSample: userMessage.slice(0, 100),
           });
 
@@ -930,7 +944,7 @@ export async function POST(request: NextRequest) {
 
         const notes: string[] = [];
         if (actions.kbEntriesToFlag.length > 0) {
-          notes.push("*Possibly related KB entries* (reply to confirm removal):");
+          notes.push("*Possibly related KB entries* (a correction reply retires these, keeping history):");
           for (const entry of actions.kbEntriesToFlag) {
             notes.push(`  • _"${entry.entry}"_`);
           }
