@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { vi } from "vitest";
 
+const { logSpy } = vi.hoisted(() => ({ logSpy: vi.fn() }));
+vi.mock("./logger", () => ({
+  log: (...args: unknown[]) => logSpy(...args),
+}));
+
 // In-memory zset fake for the kv wrapper. Only the ops knowledge.ts uses.
 // `store` maps member JSON → score, mirroring a Redis sorted set.
 const { store } = vi.hoisted(() => ({
@@ -61,8 +66,11 @@ function injectRawMember(member: string, score: number): void {
   store.set(member, score);
 }
 
+import { kv } from "./kv";
+
 beforeEach(() => {
   store.clear();
+  logSpy.mockClear();
 });
 
 describe("saveKnowledgeEntry", () => {
@@ -146,6 +154,23 @@ describe("supersedeKnowledgeEntry", () => {
     expect(await getKnowledgeHistory()).toHaveLength(0);
   });
 
+  it("still returns the new id (correction preserved) and logs when linking fails", async () => {
+    const oldId = await saveKnowledgeEntry("original");
+    // Simulate losing the zrem race: the old member vanishes between
+    // the visibility check and the rewrite.
+    vi.mocked(kv.zrem).mockResolvedValueOnce(0);
+
+    const newId = await supersedeKnowledgeEntry(oldId, "replacement");
+    expect(newId).not.toBeNull();
+
+    const visible = await getAllKnowledge();
+    expect(visible.some((e) => e.entry === "replacement")).toBe(true);
+    expect(logSpy).toHaveBeenCalledWith(
+      "knowledge_supersede_link_failed",
+      expect.objectContaining({ newId }),
+    );
+  });
+
   it("preserves the superseded entry's zset score so history ordering is stable", async () => {
     const oldId = await saveKnowledgeEntry("original");
     const rawBefore = [...store.entries()].find(([m]) => m.includes("original"));
@@ -171,6 +196,26 @@ describe("markKnowledgeSuperseded", () => {
 
   it("returns false when no entry matches", async () => {
     expect(await markKnowledgeSuperseded("ghost", "x")).toBe(false);
+  });
+
+  it("skips a non-visible first text match and supersedes a later visible duplicate", async () => {
+    // Two entries share the same text; the older one is already
+    // superseded. Text matching must not stop at the rejected first
+    // match — the visible duplicate should be retired.
+    injectRawMember(
+      JSON.stringify({ id: "a", entry: "dup fact", timestamp: "2025-01-01", supersededById: "x" }),
+      1000,
+    );
+    injectRawMember(
+      JSON.stringify({ id: "b", entry: "dup fact", timestamp: "2025-06-01" }),
+      2000,
+    );
+    const ok = await markKnowledgeSuperseded("dup fact", "n1");
+    expect(ok).toBe(true);
+
+    const history = await getKnowledgeHistory();
+    expect(history.find((e) => e.id === "a")?.supersededById).toBe("x");
+    expect(history.find((e) => e.id === "b")?.supersededById).toBe("n1");
   });
 
   it("never marks an entry as superseded by itself (text collision with its own replacement)", async () => {

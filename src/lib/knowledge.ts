@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { kv } from "./kv";
+import { log } from "./logger";
 
 /**
  * Knowledge Base — Vercel KV storage
@@ -85,11 +86,13 @@ export async function saveKnowledgeEntry(entry: string): Promise<string> {
 }
 
 /**
- * Find the member matching an entry id or exact entry text and rewrite
- * it in place (zrem + zadd of the mutated JSON, preserving the original
- * score so ordering is stable). Returns false if no match, if `mutate`
- * rejects the entry (returns null), or if the member disappeared
- * between read and remove.
+ * Find a member matching an entry id or exact entry text that `mutate`
+ * accepts, and rewrite it in place (zrem + zadd of the mutated JSON,
+ * preserving the original score so ordering is stable). Matches that
+ * `mutate` rejects (returns null) are skipped, not terminal — duplicate
+ * entry texts where the first duplicate is already superseded must not
+ * shadow a later visible one. Returns false if no acceptable match
+ * exists or the member disappeared between read and remove.
  *
  * Concurrency: zscore→zrem→zadd is not atomic. The zrem-count guard
  * ensures we never resurrect a member a concurrent writer already
@@ -108,7 +111,7 @@ async function updateEntry(
     if (parsed.id !== idOrText && parsed.entry !== idOrText) continue;
 
     const updated = mutate(parsed);
-    if (!updated) return false;
+    if (!updated) continue;
 
     const member = toMemberString(rawMember);
     const score = await kv.zscore(KNOWLEDGE_KEY, member);
@@ -143,6 +146,11 @@ export async function markKnowledgeSuperseded(
  * Replace an entry: saves `newEntryText` as a fresh entry and marks the
  * old one superseded by it. Returns the new entry's id, or null (and
  * saves nothing) if no visible entry matches `oldIdOrText`.
+ *
+ * If a concurrent writer retires the old entry between the visibility
+ * check and the mark, the correction still stands (its id is returned)
+ * but the history link is lost — logged as knowledge_supersede_link_failed
+ * so the gap is observable rather than silent.
  */
 export async function supersedeKnowledgeEntry(
   oldIdOrText: string,
@@ -158,7 +166,10 @@ export async function supersedeKnowledgeEntry(
   if (!target) return null;
 
   const newId = await saveKnowledgeEntry(newEntryText);
-  await markKnowledgeSuperseded(oldIdOrText, newId);
+  const linked = await markKnowledgeSuperseded(oldIdOrText, newId);
+  if (!linked) {
+    log("knowledge_supersede_link_failed", { newId });
+  }
   return newId;
 }
 

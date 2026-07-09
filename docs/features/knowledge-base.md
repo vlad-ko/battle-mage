@@ -29,7 +29,7 @@ Entries with either marker are hidden from the prompt but preserved in the sorte
 
 When a user corrects the bot in a conversation, the bot uses the `save_knowledge` tool to persist the correction:
 
-```
+```text
 User: @bm Where does the auth config live?
 Bot:  It's in config/auth.php
 User: No, we moved that to config/security.php last month
@@ -52,7 +52,7 @@ When a user reacts with :thumbsdown: and then replies with a correction, the fla
 
 The function `getKnowledgeAsMarkdown()` fetches the *visible* entries (not superseded, not archived) from KV and formats them as a timestamped list ending with a stale-context footer:
 
-```
+```text
 - [2026-03-28] The auth module lives in app/Services/Auth, not app/Http/Auth
 - [2026-03-27] API rate limit is 120 req/min, not 60
 - [2026-03-25] The deploy pipeline uses Docker Alpine, not Ubuntu
