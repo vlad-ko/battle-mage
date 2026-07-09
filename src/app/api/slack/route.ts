@@ -36,7 +36,18 @@ import {
 import { createRequestLogger, flushLogs, type RequestLogger } from "@/lib/logger";
 import { getCachedTopics } from "@/lib/repo-index";
 import { matchTopicsToQuestion, buildQuestionHints } from "@/lib/topic-match";
-import { isAddressedToOtherUser, buildConversationHistory } from "@/lib/thread-filter";
+import {
+  isAddressedToOtherUser,
+  buildConversationHistory,
+  extractTranscriptTail,
+} from "@/lib/thread-filter";
+import {
+  classifyTurn,
+  decideEffort,
+  evaluateFollowup,
+  buildEffortHint,
+  EFFORT_BUDGETS,
+} from "@/lib/effort-routing";
 
 // Shape of the pending-correction record stored under
 // `pending-correction:{channel}:{threadTs}` when a user reacts 👎.
@@ -266,12 +277,16 @@ export async function POST(request: NextRequest) {
         // and thread follow-ups (all thread authors + anyone mentioned).
         let mentionHistory: { role: "user" | "assistant"; content: string }[] | undefined;
         let mentionParticipants: Participant[] | undefined;
+        // Recent-thread tail for the effort classifier — empty for fresh
+        // top-level mentions (the question alone is enough to bucket).
+        let mentionTranscript = "";
         const botId = await getBotUserId();
         if (event.thread_ts) {
           const threadMsgs = await fetchThreadMessages(channel, threadTs);
           if (botId) {
             mentionHistory = buildConversationHistory(threadMsgs, botId);
           }
+          mentionTranscript = extractTranscriptTail(threadMsgs, botId ?? "");
           const ids = extractParticipantIds(threadMsgs, botId);
           if (ids.length > 0) {
             mentionParticipants = await resolveParticipants(ids);
@@ -288,10 +303,22 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Pre-match question against topic index for concrete file hints
-        const topics = await getCachedTopics();
+        // Pre-match question against topic index for concrete file hints.
+        // The effort classifier (#126) runs in parallel — on the mention
+        // path shouldReply is NEVER consulted (the user explicitly invoked
+        // the bot); the classifier only buckets the question so the agent
+        // gets a right-sized round budget and answer target.
+        const [topics, mentionClassification] = await Promise.all([
+          getCachedTopics(),
+          classifyTurn(
+            { invocation: "mention", transcript: mentionTranscript, question: cleanMessage },
+            { log: rlog },
+          ),
+        ]);
+        const mentionEffort = decideEffort(mentionClassification);
         const topicMatches = matchTopicsToQuestion(cleanMessage, topics);
-        const augmentedMessage = buildQuestionHints(cleanMessage, topicMatches);
+        const augmentedMessage =
+          buildQuestionHints(cleanMessage, topicMatches) + buildEffortHint(mentionEffort);
         if (topicMatches.length > 0) {
           rlog("topic_hints_injected", { topics: topicMatches.map((m) => m.topic), fileCount: topicMatches.reduce((s, m) => s + m.paths.length, 0) });
         }
@@ -316,6 +343,7 @@ export async function POST(request: NextRequest) {
           (toolName, input) => {
             progressThrottle.update(buildThinkingMessage(toolName, input));
           },
+          { maxRounds: EFFORT_BUDGETS[mentionEffort].maxRounds, effort: mentionEffort },
         );
         // Drain any pending progress update before the final write so a
         // stale progress message can't land on top of the final answer.
@@ -567,14 +595,43 @@ export async function POST(request: NextRequest) {
         const threadMessages = await fetchThreadMessages(channel, threadTs);
         const botInThread = bid ? threadMessages.some((m) => m.user === bid) : false;
         if (!bid || !botInThread) return;
+
+        const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
+
+        // Follow-up gate (#126): the structural heuristic above only says
+        // "maybe" — ask the fast-model classifier whether this message is
+        // actually addressed to the bot. Fail-closed: any classifier
+        // error/timeout/low-confidence verdict means we stay silent. Runs
+        // BEFORE the thinking message so a decline produces ZERO Slack
+        // writes — just the log event below.
+        const followupEval = await evaluateFollowup(
+          {
+            invocation: "followup",
+            transcript: extractTranscriptTail(threadMessages, bid),
+            question: cleanMessage,
+          },
+          { log: rlog },
+        );
+        if (!followupEval.proceed) {
+          rlog("followup_reply_declined", {
+            reason:
+              followupEval.decision === null
+                ? "classifier_unavailable"
+                : followupEval.decision.shouldReply
+                  ? "low_confidence"
+                  : "not_addressed",
+            confidence: followupEval.decision?.shouldReplyConfidence ?? null,
+            channel,
+            threadTs,
+          });
+          return;
+        }
         rlog("followup_agent_start", { channel, threadTs });
 
         thinkTs = await replyInThread(
           channel, threadTs,
           THINKING_HEADER,
         );
-
-        const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
 
         // Build proper multi-turn conversation history from thread
         // (uses Anthropic's native message format, not string hacking)
@@ -587,10 +644,13 @@ export async function POST(request: NextRequest) {
           ? await resolveParticipants(followupParticipantIds)
           : undefined;
 
-        // Pre-match for thread follow-ups too
+        // Pre-match for thread follow-ups too; the effort hint from the
+        // classifier rides along on the user message (never the system
+        // prompt — see effort-routing.ts on prompt caching).
         const followupTopics = await getCachedTopics();
         const followupMatches = matchTopicsToQuestion(cleanMessage, followupTopics);
-        const followupMessage = buildQuestionHints(cleanMessage, followupMatches);
+        const followupMessage =
+          buildQuestionHints(cleanMessage, followupMatches) + buildEffortHint(followupEval.effort);
 
         // Mirror of the mention-flow progress updater — see comment
         // there + #110 for rationale.
@@ -608,6 +668,7 @@ export async function POST(request: NextRequest) {
           (toolName, input) => {
             followupProgress.update(buildThinkingMessage(toolName, input));
           },
+          { maxRounds: EFFORT_BUDGETS[followupEval.effort].maxRounds, effort: followupEval.effort },
         );
         await followupProgress.flush();
 

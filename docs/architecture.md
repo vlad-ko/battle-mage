@@ -21,7 +21,7 @@ POST /api/slack (Next.js API route)
         │     │   └── Update thinking message: "🔍 Searching for auth middleware..."
         │     ├── Tool round 2: read_file("src/middleware/auth.ts")
         │     │   └── Update thinking message: "📖 Reading src/middleware/auth.ts..."
-        │     └── ... up to 15 rounds
+        │     └── ... up to the effort-routed round budget (quick 4 / standard 10 / deep 15)
         ├── Convert markdown to Slack mrkdwn
         ├── Format reference links
         └── Post final answer via `postReplyInChunks`
@@ -167,7 +167,7 @@ A warm thread should see `cache_read_tokens` dominate after the first turn. A co
 
 ## The Agent Loop
 
-The agent loop is a Claude tool-use loop with a hard cap of 15 rounds. It is **non-streaming** — each round is a single `messages.create` call that returns the complete response before any tools run (see [Message Splitting](./features/message-splitting.md) for why streaming was removed):
+The agent loop is a Claude tool-use loop with a per-turn round cap set by the effort classifier — quick 4 / standard 10 / deep 15, hard ceiling `MAX_TOOL_ROUNDS = 15` (see [Effort Routing](./features/effort-routing.md)). It is **non-streaming** — each round is a single `messages.create` call that returns the complete response before any tools run (see [Message Splitting](./features/message-splitting.md) for why streaming was removed):
 
 ```
 for round in 0..MAX_TOOL_ROUNDS:
@@ -194,11 +194,11 @@ Progress updates run via `onProgress(toolName, input)` → `progressThrottle.upd
 Battle Mage uses two Anthropic models:
 
 - **`MODEL = "claude-sonnet-4-6"`** — the main agent. All tool-use reasoning, synthesis, and answer generation run on Sonnet. Everything that the user sees is produced by this model.
-- **`FAST_MODEL = "claude-haiku-4-5-20251001"`** — side tasks where Sonnet would be overkill. Today: **thread-history compaction**. Future candidates: thread title generation, LLM-based topic classification.
+- **`FAST_MODEL = "claude-haiku-4-5-20251001"`** — side tasks where Sonnet would be overkill. Today: **thread-history compaction** and the **turn classifier** (one combined call for the follow-up shouldReply gate + effort bucketing — see [Effort Routing](./features/effort-routing.md)). Future candidates: thread title generation.
 
 Rule: tasks that face the user directly or require multi-step reasoning stay on Sonnet. Tasks that are one-shot, summarization-shaped, or high-volume low-nuance classification go to Haiku. Haiku is ~5× cheaper and ~2× faster for this shape of work; the quality drop on summarization is imperceptible.
 
-Every per-call log (`agent_start`, `agent_complete`, `agent_api_error`, `thread_compacted`) includes a `model` field so you can audit which tier ran which call from Sentry.
+Every per-call log (`agent_start`, `agent_complete`, `agent_api_error`, `thread_compacted`, `turn_classified`) includes a `model` field so you can audit which tier ran which call from Sentry.
 
 ### Thread-history compaction (see #76)
 
@@ -326,7 +326,7 @@ This ensures users see the most authoritative sources first.
 | **Verify before asserting** | The agent uses GitHub tools to check that files and methods actually exist before referencing them. No hallucinated code references. |
 | **Issue creation requires confirmation** | The bot proposes issues but never creates them without explicit :white_check_mark: reaction. Prevents accidental issue spam. |
 | **Search first, read second** | The system prompt instructs Claude to search for code patterns before reading files. A single search returns multiple paths with context, avoiding blind file reads. |
-| **15 tool round budget** | Hard cap prevents runaway tool loops. The system prompt instructs Claude to synthesize early rather than exhausting all rounds. |
+| **Adaptive tool round budget** | An effort classifier sizes each turn's round cap (quick 4 / standard 10 / deep 15). The hard ceiling of 15 prevents runaway tool loops, and the system prompt instructs Claude to synthesize early rather than exhausting all rounds. See [Effort Routing](./features/effort-routing.md). |
 | **References from reads only** | Search results are discovery aids and do not appear in references. Only files the agent actually reads (via `read_file`) are cited. |
 | **KV for knowledge, not GitHub** | The knowledge base lives in Vercel KV, not in the GitHub repo. The GitHub PAT does not need Contents: Write permission. |
 | **Split long answers, don't truncate** | Answers over ~3K chars post as multiple thread replies (`[continued ↓]`) instead of being silently cut off. Makes Slack's `msg_too_long` architecturally unreachable on the happy path. See [Message Splitting](./features/message-splitting.md). |

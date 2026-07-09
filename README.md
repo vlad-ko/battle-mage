@@ -52,6 +52,7 @@ See the [full setup guide](docs/setup.md) for Slack app creation, GitHub PAT, Ve
 | Auto-Correction on 👎 | [docs/features/auto-correction.md](docs/features/auto-correction.md) |
 | Live Progress Updates | [docs/features/progress-ux.md](docs/features/progress-ux.md) |
 | Path Annotations (.battle-mage.json) | [docs/features/config.md](docs/features/config.md) |
+| Adaptive Effort Routing | [docs/features/effort-routing.md](docs/features/effort-routing.md) |
 
 ## Environment Variables
 

@@ -5,6 +5,7 @@ import {
   truncateToolResult,
   estimateMessagesTokens,
   executeToolsInParallel,
+  resolveMaxRounds,
   FAST_MODEL,
   MAX_TOOL_ROUNDS,
   TOOL_RESULT_MAX_CHARS,
@@ -1006,4 +1007,32 @@ describe("executeToolsInParallel", () => {
     expect(truncLog?.[1]).toMatchObject({ tool: "read_file", round: 0 });
   });
 
+});
+
+describe("resolveMaxRounds", () => {
+  it("defaults to MAX_TOOL_ROUNDS when options are absent", () => {
+    expect(resolveMaxRounds()).toBe(MAX_TOOL_ROUNDS);
+    expect(resolveMaxRounds({})).toBe(MAX_TOOL_ROUNDS);
+    expect(resolveMaxRounds({ maxRounds: undefined })).toBe(MAX_TOOL_ROUNDS);
+  });
+
+  it("passes a valid in-range value through", () => {
+    expect(resolveMaxRounds({ maxRounds: 4 })).toBe(4);
+    expect(resolveMaxRounds({ maxRounds: 10 })).toBe(10);
+  });
+
+  it("floors fractional values", () => {
+    expect(resolveMaxRounds({ maxRounds: 4.9 })).toBe(4);
+  });
+
+  it("clamps to the [1, MAX_TOOL_ROUNDS] range", () => {
+    expect(resolveMaxRounds({ maxRounds: 0 })).toBe(1);
+    expect(resolveMaxRounds({ maxRounds: -3 })).toBe(1);
+    expect(resolveMaxRounds({ maxRounds: 999 })).toBe(MAX_TOOL_ROUNDS);
+  });
+
+  it("defaults to MAX_TOOL_ROUNDS on non-finite input", () => {
+    expect(resolveMaxRounds({ maxRounds: Number.NaN })).toBe(MAX_TOOL_ROUNDS);
+    expect(resolveMaxRounds({ maxRounds: Number.POSITIVE_INFINITY })).toBe(MAX_TOOL_ROUNDS);
+  });
 });
