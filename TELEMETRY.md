@@ -48,6 +48,19 @@ These names are treated as a public contract — renaming one is a breaking chan
 | `recovery_sweep_failed` / `recovery_sweep_member_failed` | The sweep itself broke (whole run / one thread — state stays recoverable; the next sweep retries after the claim TTL) |
 | `recovery_sweep_unauthorized` | Cron auth rejected — check `CRON_SECRET` |
 
+### Code index (incremental source embedding, #135)
+
+| Event | Meaning |
+|---|---|
+| `src_index_tick` | Indexing-tick heartbeat (`status`, `upserted`, `deleted`, `skipped`, `remaining`) |
+| `src_index_noop` | Head SHA already indexed — the healthy steady state |
+| `src_index_tree_truncated` | GitHub truncated the tree listing — tick aborted before any delete (mass-delete guard) |
+| `src_index_file_skipped` | One unreadable file skipped — retried next tick |
+| `src_index_degraded` | Vector layer failed mid-tick — progress persisted, SHA not advanced |
+| `src_index_tick_failed` | The tick itself threw (KV/infrastructure) — Sentry issue tagged `flow: cron_code_index` |
+| `src_index_claim_lost` | Another tick owns the NX claim (`srcindex:claim`, 270 s TTL) — benign skip |
+| `src_index_unauthorized` | Cron auth rejected — check `CRON_SECRET` |
+
 ## Query recipes (Sentry Logs UI)
 
 ### Turn failure rate
@@ -82,6 +95,18 @@ count(event:idempotency_replayed) + count(event:idempotency_in_flight)
 ```
 
 …as a share of `event:issue_batch_confirmed`. Healthy: near zero in steady state (the del-claim + tombstone layer catches most races first). A sustained rise means duplicate confirmations are reaching the innermost layer — look for Slack event redeliveries (`x-slack-retry-num` handling) or tombstone-TTL gaps. Any nonzero `idempotency_degraded` means Upstash was unreachable during issue creation — correlate with `kv_error`.
+
+### Code-index health
+
+Is the source index keeping up with the repo?
+
+```text
+event:src_index_noop           — steady state (head SHA fully indexed)
+event:src_index_tick           — catching up (status: complete | partial | degraded)
+event:src_index_tick_failed    — the tick itself broke
+```
+
+Every ~5 minutes exactly one per-tick terminal event should appear: `src_index_noop` (the healthy steady state) or `src_index_tick` with `status: complete | partial | degraded` (catching up after a push). `src_index_claim_lost` and `src_index_unavailable` are **benign, not page-worthy** — the former is cadence overlap on the NX claim, the latter simply means `UPSTASH_VECTOR_REST_*` isn't provisioned. Persistent `partial` with a non-shrinking `remaining` means the per-tick budgets can't keep up (or one file keeps failing — check `src_index_file_skipped` for a repeated `path`). Any `status: degraded` correlates with `vector_error`; `src_index_tree_truncated` on a huge repo means the recursive tree API is truncating and the index cannot safely advance. **No terminal event at all** for several cadences means the cron isn't firing — check the Vercel Cron dashboard and look for `src_index_unauthorized`.
 
 ### Cross-run correlation
 

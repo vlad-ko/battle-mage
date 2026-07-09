@@ -193,6 +193,38 @@ export async function getRepoTree(): Promise<{ path: string; type: string }[]> {
     .map((e) => ({ path: e.path!, type: e.type! }));
 }
 
+// ── Repo tree snapshot (for the incremental code index, #135) ────────
+// Additive alongside getRepoTree: the code index needs blob SHAs (for
+// per-file change detection), sizes (for the embed-size cap), and the
+// `truncated` flag (the mass-delete guard aborts on a partial tree).
+
+export interface RepoTreeSnapshot {
+  /** The commit SHA the tree was resolved from — every content read in
+   * the same tick is pinned to this ref. */
+  sha: string;
+  /** True when GitHub truncated the recursive listing — the snapshot is
+   * incomplete and MUST NOT be diffed against the manifest. */
+  truncated: boolean;
+  blobs: { path: string; sha: string; size?: number }[];
+}
+
+export async function getRepoTreeSnapshot(ref?: string): Promise<RepoTreeSnapshot> {
+  const sha = ref ?? (await getHeadSha());
+  const { data } = await octokit.rest.git.getTree({
+    owner: owner(),
+    repo: repo(),
+    tree_sha: sha,
+    recursive: "true",
+  });
+  return {
+    sha,
+    truncated: data.truncated === true,
+    blobs: data.tree
+      .filter((e) => e.type === "blob" && e.path && e.sha)
+      .map((e) => ({ path: e.path!, sha: e.sha!, size: e.size })),
+  };
+}
+
 export async function getHeadSha(): Promise<string> {
   const { data } = await octokit.rest.repos.getBranch({
     owner: owner(),

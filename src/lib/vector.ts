@@ -77,6 +77,16 @@ export function docsNamespace(sha: string): string {
   return `${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}:docs:${sha}`;
 }
 
+/**
+ * Namespace holding source-code chunks (#135). Deliberately STABLE
+ * (not SHA-scoped, unlike docsNamespace): the code index is maintained
+ * incrementally — per-file diffs against a KV manifest — so ids must
+ * survive across ticks instead of being rebuilt per generation.
+ */
+export function srcNamespace(): string {
+  return `${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}:src`;
+}
+
 // ── Store construction (lazy + memoized; SDK confined here) ──────────
 
 type VectorStoreFactory = () => VectorStore;

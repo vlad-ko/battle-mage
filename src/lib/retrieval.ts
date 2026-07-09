@@ -125,6 +125,32 @@ export function fuseRankedLists(
   return fused.slice(0, topK);
 }
 
+/** The minimal shape mergeSemanticMatches needs — VectorMatch satisfies it. */
+export interface ScoredMatch {
+  id: string;
+  score: number;
+}
+
+/**
+ * Merge two SAME-SCALE semantic result lists (doc chunks and src chunks
+ * come from the same embedding model, so raw cosine scores ARE
+ * comparable — unlike the lexical arm, which is why THIS is a score
+ * merge while cross-arm combination stays RRF). Descending score;
+ * stable sort keeps the first list (docs) ahead on exact ties; capped
+ * at topK (explicit 0 honored). Pure function.
+ */
+export function mergeSemanticMatches<T extends ScoredMatch>(
+  docMatches: T[],
+  srcMatches: T[],
+  topK: number,
+): T[] {
+  const merged = [...docMatches, ...srcMatches];
+  // Array.prototype.sort is stable per ES2019 — ties keep enumeration
+  // order, i.e. docs before src.
+  merged.sort((a, b) => b.score - a.score);
+  return merged.slice(0, Math.max(0, topK));
+}
+
 // Small stopword set — question words and glue that would otherwise
 // substring-match almost every entry. Tokens under 3 chars are already
 // dropped before this filter applies.

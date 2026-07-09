@@ -20,6 +20,7 @@ import {
   isVectorConfigured,
   kbNamespace,
   docsNamespace,
+  srcNamespace,
   VECTOR_OP_TIMEOUT_MS,
   __setVectorStoreFactoryForTests,
   type VectorStore,
@@ -67,6 +68,12 @@ describe("namespace helpers (pure given env)", () => {
     vi.stubEnv("GITHUB_OWNER", "acme");
     vi.stubEnv("GITHUB_REPO", "backend");
     expect(docsNamespace("abc1234")).toBe("acme/backend:docs:abc1234");
+  });
+
+  it("srcNamespace is the stable owner/repo:src namespace (no SHA suffix)", () => {
+    vi.stubEnv("GITHUB_OWNER", "acme");
+    vi.stubEnv("GITHUB_REPO", "backend");
+    expect(srcNamespace()).toBe("acme/backend:src");
   });
 });
 

@@ -8,7 +8,7 @@ A Slack agent with Claude AI intelligence and full GitHub repo access — reads 
 - **Slack**: Webhook mode via Next.js API route (`/api/slack`), ack-then-process via `after()`
 - **AI**: Anthropic Claude API with tool use (8 tools, adaptive per-turn round budget: quick 4 / standard 10 / deep 15)
 - **GitHub**: Octokit REST API (fine-grained PAT, read-only for code/PRs, read-write for issues)
-- **Knowledge**: Vercel KV (corrections, feedback, repo index cache) + Upstash Vector (semantic recall for KB + docs, graceful lexical-only degradation)
+- **Knowledge**: Vercel KV (corrections, feedback, repo index cache) + Upstash Vector (semantic recall for KB + docs + source code, graceful lexical-only degradation)
 - **Context**: CLAUDE.md + KB + feedback + repo index + source hierarchy + search strategy + recency/brevity rules
 - **Progress**: Live thinking messages with contextual emoji, deleted on answer
 - **Formatting**: Markdown-to-Slack mrkdwn conversion, typed references with emoji (📄📖🎫🔀📜), ranked by source-of-truth hierarchy, capped at 7
@@ -43,6 +43,7 @@ src/
   app/
     api/slack/route.ts    — Slack webhook handler (mention, reaction, thread follow-up)
     api/cron/sweep/route.ts — Recovery sweep (retries turns killed mid-processing)
+    api/cron/code-index/route.ts — Incremental code-index tick (embeds changed source files)
     page.tsx              — Landing page
   lib/
     slack.ts              — Slack client, signature verification, message helpers
@@ -65,11 +66,13 @@ src/
     split-reply.ts        — Pure splitter for long Slack replies (paragraph/line/word/fence-aware)
     kv.ts                 — @upstash/redis wrapper with Sentry observability (kv_op + kv_error events)
     vector.ts             — @upstash/vector wrapper (non-throwing, vector_op/vector_error events, 2s timeout)
-    retrieval.ts          — Pure hybrid-retrieval primitives (RRF fusion, age boost, lexical ranking)
+    retrieval.ts          — Pure hybrid-retrieval primitives (RRF fusion, semantic merge, age boost, lexical ranking)
+    code-chunker.ts       — Pure source-file chunking + embed-eligibility predicate (#135)
+    code-index.ts         — Incremental code-index tick: manifest diff, budgets, degradation (#135)
   tools/
     index.ts              — Tool registry and executor
     search-code.ts        — GitHub code search tool
-    search-repo.ts        — Hybrid code + docs search (lexical + semantic, RRF-fused)
+    search-repo.ts        — Hybrid code + docs + src search (lexical + semantic, RRF-fused)
     read-file.ts          — GitHub file/directory read tool
     list-issues.ts        — GitHub issue list/lookup tool
     list-commits.ts       — Recent commits on main (with dates)
@@ -92,8 +95,9 @@ docs/
     issue-creation.md     — Batch issue proposals + bulk-confirm flow
     effort-routing.md     — Fast-model follow-up gate + per-turn effort budgets
     hybrid-retrieval.md   — Lexical + semantic retrieval (Upstash Vector, RRF fusion, degradation)
+    code-index.md         — Incremental semantic code index (manifest cursor, cron tick, src arm)
 TELEMETRY.md              — Incident-response event vocabulary + Sentry query recipes
-vercel.json               — Vercel Cron schedule for the recovery sweep
+vercel.json               — Vercel Cron schedules (recovery sweep + code-index tick)
 ```
 
 ## Testing (TDD Required)
