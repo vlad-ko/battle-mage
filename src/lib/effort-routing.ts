@@ -83,8 +83,12 @@ export interface ClassifyInput {
 }
 
 export interface ClassifyDeps {
-  /** Injectable model call for tests. In prod defaults to a Haiku call. */
-  call?: (prompt: string) => Promise<string>;
+  /**
+   * Injectable model call for tests. In prod defaults to a Haiku call.
+   * The signal aborts when the classifier timeout fires so a slow
+   * request doesn't keep running (and billing) after we've failed closed.
+   */
+  call?: (prompt: string, signal?: AbortSignal) => Promise<string>;
   /** Logger for turn_classified / turn_classifier_error events. */
   log?: LogFn;
 }
@@ -174,13 +178,19 @@ export async function classifyTurn(
 
   let raw: string;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const controller = new AbortController();
   try {
     raw = await Promise.race([
       // Promise.resolve().then(...) converts a synchronously-throwing
       // injected call into a rejection instead of an escaping throw.
-      Promise.resolve().then(() => call(prompt)),
+      Promise.resolve().then(() => call(prompt, controller.signal)),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new ClassifierTimeoutError()), CLASSIFIER_TIMEOUT_MS);
+        timer = setTimeout(() => {
+          // Abort the losing request too — Promise.race alone would let
+          // the Anthropic call keep running after we fail closed.
+          controller.abort();
+          reject(new ClassifierTimeoutError());
+        }, CLASSIFIER_TIMEOUT_MS);
       }),
     ]);
   } catch (err) {
@@ -289,11 +299,14 @@ export async function evaluateFollowup(
   };
 }
 
-async function defaultCall(prompt: string): Promise<string> {
-  const resp = await anthropic.messages.create({
-    model: FAST_MODEL,
-    max_tokens: 256,
-    messages: [{ role: "user", content: prompt }],
-  });
+async function defaultCall(prompt: string, signal?: AbortSignal): Promise<string> {
+  const resp = await anthropic.messages.create(
+    {
+      model: FAST_MODEL,
+      max_tokens: 256,
+      messages: [{ role: "user", content: prompt }],
+    },
+    { signal },
+  );
   return resp.content.map((b) => (b.type === "text" ? b.text : "")).join("");
 }

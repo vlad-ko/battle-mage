@@ -579,7 +579,10 @@ export async function runAgent(
   // Per-turn round budget from the effort classifier (#126); defaults to
   // the historical MAX_TOOL_ROUNDS ceiling when no options are passed.
   const maxRounds = resolveMaxRounds(options);
-  const effort = options?.effort ?? "standard";
+  // "default" (not "standard") when no routing ran: an unrouted turn logs
+  // max_rounds=15, which would corrupt per-bucket metrics if labeled
+  // standard (whose routed budget is 10).
+  const effort = options?.effort ?? "default";
 
   // Compact conversation history if it exceeds the trigger. Runs before
   // the messages array is built so the round-0 request is already slim.

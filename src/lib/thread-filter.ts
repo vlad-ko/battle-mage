@@ -137,13 +137,17 @@ export function extractTranscriptTail(
   messages: ThreadMessage[],
   botUserId: string,
 ): string {
+  // Walk from the newest message backward and stop once the tail is
+  // full — long threads must not pay clean/truncate cost per message
+  // on every classification.
   const entries: string[] = [];
-  for (const m of messages) {
+  for (let i = messages.length - 1; i >= 0 && entries.length < TRANSCRIPT_TAIL_MAX; i--) {
+    const m = messages[i];
     const text = truncate(cleanText(m.text ?? ""), TRANSCRIPT_ENTRY_MAX_CHARS);
     if (!text) continue; // Skip empty messages
 
     const speaker = m.user === botUserId || m.bot_id ? "bot" : "user";
     entries.push(`${speaker}: ${text}`);
   }
-  return entries.slice(-TRANSCRIPT_TAIL_MAX).join("\n");
+  return entries.reverse().join("\n");
 }
