@@ -347,6 +347,27 @@ describe("upsert batching + timeout override (BATTLE-MAGE-5)", () => {
     expect(String(err?.[1].errorMessage)).toContain("30000");
   });
 
+  it("timeoutMs is an end-to-end deadline for the whole call, not per batch", async () => {
+    vi.useFakeTimers();
+    // Each batch takes 12s. With a 30s per-CALL budget, batch 1 (12s) and
+    // batch 2 (24s) fit; batch 3 would finish at 36s — the call must fail
+    // at the 30s deadline instead of granting each batch a fresh 30s.
+    __setVectorStoreFactoryForTests(() =>
+      makeFakeStore({
+        upsert: () => new Promise((resolve) => setTimeout(() => resolve(undefined), 12_000)),
+      }),
+    );
+    const items = Array.from({ length: UPSERT_BATCH_SIZE * 3 }, (_, i) => ({
+      id: `c${i}`,
+      text: `chunk ${i}`,
+    }));
+    const pending = vectorUpsert("ns", items, { timeoutMs: 30_000 });
+    await vi.advanceTimersByTimeAsync(40_000);
+    await expect(pending).resolves.toBe(false);
+    const err = logSpy.mock.calls.find((c) => c[0] === "vector_error");
+    expect(err?.[1]).toMatchObject({ op: "upsert", errorClass: "VectorTimeoutError" });
+  });
+
   it("default timeout still applies when no override is passed", async () => {
     vi.useFakeTimers();
     __setVectorStoreFactoryForTests(() =>

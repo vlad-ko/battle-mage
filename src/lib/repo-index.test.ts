@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { VECTOR_BACKGROUND_TIMEOUT_MS } from "./vector";
 
 // ── #127 mocks: kv / github / vector / logger for the rebuild-hook tests ──
 // The pure-function tests below never touch these; the mocks only feed
@@ -38,9 +39,10 @@ vi.mock("./kv", () => ({
   },
 }));
 
-vi.mock("./vector", () => ({
-  VECTOR_BACKGROUND_TIMEOUT_MS: 30_000,
-  isVectorConfigured: () => true,
+vi.mock("./vector", async (importOriginal) => ({
+  // Real constants flow through; only the side-effectful fns are mocked.
+  ...(await importOriginal<typeof import("./vector")>()),
+    isVectorConfigured: () => true,
   docsNamespace: (sha: string) => `acme_backend:docs:${sha}`,
   vectorUpsert: (...a: unknown[]) => vectorUpsertSpy(...a),
   vectorDeleteNamespace: (...a: unknown[]) => vectorDeleteNamespaceSpy(...a),
@@ -615,7 +617,7 @@ describe("getOrRebuildIndex — doc embedding hook (#127)", () => {
       "acme_backend:docs:new-sha",
       [expect.objectContaining({ id: "docs/setup.md#0" })],
       // Background pipeline uses the generous embed budget (BATTLE-MAGE-5).
-      { timeoutMs: 30_000 },
+      { timeoutMs: VECTOR_BACKGROUND_TIMEOUT_MS },
     );
     expect(kvData.get("index:vector_docs_ns")).toBe("acme_backend:docs:new-sha");
     expect(vectorDeleteNamespaceSpy).toHaveBeenCalledWith(

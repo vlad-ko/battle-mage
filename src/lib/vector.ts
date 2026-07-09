@@ -254,10 +254,15 @@ export async function vectorUpsert(
   try {
     // Sequential batches; stop on the first failure. Completed batches
     // stay written — deterministic ids make the caller's retry re-send
-    // them idempotently.
+    // them idempotently. timeoutMs is an END-TO-END deadline for the
+    // whole call: each batch races the remaining budget, so a
+    // multi-batch upsert can never exceed the caller's per-call cap.
+    const deadline = startedAt + timeoutMs;
     for (let i = 0; i < items.length; i += UPSERT_BATCH_SIZE) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new VectorTimeoutError("upsert", timeoutMs);
       const batch = items.slice(i, i + UPSERT_BATCH_SIZE);
-      await withTimeout("upsert", getStore().upsert(namespace, batch), timeoutMs);
+      await withTimeout("upsert", getStore().upsert(namespace, batch), remaining);
     }
     log("vector_op", {
       op: "upsert",
