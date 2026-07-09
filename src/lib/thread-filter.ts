@@ -112,3 +112,42 @@ export function buildConversationHistory(
 
   return merged;
 }
+
+// ── Classifier transcript tail (#126) ───────────────────────────────
+
+/** Max thread entries fed to the turn classifier. The gate question is
+ *  "is THIS message addressed to the bot" — a handful of recent turns is
+ *  plenty of context, and keeping the tail small keeps the Haiku call
+ *  cheap and fast. */
+export const TRANSCRIPT_TAIL_MAX = 6;
+
+/** Per-entry char cap for the classifier transcript. Tighter than the
+ *  agent-history cap (2000) — the classifier needs gist, not detail. */
+const TRANSCRIPT_ENTRY_MAX_CHARS = 500;
+
+/**
+ * Compact "speaker: text" transcript of the most recent thread messages,
+ * for the turn classifier's <TRANSCRIPT> slot. Pure. Mention tokens are
+ * stripped (same cleanText as buildConversationHistory), entries empty
+ * after cleaning are skipped, each entry is truncated at 500 chars with
+ * a trailing "...", and the speaker is "bot" under the same rule
+ * buildConversationHistory uses for role "assistant".
+ */
+export function extractTranscriptTail(
+  messages: ThreadMessage[],
+  botUserId: string,
+): string {
+  // Walk from the newest message backward and stop once the tail is
+  // full — long threads must not pay clean/truncate cost per message
+  // on every classification.
+  const entries: string[] = [];
+  for (let i = messages.length - 1; i >= 0 && entries.length < TRANSCRIPT_TAIL_MAX; i--) {
+    const m = messages[i];
+    const text = truncate(cleanText(m.text ?? ""), TRANSCRIPT_ENTRY_MAX_CHARS);
+    if (!text) continue; // Skip empty messages
+
+    const speaker = m.user === botUserId || m.bot_id ? "bot" : "user";
+    entries.push(`${speaker}: ${text}`);
+  }
+  return entries.reverse().join("\n");
+}

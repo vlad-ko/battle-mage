@@ -6,7 +6,7 @@ A Slack agent with Claude AI intelligence and full GitHub repo access — reads 
 
 - **Runtime**: Vercel (Next.js serverless functions)
 - **Slack**: Webhook mode via Next.js API route (`/api/slack`), ack-then-process via `after()`
-- **AI**: Anthropic Claude API with tool use (7 tools, 15-round budget)
+- **AI**: Anthropic Claude API with tool use (7 tools, adaptive per-turn round budget: quick 4 / standard 10 / deep 15)
 - **GitHub**: Octokit REST API (fine-grained PAT, read-only for code/PRs, read-write for issues)
 - **Knowledge**: Vercel KV (corrections, feedback, repo index cache)
 - **Context**: CLAUDE.md + KB + feedback + repo index + source hierarchy + search strategy + recency/brevity rules
@@ -34,7 +34,7 @@ npm run dev                  # http://localhost:3000
 
 5. **Issue creation requires confirmation** — The agent can propose one or many GitHub issues in a single turn but NEVER creates any without explicit approval. Approval is either a ✅ reaction on the proposal message or a short thread reply like "confirm all" / "yes". See `docs/features/issue-creation.md`.
 
-6. **Thread follow-ups** — Once the bot is participating in a thread, users can send follow-up messages without re-mentioning. The bot checks for its own prior replies before responding.
+6. **Thread follow-ups** — Once the bot is participating in a thread, users can send follow-up messages without re-mentioning. The bot checks for its own prior replies, then a fast-model classifier decides whether the message is actually addressed to the bot — anything else (human-to-human chatter, classifier errors) fails closed to silence. See `docs/features/effort-routing.md`.
 
 ## Project Structure
 
@@ -50,6 +50,7 @@ src/
     knowledge.ts          — Knowledge base (Vercel KV sorted set)
     feedback.ts           — Feedback storage (Vercel KV) and Q&A context
     issue-batch.ts        — Pure helpers for multi-proposal formatting and bulk-confirm matching
+    effort-routing.ts     — Turn classifier (follow-up shouldReply gate + effort buckets → round/answer budgets)
     config.ts             — .battle-mage.json loader (path annotations with graduated trust)
     repo-index.ts         — Repository topic index (lazy rebuild on SHA change)
     auto-correct.ts       — Stale KB entry detection and doc reference flagging
@@ -82,6 +83,7 @@ docs/
     progress-ux.md        — Live progress updates (emoji + status)
     message-splitting.md  — Long-reply chunking architecture (split-reply + boundary guard)
     issue-creation.md     — Batch issue proposals + bulk-confirm flow
+    effort-routing.md     — Fast-model follow-up gate + per-turn effort budgets
 ```
 
 ## Testing (TDD Required)

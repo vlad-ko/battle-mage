@@ -522,6 +522,30 @@ export type ProgressCallback = (
   input: Record<string, unknown>,
 ) => void | Promise<void>;
 
+/**
+ * Per-turn agent options from the effort classifier (#126). claude.ts
+ * stays classifier-agnostic — the route resolves the effort bucket via
+ * effort-routing.ts and passes only the resulting numbers/label here.
+ * Answer-length steering is NOT in this file either: the route appends
+ * buildEffortHint() to the user message so the stable system-prompt
+ * zone stays byte-identical for prompt caching.
+ */
+export interface RunAgentOptions {
+  /** Per-turn tool-round cap. Floored and clamped to [1, MAX_TOOL_ROUNDS]. */
+  maxRounds?: number;
+  /** Effort bucket label — observability only (agent_start/agent_complete). */
+  effort?: string;
+}
+
+// Pure resolver for the per-turn round cap: floor → clamp to
+// [1, MAX_TOOL_ROUNDS] → default MAX_TOOL_ROUNDS when absent or
+// non-finite. Exported for unit testing.
+export function resolveMaxRounds(options?: RunAgentOptions): number {
+  const v = options?.maxRounds;
+  if (typeof v !== "number" || !Number.isFinite(v)) return MAX_TOOL_ROUNDS;
+  return Math.min(MAX_TOOL_ROUNDS, Math.max(1, Math.floor(v)));
+}
+
 // Non-streaming Anthropic call. Previously used `messages.stream` +
 // `finalMessage()` to enable live text-delta forwarding to Slack. With
 // the API-minimization refactor (#108) we no longer stream text to
@@ -545,11 +569,20 @@ export async function runAgent(
   rlog?: LogFn,
   participants?: Participant[],
   onProgress?: ProgressCallback,
+  options?: RunAgentOptions,
 ): Promise<AgentResult> {
   // Use request-scoped logger if provided, fall back to bare log. Typed
   // as LogFn because runAgent itself only calls the logger (the route
   // keeps the full RequestLogger for the reply footer's requestId).
   const _log: LogFn = rlog ?? log;
+
+  // Per-turn round budget from the effort classifier (#126); defaults to
+  // the historical MAX_TOOL_ROUNDS ceiling when no options are passed.
+  const maxRounds = resolveMaxRounds(options);
+  // "default" (not "standard") when no routing ran: an unrouted turn logs
+  // max_rounds=15, which would corrupt per-bucket metrics if labeled
+  // standard (whose routed budget is 10).
+  const effort = options?.effort ?? "default";
 
   // Compact conversation history if it exceeds the trigger. Runs before
   // the messages array is built so the round-0 request is already slim.
@@ -575,6 +608,8 @@ export async function runAgent(
     promptLength,
     question: userMessage.slice(0, 100),
     model: MODEL,
+    effort,
+    max_rounds: maxRounds,
   });
   // Observability (#114): emit how much feedback context the model saw
   // this turn. Fires on every turn (even when totalEntries === 0) so we
@@ -600,7 +635,7 @@ export async function runAgent(
   let totalInput = 0;
   let totalOutput = 0;
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+  for (let round = 0; round < maxRounds; round++) {
     // Time budget check — force-stop if over 5 minutes
     if (shouldForceStop(startTime)) {
       _log("agent_timeout", { rounds: round, duration_ms: Date.now() - startTime });
@@ -678,6 +713,8 @@ export async function runAgent(
         cache_read_tokens: totalCacheRead,
         cache_creation_tokens: totalCacheCreation,
         model: MODEL,
+        effort,
+        max_rounds: maxRounds,
       });
       return { text, issueProposals, references: dedupeRefs(), metrics: buildMetrics(round + 1) };
     }
@@ -783,7 +820,7 @@ export async function runAgent(
     text: "I hit the maximum number of tool calls for this request. Here's what I found so far — please ask a more specific question if you need more detail.",
     issueProposals,
     references: finalRefs,
-    metrics: buildMetrics(MAX_TOOL_ROUNDS),
+    metrics: buildMetrics(maxRounds),
   };
 }
 

@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { isAddressedToOtherUser, buildConversationHistory } from "./thread-filter";
+import {
+  isAddressedToOtherUser,
+  buildConversationHistory,
+  extractTranscriptTail,
+  TRANSCRIPT_TAIL_MAX,
+} from "./thread-filter";
 
 describe("isAddressedToOtherUser", () => {
   const botId = "B001";
@@ -134,5 +139,67 @@ describe("buildConversationHistory", () => {
     const userMessages = result.filter((m) => m.role === "user");
     expect(userMessages).toHaveLength(1);
     expect(userMessages[0].content).toBe("How does auth work?");
+  });
+});
+
+describe("extractTranscriptTail", () => {
+  const botId = "B001";
+
+  it("returns empty string for no messages", () => {
+    expect(extractTranscriptTail([], botId)).toBe("");
+  });
+
+  it("labels speakers bot/user using the buildConversationHistory rule", () => {
+    const messages = [
+      { user: "U123", text: "How does auth work?", bot_id: undefined },
+      { user: "B001", text: "Auth uses JWT tokens.", bot_id: "B001" },
+    ];
+    const tail = extractTranscriptTail(messages, botId);
+    expect(tail).toBe("user: How does auth work?\nbot: Auth uses JWT tokens.");
+  });
+
+  it("labels messages with a bot_id as bot even when user differs", () => {
+    const messages = [{ user: "U999", text: "automated post", bot_id: "BOTHER" }];
+    expect(extractTranscriptTail(messages, botId)).toBe("bot: automated post");
+  });
+
+  it("strips @mentions from entries", () => {
+    const messages = [
+      { user: "U123", text: "<@B001> can you check <@U456>'s question?", bot_id: undefined },
+    ];
+    const tail = extractTranscriptTail(messages, botId);
+    expect(tail).not.toContain("<@");
+    expect(tail).toContain("can you check");
+  });
+
+  it("truncates entries at 500 chars with a trailing ellipsis", () => {
+    const messages = [{ user: "U123", text: "x".repeat(600), bot_id: undefined }];
+    const tail = extractTranscriptTail(messages, botId);
+    // "user: " prefix + 500 chars + "..."
+    expect(tail.length).toBeLessThanOrEqual("user: ".length + 500 + 3);
+    expect(tail).toMatch(/\.\.\.$/);
+  });
+
+  it("skips entries that are empty after mention stripping", () => {
+    const messages = [
+      { user: "U123", text: "<@B001>", bot_id: undefined },
+      { user: "U123", text: "real question", bot_id: undefined },
+    ];
+    expect(extractTranscriptTail(messages, botId)).toBe("user: real question");
+  });
+
+  it("keeps only the last TRANSCRIPT_TAIL_MAX entries", () => {
+    const messages = Array.from({ length: 20 }, (_, i) => ({
+      user: "U123",
+      text: `msg ${i}`,
+      bot_id: undefined,
+    }));
+    const tail = extractTranscriptTail(messages, botId);
+    const lines = tail.split("\n");
+    expect(TRANSCRIPT_TAIL_MAX).toBe(6);
+    expect(lines).toHaveLength(TRANSCRIPT_TAIL_MAX);
+    // Most recent messages survive, oldest are dropped
+    expect(lines[lines.length - 1]).toBe("user: msg 19");
+    expect(tail).not.toContain("msg 13");
   });
 });

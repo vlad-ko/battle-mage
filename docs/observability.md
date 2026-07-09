@@ -83,10 +83,19 @@ Filter: requestId=a3f2b1c4
 
 | Event | When | Key data |
 |-------|------|----------|
-| `agent_start` | Agent loop begins | promptLength, question, model |
+| `agent_start` | Agent loop begins | promptLength, question, model, effort, max_rounds |
 | `agent_tool_call` | Each tool execution | tool, round, input (truncated) |
-| `agent_complete` | Agent produces final answer | rounds, refCount, hasProposal, duration_ms |
+| `agent_complete` | Agent produces final answer | rounds, refCount, hasProposal, duration_ms, effort, max_rounds |
 | `prompt_feedback_included` | System prompt assembled — fires **every** turn, even when no entries | positiveCount, negativeCount, totalEntries, promptZone |
+
+The `effort` / `max_rounds` fields on `agent_start` and `agent_complete` come from the turn classifier (see below) — use them to compare token spend per effort bucket.
+
+### Classifier Events (effort-routing.ts) — #126
+
+| Event | When | Key data |
+|-------|------|----------|
+| `turn_classified` | Turn classifier returned a valid verdict | invocation, shouldReply, shouldReplyConfidence, effort, effortConfidence, duration_ms, model |
+| `turn_classifier_error` | Classifier failed — verdict is null (follow-ups fail closed, effort falls back to standard) | reason (`api_error` \| `timeout` \| `malformed_json` \| `invalid_shape`), message, duration_ms, model |
 
 ### Index Events (repo-index.ts)
 
@@ -104,6 +113,7 @@ Filter: requestId=a3f2b1c4
 | `answer_posted` | Bot's answer sent to Slack | channel, threadTs, chunks |
 | `issue_created` | GitHub issue created after ✅ | number |
 | `followup_agent_start` | Thread follow-up triggering agent | channel, threadTs |
+| `followup_reply_declined` | Follow-up gate stayed silent (not addressed to the bot, low confidence, or classifier unavailable) | reason, confidence, channel, threadTs |
 
 ### KV Events (lib/kv.ts) — #117
 

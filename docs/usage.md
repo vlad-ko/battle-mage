@@ -41,7 +41,7 @@ Can you show me the relevant tests?
   [bot answers]
 ```
 
-The bot checks whether it has already replied in the thread. If it has, it treats any new message in that thread as a follow-up and responds automatically.
+The bot checks whether it has already replied in the thread. If it has, a fast-model classifier then decides whether your message is actually addressed to the bot — questions and requests get a reply, while human-to-human chatter, status updates, and messages aimed at a teammate are declined silently. If the bot stays quiet on something you *did* mean for it, just @mention it.
 
 > **Tip**: This only works in threads where the bot has already posted. If you start a new thread, you need to @mention the bot again.
 
@@ -70,7 +70,7 @@ Battle Mage has access to seven tools for exploring your codebase:
 
 **Less effective questions**:
 
-- Extremely broad questions like "explain the entire codebase" -- the bot has a budget of 15 tool rounds per question, so it cannot read every file
+- Extremely broad questions like "explain the entire codebase" -- the bot has a budget of at most 15 tool rounds per question (deep bucket), so it cannot read every file
 - Questions about runtime behavior or logs -- the bot has read access to code, not production systems
 - Questions about other repositories -- the bot is scoped to a single repo
 
@@ -175,7 +175,7 @@ Feedback is stored in Vercel KV and injected into the system prompt. The bot see
 
 ## Limitations
 
-- **15 tool rounds per question**. The bot budgets its tool calls. For very complex questions, it may answer with partial information and suggest follow-ups.
+- **Up to 15 tool rounds per question**. An effort classifier sizes each turn's budget (quick 4 / standard 10 / deep 15). For very complex questions, the bot may answer with partial information and suggest follow-ups.
 - **Read-only GitHub access**. The bot can read code and create issues (with confirmation), but cannot push code, merge PRs, or modify files.
 - **Single repository**. The bot is configured to read one repository. It cannot cross-reference multiple repos.
 - **No runtime access**. The bot reads source code and GitHub metadata. It does not have access to logs, databases, or production environments.

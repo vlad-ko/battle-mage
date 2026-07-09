@@ -70,7 +70,7 @@ If you see it anyway, Sentry will have a `SlackMessageOversizeError` with the of
 **Possible causes:**
 
 - **Vercel function timeout**: By default, Vercel Hobby plans have a 10-second function timeout. The `after()` callback runs outside the response lifecycle but still has a maximum execution time based on your plan. Pro plans get up to 60 seconds, Enterprise gets more.
-- **Complex questions**: If the bot uses all 15 tool rounds, each involving a GitHub API call and a Claude API call, the total execution time can exceed timeout limits.
+- **Complex questions**: If the bot uses its full tool-round budget (up to 15 rounds for deep-bucket questions), each involving a GitHub API call and a Claude API call, the total execution time can exceed timeout limits.
 - **Large files**: Reading very large files from GitHub can be slow. The bot does not paginate or truncate file reads.
 
 **Fixes:**
@@ -93,6 +93,8 @@ If you see it anyway, Sentry will have a `SlackMessageOversizeError` with the of
 4. **Is the bot's user ID resolvable?** The bot calls `auth.test()` to get its own user ID (cached per cold start). If this fails, the thread follow-up handler cannot determine if the bot has replied in the thread.
 
 5. **Are `channels:history` and `groups:history` scopes granted?** These are required for the bot to read thread history. Without them, `conversations.replies` will fail silently.
+
+6. **Did the classifier decline?** Follow-ups are gated by a fast-model classifier that stays silent when the message doesn't look addressed to the bot — and also fails closed to silence on classifier errors or timeouts. Check Sentry for a `followup_reply_declined` event (with `reason` and `confidence`) and the preceding `turn_classified` / `turn_classifier_error` events. If it was wrongly declined, @mention the bot — the mention path never consults the gate. See [Effort Routing](features/effort-routing.md).
 
 ## KV Not Configured (Knowledge Base Not Working)
 
