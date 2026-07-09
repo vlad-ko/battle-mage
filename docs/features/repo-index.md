@@ -2,6 +2,8 @@
 
 The repository index is an auto-generated topic map of your codebase. It helps the bot jump directly to relevant files instead of searching blind.
 
+> **Topic index vs. vector index**: this doc covers the *topic index* — a path-classified map rendered into the system prompt so the model knows where areas of the repo live. Since #127, the same SHA-changed rebuild also chunks and embeds `docs/**/*.md` content into a SHA-scoped Upstash Vector namespace, which serves the `search_repo` tool's semantic doc arm at tool time. The two are complementary: the topic index guides navigation before any tool call, the vector index answers content queries. See [Hybrid Retrieval](./hybrid-retrieval.md) for the embedding pipeline, the `index:vector_docs_ns` pointer lifecycle, and the degradation matrix.
+
 ## How It Works
 
 When the bot starts processing a question, it calls `getOrRebuildIndex()` which:

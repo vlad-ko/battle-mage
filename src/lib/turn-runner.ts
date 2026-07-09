@@ -339,7 +339,13 @@ export async function runMentionTurn(params: MentionTurnParams): Promise<void> {
       (toolName, input) => {
         progressThrottle.update(buildThinkingMessage(toolName, input));
       },
-      { maxRounds: EFFORT_BUDGETS[mentionEffort].maxRounds, effort: mentionEffort },
+      {
+        maxRounds: EFFORT_BUDGETS[mentionEffort].maxRounds,
+        effort: mentionEffort,
+        // KB recall keys off the CLEAN question, not the hint-augmented
+        // message the model receives (#127 review).
+        recallQuestion: cleanMessage,
+      },
     );
     // Drain any pending progress update before the final write so a
     // stale progress message can't land on top of the final answer.
@@ -664,7 +670,12 @@ export async function runFollowupTurn(params: FollowupTurnParams): Promise<void>
       (toolName, input) => {
         followupProgress.update(buildThinkingMessage(toolName, input));
       },
-      { maxRounds: EFFORT_BUDGETS[followupEval.effort].maxRounds, effort: followupEval.effort },
+      {
+        maxRounds: EFFORT_BUDGETS[followupEval.effort].maxRounds,
+        effort: followupEval.effort,
+        // Same as the mention flow: recall on the clean question.
+        recallQuestion: cleanMessage,
+      },
     );
     await followupProgress.flush();
 

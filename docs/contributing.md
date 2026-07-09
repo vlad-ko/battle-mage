@@ -198,6 +198,7 @@ src/
   tools/
     index.ts              -- Tool registry + executor
     search-code.ts        -- search_code tool
+    search-repo.ts        -- search_repo tool (hybrid code + docs)
     read-file.ts          -- read_file tool
     list-issues.ts        -- list_issues tool
     list-commits.ts       -- list_commits tool

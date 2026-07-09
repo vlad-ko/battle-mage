@@ -1,6 +1,6 @@
 # Architecture
 
-Battle Mage is a Slack agent that runs as a Next.js serverless function on Vercel. It receives webhook events from Slack, processes them with Claude AI and 9 GitHub tools (code search, file read, issues, PRs, commits, issue creation, knowledge base), and replies in-thread with cited references.
+Battle Mage is a Slack agent that runs as a Next.js serverless function on Vercel. It receives webhook events from Slack, processes them with Claude AI and 8 tools (code search, hybrid code+docs search, file read, issues, PRs, commits, issue creation, knowledge base), and replies in-thread with cited references.
 
 ## High-Level Flow
 
@@ -120,7 +120,7 @@ The function `assembleSystemPrompt()` takes these inputs:
 |-------|--------|-------------|------|
 | `owner` / `repo` | Environment variables | Target GitHub repository | both |
 | `claudeMd` | `CLAUDE.md` in the target repo | Project-specific context (cached per cold start) | volatile |
-| `knowledge` | Vercel KV | Knowledge base entries (corrections from users) | volatile |
+| `knowledge` | Vercel KV + Upstash Vector | Top-k KB recall — the ≤5 entries most relevant to the current question (hybrid lexical + semantic retrieval, see [Hybrid Retrieval](./features/hybrid-retrieval.md)), not the full KB | volatile |
 | `feedback` | Vercel KV | Recent thumbs up/down feedback summaries | volatile |
 | `repoIndex` | Vercel KV (lazy-rebuilt) | Auto-generated topic map of the repository | volatile |
 | `pathAnnotations` | `.battle-mage.json` in target repo | Per-path trust annotations | volatile |
@@ -130,7 +130,7 @@ The function `assembleSystemPrompt()` takes these inputs:
 1. `<identity>` — who the bot is (Battle Mage), where it runs (Slack), which repo it reads
 2. `<core-principles>` — verify before asserting, cite specifically, thread-only, confirm issue creation
 3. `<source-hierarchy>` — code > tests > docs > KB > feedback, with conflict-detection rules (see [Source Hierarchy](./features/source-hierarchy.md))
-4. `<tools>` — canonical names of the 7 GitHub tools
+4. `<tools>` — canonical names of the 8 tools
 5. `<search-strategy>` — budget tool rounds, repo map first, read 2–3 files max, synthesize early
 6. `<knowledge-base-usage>` — when and how to save corrections via `save_knowledge`
 7. `<output-contract>` — Slack mrkdwn format, anti-narration bans, brevity, recency (see below)
@@ -141,10 +141,12 @@ The function `assembleSystemPrompt()` takes these inputs:
 - `## Project Context (from CLAUDE.md)` — the target repo's CLAUDE.md if present
 - `## Repository Map (auto-generated index)` — the topic index if rebuilt
 - `## Path Annotations (from .battle-mage.json)` — trust annotations if configured
-- `## Knowledge Base (learned corrections)` — KB entries from Vercel KV if non-empty
+- `## Knowledge Base (learned corrections)` — top-k KB recall for the current question, if any entries match
 - `## User Feedback (from 👍/👎 reactions)` — feedback summary if non-empty
 
 Each volatile section is omitted when its data is null, so a fresh repo with no KB/feedback/index produces a compact prompt.
+
+Because KB recall is computed per turn from the user's question, the knowledge section lives in the volatile zone by construction — per-turn recall keeps the KB out of the stable cache zone, so a changing question can never invalidate the cached stable prompt.
 
 ### Output contract (what makes replies Slack-native)
 
@@ -165,7 +167,7 @@ The zoning enables Anthropic prompt caching. A single `cache_control: {type: "ep
 
 `assembleSystemBlocks()` returns an `Anthropic.TextBlockParam[]` rather than a plain string. The first block carries `cache_control: {type: "ephemeral"}` — Anthropic caches every block up through that marker. The second block (volatile data) has no cache_control and is processed uncached on every turn.
 
-The `tools` array in `src/tools/index.ts` is similarly cached: the last tool (`save_knowledge`) carries the cache_control marker so all seven tool definitions cache together.
+The `tools` array in `src/tools/index.ts` is similarly cached: the last tool (`save_knowledge`) carries the cache_control marker so all eight tool definitions cache together. New tools register BEFORE `save_knowledge` so the marker stays on the last element.
 
 Cache metrics are logged in the `agent_complete` event per turn:
 
@@ -253,7 +255,7 @@ The `finally` block still deletes the thinking message as a safety net if the tu
 
 ## Tool System
 
-Seven tools are registered with Claude's tool-use API:
+Eight tools are registered with Claude's tool-use API:
 
 | Tool | GitHub API | Returns References? |
 |------|-----------|-------------------|
@@ -263,7 +265,8 @@ Seven tools are registered with Claude's tool-use API:
 | `list_commits` | `repos.listCommits` | Yes — typed as `commit`, includes SHA + message |
 | `list_prs` | `pulls.list` | Yes — typed as `pr`, includes number + title |
 | `create_issue` | None (proposal only) | No |
-| `save_knowledge` | None (Vercel KV) | No |
+| `search_repo` | `search.code` + Upstash Vector | No (discovery only) — hybrid code + docs search, see [Hybrid Retrieval](./features/hybrid-retrieval.md) |
+| `save_knowledge` | None (Vercel KV + Upstash Vector) | No |
 
 The tool registry is in `src/tools/index.ts`. Each tool is a separate file that exports:
 - A `Tool` definition (name, description, input schema) for Claude's API
@@ -355,9 +358,11 @@ src/
     slack.ts              -- Slack client, signature verification, message helpers
     claude.ts             -- Anthropic client, system prompt assembly, agent loop
     github.ts             -- Octokit client (search, read, issues, PRs, commits, tree)
-    knowledge.ts          -- Knowledge base (Vercel KV sorted set)
+    knowledge.ts          -- Knowledge base (Vercel KV sorted set + vector embedding)
     feedback.ts           -- Feedback storage (Vercel KV) and Q&A context
-    repo-index.ts         -- Repository topic index (lazy rebuild on SHA change)
+    repo-index.ts         -- Repository topic index (lazy rebuild on SHA change) + doc chunk embedding
+    vector.ts             -- Upstash Vector wrapper (non-throwing, observability, timeout)
+    retrieval.ts          -- Pure RRF fusion, age boost, lexical ranking
     auto-correct.ts       -- Stale KB entry detection and doc reference flagging
     progress.ts           -- Progress message formatter (tool name to emoji + status)
     mrkdwn.ts             -- Markdown to Slack mrkdwn converter
@@ -366,6 +371,7 @@ src/
   tools/
     index.ts              -- Tool registry and executor
     search-code.ts        -- GitHub code search
+    search-repo.ts        -- Hybrid code + docs search (lexical + semantic, RRF-fused)
     read-file.ts          -- GitHub file/directory read
     list-issues.ts        -- GitHub issue list and lookup
     list-commits.ts       -- Recent commits on main

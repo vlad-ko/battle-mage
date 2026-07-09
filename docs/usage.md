@@ -47,11 +47,12 @@ The bot checks whether it has already replied in the thread. If it has, a fast-m
 
 ## What Kinds of Questions Work Well
 
-Battle Mage has access to seven tools for exploring your codebase:
+Battle Mage has access to eight tools for exploring your codebase:
 
 | Tool | What it does |
 |------|-------------|
 | `search_code` | Find functions, classes, patterns, keywords across the repo |
+| `search_repo` | Hybrid search across code AND docs — best for conceptual "how does X work" questions |
 | `read_file` | Read file contents or list directory entries |
 | `list_issues` | List open/closed issues, look up specific issues by number |
 | `list_commits` | Show recent commits on main with dates |

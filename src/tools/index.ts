@@ -7,10 +7,13 @@ import type { IssueProposal } from "./create-issue";
 import { saveKnowledgeTool, executeSaveKnowledge } from "./save-knowledge";
 import { listCommitsTool, executeListCommits } from "./list-commits";
 import { listPRsTool, executeListPRs } from "./list-prs";
+import { searchRepoTool, executeSearchRepo } from "./search-repo";
 
 // ── Tool registry ─────────────────────────────────────────────────────
 // Anthropic caches every block up through the one marked with cache_control.
 // Marking only the LAST tool caches the entire tools array as one chunk.
+// Invariant T1: exactly one cache_control marker, on the LAST element —
+// new tools register BEFORE saveKnowledgeTool.
 export const tools: Tool[] = [
   searchCodeTool,
   readFileTool,
@@ -18,6 +21,7 @@ export const tools: Tool[] = [
   listCommitsTool,
   listPRsTool,
   createIssueTool,
+  searchRepoTool,
   { ...saveKnowledgeTool, cache_control: { type: "ephemeral" } },
 ];
 
@@ -47,6 +51,11 @@ export async function executeTool(
     case "search_code": {
       // Returns { text, references } with real GitHub html_urls (include line anchors)
       const result = await executeSearchCode(input);
+      return { type: "text", text: result.text, references: result.references };
+    }
+    case "search_repo": {
+      // Hybrid code + docs search (#127). Discovery aid — no references.
+      const result = await executeSearchRepo(input);
       return { type: "text", text: result.text, references: result.references };
     }
     case "read_file": {

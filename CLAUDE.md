@@ -6,9 +6,9 @@ A Slack agent with Claude AI intelligence and full GitHub repo access — reads 
 
 - **Runtime**: Vercel (Next.js serverless functions)
 - **Slack**: Webhook mode via Next.js API route (`/api/slack`), ack-then-process via `after()`
-- **AI**: Anthropic Claude API with tool use (7 tools, adaptive per-turn round budget: quick 4 / standard 10 / deep 15)
+- **AI**: Anthropic Claude API with tool use (8 tools, adaptive per-turn round budget: quick 4 / standard 10 / deep 15)
 - **GitHub**: Octokit REST API (fine-grained PAT, read-only for code/PRs, read-write for issues)
-- **Knowledge**: Vercel KV (corrections, feedback, repo index cache)
+- **Knowledge**: Vercel KV (corrections, feedback, repo index cache) + Upstash Vector (semantic recall for KB + docs, graceful lexical-only degradation)
 - **Context**: CLAUDE.md + KB + feedback + repo index + source hierarchy + search strategy + recency/brevity rules
 - **Progress**: Live thinking messages with contextual emoji, deleted on answer
 - **Formatting**: Markdown-to-Slack mrkdwn conversion, typed references with emoji (📄📖🎫🔀📜), ranked by source-of-truth hierarchy, capped at 7
@@ -64,9 +64,12 @@ src/
     references.ts         — Typed references: ranking, dedup, emoji formatting
     split-reply.ts        — Pure splitter for long Slack replies (paragraph/line/word/fence-aware)
     kv.ts                 — @upstash/redis wrapper with Sentry observability (kv_op + kv_error events)
+    vector.ts             — @upstash/vector wrapper (non-throwing, vector_op/vector_error events, 2s timeout)
+    retrieval.ts          — Pure hybrid-retrieval primitives (RRF fusion, age boost, lexical ranking)
   tools/
     index.ts              — Tool registry and executor
     search-code.ts        — GitHub code search tool
+    search-repo.ts        — Hybrid code + docs search (lexical + semantic, RRF-fused)
     read-file.ts          — GitHub file/directory read tool
     list-issues.ts        — GitHub issue list/lookup tool
     list-commits.ts       — Recent commits on main (with dates)
@@ -88,6 +91,7 @@ docs/
     message-splitting.md  — Long-reply chunking architecture (split-reply + boundary guard)
     issue-creation.md     — Batch issue proposals + bulk-confirm flow
     effort-routing.md     — Fast-model follow-up gate + per-turn effort budgets
+    hybrid-retrieval.md   — Lexical + semantic retrieval (Upstash Vector, RRF fusion, degradation)
 TELEMETRY.md              — Incident-response event vocabulary + Sentry query recipes
 vercel.json               — Vercel Cron schedule for the recovery sweep
 ```
@@ -122,3 +126,5 @@ npm run test:watch    # Watch mode for development
 | `GITHUB_OWNER` | GitHub org/user |
 | `GITHUB_REPO` | Repository name |
 | `CRON_SECRET` | Bearer token for `/api/cron/sweep` (unset = sweep denies all requests) |
+| `UPSTASH_VECTOR_REST_URL` | Optional — Upstash Vector index (built-in embedding model) for hybrid retrieval |
+| `UPSTASH_VECTOR_REST_TOKEN` | Optional — Vector index token; unset pair degrades to lexical-only |

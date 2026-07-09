@@ -92,3 +92,12 @@ describe("buildThinkingMessage", () => {
     expect(header1).toBe(header2);
   });
 });
+
+describe("search_repo progress (#127)", () => {
+  it("formats search_repo with the query and its own emoji", () => {
+    const msg = formatProgressMessage("search_repo", { query: "auth flow" });
+    expect(msg).toContain("🧭");
+    expect(msg).toContain("auth flow");
+    expect(msg).toMatch(/^.+_.*_$/); // italic like every other status line
+  });
+});

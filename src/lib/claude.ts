@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { tools, executeTool, type ToolResult, type Reference } from "@/tools";
 import type { IssueProposal } from "@/tools/create-issue";
 import { readFile } from "@/lib/github";
-import { getKnowledgeAsMarkdown } from "@/lib/knowledge";
+import { getKnowledgeRecallAsMarkdown } from "@/lib/knowledge";
 import { getFeedbackSummary } from "@/lib/feedback";
 import {
   getOrRebuildIndex,
@@ -147,11 +147,6 @@ async function getClaudeMd(): Promise<string | null> {
   return cachedClaudeMd;
 }
 
-async function getKnowledge(): Promise<string | null> {
-  // Served by Vercel KV — no GitHub write access needed
-  return getKnowledgeAsMarkdown();
-}
-
 // ── System prompt (pure function — exported for testing) ──────────────
 
 export interface PromptInputs {
@@ -257,6 +252,7 @@ Available GitHub tools (do not invent names):
 - *list_commits*: List recent commits on main — newest first, with dates
 - *list_prs*: List recent pull requests — shows merged/open status with dates
 - *create_issue*: Propose a new GitHub issue (requires user confirmation)
+- *search_repo*: Hybrid search across code AND docs — lexical code search fused with semantic (meaning-based) doc search. Best for conceptual questions
 - *save_knowledge*: Save a correction or fact to the persistent knowledge base
 </tools>`;
 }
@@ -269,7 +265,7 @@ You have a maximum of ${MAX_TOOL_ROUNDS} tool rounds per question. Budget them w
 
 *Step 1: Check the Repository Map FIRST* — Look at the Repository Map section in this prompt. It lists the key areas of the repo by topic (authentication, deployment, security, etc.). If the question maps to a topic, go directly to the listed files with \`read_file\`. Do NOT search if the map already tells you where to look.
 
-*Step 2: Search only as fallback* — Use \`search_code\` ONLY if the repo map doesn't cover the topic, or if you need to find a specific function/class name. A search returns 10 results — don't read all of them.
+*Step 2: Search only as fallback* — Search ONLY if the repo map doesn't cover the topic. Pick the right search tool: for a conceptual question ("how does X work", "where do we handle Y") use \`search_repo\` — it fuses code search with semantic doc search; for an exact identifier (a specific function/class/keyword) use \`search_code\`. A search returns up to 10 results — don't read all of them.
 
 *Step 3: Read 2-3 files maximum* — For most questions, 2-3 files from the relevant topic is enough. If you've read 3 files and have enough to answer, stop reading and synthesize.
 
@@ -306,7 +302,7 @@ You have a persistent knowledge base stored in Vercel KV (not in the GitHub repo
 - Bad: "User said auth is somewhere else"
 
 *When reading:*
-- Your knowledge base is loaded into this prompt below. It can become stale — always check the code first for code-level questions.
+- The most relevant KB entries for the current question are loaded below (top matches, not the full KB). They can become stale — always check the code first for code-level questions.
 - If a knowledge entry conflicts with what you see in the code, the code is authoritative — flag the discrepancy.
 </knowledge-base-usage>`;
 }
@@ -447,8 +443,13 @@ export function assembleSystemBlocks(inputs: PromptInputs): Anthropic.TextBlockP
 }
 
 // ── Async wrapper that fetches data then assembles ────────────────────
+// `question` drives per-turn KB recall (#127): only the top matching KB
+// entries are rendered into the volatile zone instead of the full KB.
+// PromptInputs is unchanged and the KB stays in the volatile zone, so
+// the stable-zone cache breakpoint is unaffected.
 async function buildSystemBlocks(
   participants?: Participant[],
+  question?: string,
 ): Promise<{ blocks: Anthropic.TextBlockParam[]; feedbackMeta: { positiveCount: number; negativeCount: number; totalEntries: number } }> {
   // Fetch index + doc catalog in parallel. Both are KV-reads on the warm
   // path; rebuild on cold path is already time-bounded inside
@@ -467,7 +468,7 @@ async function buildSystemBlocks(
     owner: process.env.GITHUB_OWNER,
     repo: process.env.GITHUB_REPO,
     claudeMd: await getClaudeMd(),
-    knowledge: await getKnowledge(),
+    knowledge: await getKnowledgeRecallAsMarkdown(question ?? ""),
     feedback: feedbackSummary?.markdown ?? null,
     repoIndex,
     pathAnnotations: Object.keys(config.paths).length > 0 ? config : null,
@@ -536,6 +537,14 @@ export interface RunAgentOptions {
   maxRounds?: number;
   /** Effort bucket label — observability only (agent_start/agent_complete). */
   effort?: string;
+  /**
+   * The user's CLEAN question for KB recall (#127). The `userMessage`
+   * the route passes is augmented with topic/effort hints, which would
+   * pollute the lexical tokens and the embedding query — recall must
+   * key off what the user actually asked. Falls back to `userMessage`
+   * when absent.
+   */
+  recallQuestion?: string;
 }
 
 // Pure resolver for the per-turn round cap: floor → clamp to
@@ -602,7 +611,10 @@ export async function runAgent(
   const issueProposals: IssueProposal[] = [];
   const allReferences: Reference[] = [];
   const startTime = Date.now();
-  const { blocks: systemBlocks, feedbackMeta } = await buildSystemBlocks(participants);
+  const { blocks: systemBlocks, feedbackMeta } = await buildSystemBlocks(
+    participants,
+    options?.recallQuestion ?? userMessage,
+  );
   const promptLength = systemBlocks.reduce((n, b) => n + b.text.length, 0);
 
   _log("agent_start", {

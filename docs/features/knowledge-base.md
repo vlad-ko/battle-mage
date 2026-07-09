@@ -23,6 +23,8 @@ Entries are never deleted when corrected — they carry lifecycle fields instead
 
 Entries with either marker are hidden from the prompt but preserved in the sorted set, so the history of what was believed and why it changed survives. Legacy entries written before ids existed still parse and can be superseded by matching their text.
 
+Each entry is also embedded into an Upstash Vector namespace on save (best-effort — KV remains the source of truth), and retire flows delete the retired entry's vector. This powers semantic recall; see [Hybrid Retrieval](./hybrid-retrieval.md).
+
 ## How Entries Are Saved
 
 ### Via the `save_knowledge` Tool
@@ -50,7 +52,16 @@ When a user reacts with :thumbsdown: and then replies with a correction, the fla
 
 ## How Entries Flow Into the System Prompt
 
-The function `getKnowledgeAsMarkdown()` fetches the *visible* entries (not superseded, not archived) from KV and formats them as a timestamped list ending with a stale-context footer:
+Since #127 the prompt carries **top-k recall, not a full dump**. Each turn, `getKnowledgeRecallAsMarkdown(question)` selects the `RECALL_TOP_K` (5) *visible* entries most relevant to the current question:
+
+- **Small KB** (≤5 visible entries): all entries render — no retrieval runs, no vector call.
+- **Larger KB**: a lexical arm (distinct question tokens matching entry text, ties broken toward newer entries) and a semantic arm (Upstash Vector similarity over the embedded entries) are fused with Reciprocal Rank Fusion plus a tiny freshness tie-breaker. Only ids present in the visible set fetched in the same call can surface — a retired entry's leftover embedding can never resurrect it.
+- **No matches in either arm**: the newest 5 entries render as a fallback.
+- **Vector layer unconfigured or degraded**: recall silently runs lexical-only.
+
+See [Hybrid Retrieval](./hybrid-retrieval.md) for the fusion math and degradation matrix. This keeps the prompt bounded as the KB grows — 500 saved corrections still cost at most 5 lines per turn.
+
+The selected entries are formatted as a timestamped list ending with a stale-context footer:
 
 ```text
 - [2026-03-28] The auth module lives in app/Services/Auth, not app/Http/Auth
@@ -99,13 +110,14 @@ The `knowledge.ts` module exports these functions:
 
 | Function | Description |
 |----------|-------------|
-| `saveKnowledgeEntry(entry)` | Add a new entry; returns its id |
-| `supersedeKnowledgeEntry(oldIdOrText, newText)` | Save a replacement and mark the old entry superseded by it |
-| `markKnowledgeSuperseded(idOrText, newId)` | Mark an existing entry superseded by an already-saved entry |
-| `archiveKnowledgeEntry(idOrText, reason)` | Soft-delete an entry with a reason |
+| `saveKnowledgeEntry(entry)` | Add a new entry; returns its id. Also embeds the entry into the KB vector namespace (best-effort) |
+| `supersedeKnowledgeEntry(oldIdOrText, newText)` | Save a replacement and mark the old entry superseded by it (old vector deleted best-effort) |
+| `markKnowledgeSuperseded(idOrText, newId)` | Mark an existing entry superseded by an already-saved entry (vector deleted best-effort) |
+| `archiveKnowledgeEntry(idOrText, reason)` | Soft-delete an entry with a reason (vector deleted best-effort) |
 | `getAllKnowledge()` | Get visible entries (not superseded/archived), newest first |
 | `getKnowledgeHistory()` | Get every entry including superseded and archived, newest first |
-| `getKnowledgeAsMarkdown()` | Format visible entries as markdown (with stale-context footer) for the prompt |
+| `getKnowledgeAsMarkdown()` | Format ALL visible entries as markdown (with stale-context footer) |
+| `getKnowledgeRecallAsMarkdown(question)` | Format the top-5 entries relevant to the question (hybrid recall) — what the prompt uses per turn |
 
 ### Retiring a Stale Entry
 
@@ -117,7 +129,7 @@ If you need to retire a KB entry:
 
 ## Graceful Degradation
 
-If Vercel KV is not configured (common during local development without KV credentials), `getKnowledgeAsMarkdown()` catches the error silently and returns `null`. The bot works normally without a knowledge base -- it just does not have persistent memory.
+If Vercel KV is not configured (common during local development without KV credentials), `getKnowledgeRecallAsMarkdown()` (and `getKnowledgeAsMarkdown()`) catches the error silently and returns `null`. The bot works normally without a knowledge base -- it just does not have persistent memory. If only the *vector* layer is unconfigured, saves and recall still work — recall just runs lexical-only (see [Hybrid Retrieval](./hybrid-retrieval.md)).
 
 The knowledge base section is simply omitted from the system prompt when there are no entries.
 

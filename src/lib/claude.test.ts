@@ -1,4 +1,42 @@
 import { describe, it, expect, vi } from "vitest";
+
+// ── #127 review: mocks for the runAgent recall-question tests ─────────
+// The Anthropic client is replaced with a stub that ends the turn
+// immediately; the knowledge boundary is mocked so the tests can assert
+// WHICH question string reaches KB recall. importOriginal keeps every
+// other export (buildDocCatalogSection etc.) real for the prompt tests.
+const { recallSpy, anthropicCreateSpy } = vi.hoisted(() => ({
+  recallSpy: vi.fn(async (_q: string) => null),
+  anthropicCreateSpy: vi.fn(async (..._a: unknown[]) => ({
+    content: [{ type: "text", text: "stub answer" }],
+    stop_reason: "end_turn",
+    usage: { input_tokens: 1, output_tokens: 1 },
+  })),
+}));
+vi.mock("@anthropic-ai/sdk", () => ({
+  default: class AnthropicMock {
+    messages = { create: (...a: unknown[]) => anthropicCreateSpy(...a) };
+  },
+}));
+vi.mock("@/lib/knowledge", () => ({
+  getKnowledgeRecallAsMarkdown: (q: string) => recallSpy(q),
+}));
+vi.mock("@/lib/feedback", () => ({
+  getFeedbackSummary: vi.fn(async () => null),
+}));
+vi.mock("@/lib/repo-index", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getOrRebuildIndex: vi.fn(async () => ""),
+  getCachedConfig: vi.fn(async () => ({ paths: {} })),
+  getDocCatalog: vi.fn(async () => []),
+}));
+vi.mock("@/lib/github", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  readFile: vi.fn(async () => {
+    throw new Error("no repo in tests");
+  }),
+}));
+
 import {
   assembleSystemPrompt,
   assembleSystemBlocks,
@@ -6,6 +44,7 @@ import {
   estimateMessagesTokens,
   executeToolsInParallel,
   resolveMaxRounds,
+  runAgent,
   FAST_MODEL,
   MAX_TOOL_ROUNDS,
   TOOL_RESULT_MAX_CHARS,
@@ -1034,5 +1073,70 @@ describe("resolveMaxRounds", () => {
   it("defaults to MAX_TOOL_ROUNDS on non-finite input", () => {
     expect(resolveMaxRounds({ maxRounds: Number.NaN })).toBe(MAX_TOOL_ROUNDS);
     expect(resolveMaxRounds({ maxRounds: Number.POSITIVE_INFINITY })).toBe(MAX_TOOL_ROUNDS);
+  });
+});
+
+describe("hybrid retrieval prompt copy (#127)", () => {
+  const args = {
+    owner: "acme",
+    repo: "backend",
+    claudeMd: null,
+    knowledge: null,
+    feedback: null,
+    repoIndex: null,
+    pathAnnotations: null,
+  };
+
+  it("lists search_repo in the tools section", () => {
+    const prompt = assembleSystemPrompt(args);
+    const toolsSection = prompt.slice(
+      prompt.indexOf("<tools>"),
+      prompt.indexOf("</tools>"),
+    );
+    expect(toolsSection).toContain("*search_repo*");
+  });
+
+  it("search strategy routes conceptual questions to search_repo and exact identifiers to search_code", () => {
+    const prompt = assembleSystemPrompt(args);
+    const strategy = prompt.slice(
+      prompt.indexOf("<search-strategy>"),
+      prompt.indexOf("</search-strategy>"),
+    );
+    expect(strategy).toContain("search_repo");
+    expect(strategy).toMatch(/conceptual/i);
+    expect(strategy).toContain("search_code");
+  });
+
+  it("KB usage copy says the most relevant entries are loaded, not the full KB", () => {
+    const prompt = assembleSystemPrompt(args);
+    const kbSection = prompt.slice(
+      prompt.indexOf("<knowledge-base-usage>"),
+      prompt.indexOf("</knowledge-base-usage>"),
+    );
+    expect(kbSection).toMatch(/relevant/i);
+  });
+});
+
+describe("runAgent — KB recall uses the clean question (#127 review)", () => {
+  it("passes options.recallQuestion to recall, not the augmented userMessage", async () => {
+    recallSpy.mockClear();
+    await runAgent(
+      "[topic hints...] where is the redis wrapper [effort: quick]",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { recallQuestion: "where is the redis wrapper" },
+    );
+    expect(recallSpy).toHaveBeenCalledWith("where is the redis wrapper");
+    expect(recallSpy).not.toHaveBeenCalledWith(
+      "[topic hints...] where is the redis wrapper [effort: quick]",
+    );
+  });
+
+  it("falls back to the raw userMessage when recallQuestion is absent", async () => {
+    recallSpy.mockClear();
+    await runAgent("plain question");
+    expect(recallSpy).toHaveBeenCalledWith("plain question");
   });
 });

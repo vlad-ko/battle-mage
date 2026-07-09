@@ -16,7 +16,7 @@ Common issues and how to fix them.
 
 4. **Is the deployment healthy?** Check your Vercel dashboard for deployment errors. Look at the function logs for the `/api/slack` route.
 
-5. **Are environment variables set?** In Vercel dashboard > Settings > Environment Variables, verify all six required variables are present: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `ANTHROPIC_API_KEY`, `GITHUB_PAT_BM`, `GITHUB_OWNER`, `GITHUB_REPO`.
+5. **Are environment variables set?** In Vercel dashboard > Settings > Environment Variables, verify all six required variables are present: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `ANTHROPIC_API_KEY`, `GITHUB_PAT_BM`, `GITHUB_OWNER`, `GITHUB_REPO`. (`UPSTASH_VECTOR_REST_URL` / `UPSTASH_VECTOR_REST_TOKEN` are optional — see "Vector not configured" below.)
 
 6. **Is signature verification failing?** Check Vercel function logs for "Invalid signature" 401 responses. This means the `SLACK_SIGNING_SECRET` does not match the signing secret from your Slack app's Basic Information page.
 
@@ -38,6 +38,20 @@ Common issues and how to fix them.
 If the error message is `An API error occurred: msg_too_long`, Slack rejected an oversized `chat.postMessage` or `chat.update` call. With the split-reply architecture (see [Message Splitting](./features/message-splitting.md)), this should be architecturally unreachable on the happy path — a single message should never approach Slack's 40,000-char limit because the splitter chops long bodies into multiple thread replies first.
 
 If you see it anyway, Sentry will have a `SlackMessageOversizeError` with the offending length and action. That indicates a splitter bug, not a prompt-budget issue. Widen the splitter's test matrix rather than raising the limit.
+
+## Vector Not Configured (Semantic Search Degraded)
+
+**Symptom**: Logs show `vector_unavailable` events with `reason: "not_configured"`, or conceptual questions don't surface doc content the way you expect.
+
+This is an **expected degradation state**, not an error — the bot keeps working lexically without Upstash Vector. What degrades when `UPSTASH_VECTOR_REST_URL` / `UPSTASH_VECTOR_REST_TOKEN` are unset:
+
+- **`search_repo` doc arm** — the tool returns lexical code-search results only; no semantic doc chunks.
+- **KB semantic recall arm** — knowledge-base recall runs lexical keyword matching only, so a question phrased with no keyword overlap may miss a relevant KB entry.
+- **Doc embedding** — index rebuilds skip the chunk/embed pipeline entirely (no wasted GitHub content fetches).
+
+Nothing else is affected: saves, corrections, the topic index, and every other tool work normally.
+
+**To enable**: create an Upstash Vector index **with a built-in embedding model** and set both env vars — see [Setup](./setup.md). `vector_error` events (as opposed to `vector_unavailable`) indicate a provisioned index that is failing or timing out — check the Upstash console and the Sentry `vector.op` tag.
 
 ## Bot Cannot Read the Repository
 

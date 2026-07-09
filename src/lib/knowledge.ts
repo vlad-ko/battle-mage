@@ -1,6 +1,14 @@
 import { randomUUID } from "crypto";
 import { kv } from "./kv";
 import { log } from "./logger";
+import { vectorUpsert, vectorDelete, vectorQuery, kbNamespace } from "./vector";
+import {
+  RECALL_TOP_K,
+  MAX_ARM_RESULTS,
+  fuseRankedLists,
+  lexicalRank,
+  type RecallCandidate,
+} from "./retrieval";
 
 /**
  * Knowledge Base — Vercel KV storage
@@ -77,12 +85,37 @@ function toMemberString(raw: unknown): string {
 /**
  * Save a correction or fact to the knowledge base.
  * Returns the new entry's id so callers can link supersessions to it.
+ *
+ * Also embeds the entry into the KB vector namespace (best-effort, #127):
+ * vectorUpsert is non-throwing by contract, but the guard below means
+ * even a contract violation can never lose the save — KV is the source
+ * of truth, the vector index is only a recall accelerator.
  */
 export async function saveKnowledgeEntry(entry: string): Promise<string> {
   const id = randomUUID();
-  const value = JSON.stringify({ id, entry, timestamp: todayISO() });
+  const timestamp = todayISO();
+  const value = JSON.stringify({ id, entry, timestamp });
   await kv.zadd(KNOWLEDGE_KEY, { score: Date.now(), member: value });
+  try {
+    await vectorUpsert(kbNamespace(), [{ id, text: entry, metadata: { timestamp } }]);
+  } catch {
+    // Best-effort — the KV save above already succeeded.
+  }
   return id;
+}
+
+/**
+ * Best-effort removal of a retired entry's vector so it can never
+ * resurface through semantic recall. Legacy id-less entries were never
+ * embedded (embedding is keyed by id at save time), so they are skipped.
+ */
+async function removeKnowledgeVector(id: string | undefined): Promise<void> {
+  if (!id) return;
+  try {
+    await vectorDelete(kbNamespace(), [id]);
+  } catch {
+    // Best-effort — recall filters retired ids anyway (K1 invariant).
+  }
 }
 
 /**
@@ -94,6 +127,9 @@ export async function saveKnowledgeEntry(entry: string): Promise<string> {
  * shadow a later visible one. Returns false if no acceptable match
  * exists or the member disappeared between read and remove.
  *
+ * On success, returns the rewritten entry's id (when it has one) so
+ * retire flows can clean up the entry's vector embedding (#127).
+ *
  * Concurrency: zscore→zrem→zadd is not atomic. The zrem-count guard
  * ensures we never resurrect a member a concurrent writer already
  * rewrote — if zrem removes nothing, we abort instead of zadd-ing a
@@ -103,7 +139,7 @@ export async function saveKnowledgeEntry(entry: string): Promise<string> {
 async function updateEntry(
   idOrText: string,
   mutate: (e: KnowledgeEntry) => KnowledgeEntry | null,
-): Promise<boolean> {
+): Promise<{ updated: boolean; id?: string }> {
   const raw = await kv.zrange(KNOWLEDGE_KEY, 0, -1);
   for (const rawMember of raw) {
     const parsed = toEntry(rawMember);
@@ -115,13 +151,13 @@ async function updateEntry(
 
     const member = toMemberString(rawMember);
     const score = await kv.zscore(KNOWLEDGE_KEY, member);
-    if (score === null) return false;
+    if (score === null) return { updated: false };
     const removed = await kv.zrem(KNOWLEDGE_KEY, member);
-    if (removed === 0) return false;
+    if (removed === 0) return { updated: false };
     await kv.zadd(KNOWLEDGE_KEY, { score, member: JSON.stringify(updated) });
-    return true;
+    return { updated: true, id: parsed.id };
   }
-  return false;
+  return { updated: false };
 }
 
 /**
@@ -135,11 +171,13 @@ export async function markKnowledgeSuperseded(
   idOrText: string,
   supersededById: string,
 ): Promise<boolean> {
-  return updateEntry(idOrText, (e) =>
+  const result = await updateEntry(idOrText, (e) =>
     // The id guard prevents self-supersession when a correction's text
     // exactly matches the flagged entry text it replaces.
     isVisible(e) && e.id !== supersededById ? { ...e, supersededById } : null,
   );
+  if (result.updated) await removeKnowledgeVector(result.id);
+  return result.updated;
 }
 
 /**
@@ -180,9 +218,11 @@ export async function archiveKnowledgeEntry(
   idOrText: string,
   reason: string,
 ): Promise<boolean> {
-  return updateEntry(idOrText, (e) =>
+  const result = await updateEntry(idOrText, (e) =>
     isVisible(e) ? { ...e, archivedAt: todayISO(), archivedReason: reason } : null,
   );
+  if (result.updated) await removeKnowledgeVector(result.id);
+  return result.updated;
 }
 
 /**
@@ -210,10 +250,83 @@ export async function getKnowledgeAsMarkdown(): Promise<string | null> {
   try {
     const entries = await getAllKnowledge();
     if (entries.length === 0) return null;
-    const lines = entries.map((e) => `- [${e.timestamp}] ${e.entry}`).join("\n");
-    return `${lines}\n\n${STALE_CONTEXT_FOOTER}`;
+    return renderEntries(entries);
   } catch {
     // KV not configured (local dev without Vercel KV) — skip silently
+    return null;
+  }
+}
+
+function renderEntries(entries: KnowledgeEntry[]): string {
+  const lines = entries.map((e) => `- [${e.timestamp}] ${e.entry}`).join("\n");
+  return `${lines}\n\n${STALE_CONTEXT_FOOTER}`;
+}
+
+// Recall key for an entry: real id when present, entry text for legacy
+// id-less members. The vector arm only ever returns real ids (embedding
+// is keyed by id at save time), so the text fallback only feeds the
+// lexical arm.
+function recallId(e: KnowledgeEntry): string {
+  return e.id ?? e.entry;
+}
+
+/**
+ * Hybrid top-k recall (#127): render the RECALL_TOP_K visible entries
+ * most relevant to `question` instead of dumping the whole KB into the
+ * prompt.
+ *
+ * - 0 visible entries → null.
+ * - ≤ RECALL_TOP_K entries → render all; neither arm runs (no vector
+ *   call — the full KB already fits the budget).
+ * - Otherwise fuse a lexical arm (lexicalRank over visible entries)
+ *   with a semantic arm (vectorQuery on the KB namespace) via RRF with
+ *   freshness tie-breaks, capped at RECALL_TOP_K. No padding when the
+ *   fused set is smaller.
+ * - K1 invariant: vector ids are mapped back through the visible set
+ *   fetched in THIS call — retired (superseded/archived) or unknown ids
+ *   never surface, even if their embeddings still exist.
+ * - Both arms empty → fall back to the newest RECALL_TOP_K entries.
+ * - Non-throwing: any failure degrades to null (section omitted).
+ */
+export async function getKnowledgeRecallAsMarkdown(question: string): Promise<string | null> {
+  try {
+    const entries = await getAllKnowledge(); // visible only, newest first
+    if (entries.length === 0) return null;
+    if (entries.length <= RECALL_TOP_K) return renderEntries(entries);
+
+    const byId = new Map<string, KnowledgeEntry>();
+    for (const e of entries) byId.set(recallId(e), e);
+
+    const candidates: RecallCandidate[] = entries.map((e) => ({
+      id: recallId(e),
+      text: e.entry,
+      timestamp: e.timestamp,
+    }));
+    const lexicalIds = lexicalRank(question, candidates);
+
+    const matches = await vectorQuery(kbNamespace(), question, MAX_ARM_RESULTS);
+    // K1: only ids present in the visible set may surface.
+    const semanticIds = (matches ?? [])
+      .map((m) => m.id)
+      .filter((id) => byId.has(id));
+
+    if (lexicalIds.length === 0 && semanticIds.length === 0) {
+      return renderEntries(entries.slice(0, RECALL_TOP_K));
+    }
+
+    const timestamps: Record<string, string> = {};
+    for (const [id, e] of byId) timestamps[id] = e.timestamp;
+    const fused = fuseRankedLists(lexicalIds, semanticIds, {
+      timestamps,
+      topK: RECALL_TOP_K,
+    });
+    const selected = fused
+      .map((f) => byId.get(f.id))
+      .filter((e): e is KnowledgeEntry => e !== undefined);
+    return renderEntries(selected);
+  } catch {
+    // KV not configured or arm failure — omit the section rather than
+    // break the turn.
     return null;
   }
 }
