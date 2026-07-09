@@ -1036,3 +1036,44 @@ describe("resolveMaxRounds", () => {
     expect(resolveMaxRounds({ maxRounds: Number.POSITIVE_INFINITY })).toBe(MAX_TOOL_ROUNDS);
   });
 });
+
+describe("hybrid retrieval prompt copy (#127)", () => {
+  const args = {
+    owner: "acme",
+    repo: "backend",
+    claudeMd: null,
+    knowledge: null,
+    feedback: null,
+    repoIndex: null,
+    pathAnnotations: null,
+  };
+
+  it("lists search_repo in the tools section", () => {
+    const prompt = assembleSystemPrompt(args);
+    const toolsSection = prompt.slice(
+      prompt.indexOf("<tools>"),
+      prompt.indexOf("</tools>"),
+    );
+    expect(toolsSection).toContain("*search_repo*");
+  });
+
+  it("search strategy routes conceptual questions to search_repo and exact identifiers to search_code", () => {
+    const prompt = assembleSystemPrompt(args);
+    const strategy = prompt.slice(
+      prompt.indexOf("<search-strategy>"),
+      prompt.indexOf("</search-strategy>"),
+    );
+    expect(strategy).toContain("search_repo");
+    expect(strategy).toMatch(/conceptual/i);
+    expect(strategy).toContain("search_code");
+  });
+
+  it("KB usage copy says the most relevant entries are loaded, not the full KB", () => {
+    const prompt = assembleSystemPrompt(args);
+    const kbSection = prompt.slice(
+      prompt.indexOf("<knowledge-base-usage>"),
+      prompt.indexOf("</knowledge-base-usage>"),
+    );
+    expect(kbSection).toMatch(/relevant/i);
+  });
+});

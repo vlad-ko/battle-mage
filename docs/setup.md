@@ -137,7 +137,7 @@ vercel --prod
 
 1. Go to [vercel.com/new](https://vercel.com/new)
 2. Import your fork of the battle-mage repo
-3. Add all six environment variables in the **Environment Variables** section before deploying
+3. Add the six required environment variables — plus `CRON_SECRET` (for the recovery sweep) and the optional Upstash Vector pair, if you provisioned it — in the **Environment Variables** section before deploying
 4. Click **Deploy**
 
 ### Set Up Upstash Redis
@@ -155,6 +155,16 @@ The integration sets both sets of env vars — `UPSTASH_REDIS_REST_URL` / `UPSTA
 > **Legacy note**: Older deployments provisioned "Vercel KV" (which was a thin wrapper over Upstash Redis). Those still work — `KV_REST_API_*` env vars are read as a fallback by `@upstash/redis`. New projects should use the Upstash Marketplace integration directly.
 
 > **Gotcha**: If you skip this step, the bot will still work for basic Q&A -- but the knowledge base, feedback, and repo index features will silently degrade. You will see no errors, but corrections will not persist and the repo map will not be cached.
+
+### Set Up Upstash Vector (Optional — Hybrid Retrieval)
+
+Battle Mage uses Upstash Vector for semantic retrieval (#127): the `search_repo` tool's doc-search arm and the knowledge base's semantic recall arm. See [Hybrid Retrieval](./features/hybrid-retrieval.md).
+
+1. In the Upstash console (or via the Vercel Marketplace integration), create a **Vector index**
+2. **Important**: create the index WITH a built-in embedding model (e.g. one of Upstash's hosted models) — the app upserts and queries **raw text** via the SDK's `data` field and relies on the index to embed server-side. An index without an embedding model will reject raw-text operations.
+3. Set `UPSTASH_VECTOR_REST_URL` and `UPSTASH_VECTOR_REST_TOKEN` on your Vercel project
+
+> **This is optional.** Without these variables the bot degrades gracefully: `search_repo` returns lexical code results only, and KB recall runs keyword-matching only. You'll see `vector_unavailable` log events (expected, not errors). See [Troubleshooting](./troubleshooting.md#vector-not-configured-semantic-search-degraded).
 
 ### Set Up Vercel Cron (recovery sweep)
 
@@ -252,6 +262,8 @@ If the bot does not respond, check the [Troubleshooting Guide](./troubleshooting
 | `GITHUB_REPO` | Yes | `backend` | Repository name |
 | `UPSTASH_REDIS_REST_URL` | Auto | `https://...upstash.io` | Injected by the Upstash Vercel integration -- do not set manually |
 | `UPSTASH_REDIS_REST_TOKEN` | Auto | `AaB1Cc2...` | Injected by the Upstash Vercel integration -- do not set manually |
+| `UPSTASH_VECTOR_REST_URL` | Optional | `https://...upstash.io` | Upstash Vector index (with built-in embedding model) for hybrid retrieval -- omit to degrade to lexical-only |
+| `UPSTASH_VECTOR_REST_TOKEN` | Optional | `ABcD3...` | Token for the Vector index -- both must be set or neither |
 | `KV_REST_API_URL` | Legacy | `https://...upstash.io` | Read as a fallback by `@upstash/redis` for projects that still provision "Vercel KV" |
 | `KV_REST_API_TOKEN` | Legacy | `AaB1Cc2...` | Read as a fallback — either pair works |
 | `CRON_SECRET` | Yes (for recovery) | `f3a9...64 hex chars` | Auth for `/api/cron/sweep` (Vercel Cron sends it as a Bearer token). Unset = sweep denies all requests, recovery disabled |

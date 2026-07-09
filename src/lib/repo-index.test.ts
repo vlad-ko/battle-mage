@@ -1,4 +1,56 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// ── #127 mocks: kv / github / vector / logger for the rebuild-hook tests ──
+// The pure-function tests below never touch these; the mocks only feed
+// getOrRebuildIndex / getDocsVectorNamespace.
+const {
+  logSpy,
+  kvData,
+  callOrder,
+  vectorUpsertSpy,
+  vectorDeleteNamespaceSpy,
+  getHeadShaSpy,
+  getRepoTreeSpy,
+  readFileSpy,
+} = vi.hoisted(() => ({
+  logSpy: vi.fn(),
+  kvData: new Map<string, unknown>(),
+  callOrder: [] as string[],
+  vectorUpsertSpy: vi.fn(),
+  vectorDeleteNamespaceSpy: vi.fn(),
+  getHeadShaSpy: vi.fn(),
+  getRepoTreeSpy: vi.fn(),
+  readFileSpy: vi.fn(),
+}));
+
+vi.mock("@/lib/logger", () => ({
+  log: (...args: unknown[]) => logSpy(...args),
+}));
+
+vi.mock("./kv", () => ({
+  kv: {
+    get: vi.fn(async (key: string) => kvData.get(key) ?? null),
+    set: vi.fn(async (key: string, value: unknown) => {
+      callOrder.push(`kv.set:${key}`);
+      kvData.set(key, value);
+      return "OK";
+    }),
+  },
+}));
+
+vi.mock("./vector", () => ({
+  isVectorConfigured: () => true,
+  docsNamespace: (sha: string) => `acme/backend:docs:${sha}`,
+  vectorUpsert: (...a: unknown[]) => vectorUpsertSpy(...a),
+  vectorDeleteNamespace: (...a: unknown[]) => vectorDeleteNamespaceSpy(...a),
+}));
+
+vi.mock("@/lib/github", () => ({
+  getHeadSha: (...a: unknown[]) => getHeadShaSpy(...a),
+  getRepoTree: (...a: unknown[]) => getRepoTreeSpy(...a),
+  readFile: (...a: unknown[]) => readFileSpy(...a),
+}));
+
 import {
   classifyTopics,
   isIndexStale,
@@ -6,8 +58,30 @@ import {
   extractDocTitle,
   filterDocPaths,
   buildDocCatalogSection,
+  chunkMarkdownByHeadings,
+  getOrRebuildIndex,
+  getDocsVectorNamespace,
   MAX_DOC_CATALOG_ENTRIES,
+  MAX_CHUNK_CHARS,
+  MAX_DOCS_TO_EMBED,
 } from "./repo-index";
+
+beforeEach(() => {
+  kvData.clear();
+  callOrder.length = 0;
+  logSpy.mockClear();
+  vectorUpsertSpy.mockReset().mockImplementation(async () => {
+    callOrder.push("vectorUpsert");
+    return true;
+  });
+  vectorDeleteNamespaceSpy.mockReset().mockImplementation(async () => {
+    callOrder.push("vectorDeleteNamespace");
+    return true;
+  });
+  getHeadShaSpy.mockReset();
+  getRepoTreeSpy.mockReset().mockResolvedValue([]);
+  readFileSpy.mockReset().mockRejectedValue(new Error("no such file"));
+});
 
 describe("classifyTopics", () => {
   it("classifies auth-related files", () => {
@@ -385,5 +459,203 @@ describe("buildDocCatalogSection", () => {
     );
     const section = buildDocCatalogSection(entries);
     expect(section).not.toContain("more docs");
+  });
+});
+
+describe("chunkMarkdownByHeadings (#127)", () => {
+  it("empty or whitespace content → []", () => {
+    expect(chunkMarkdownByHeadings("docs/x.md", "")).toEqual([]);
+    expect(chunkMarkdownByHeadings("docs/x.md", "  \n\n  ")).toEqual([]);
+  });
+
+  it("content without headings → a single chunk titled from the path", () => {
+    const chunks = chunkMarkdownByHeadings(
+      "docs/repo-index.md",
+      "Just a paragraph.\n\nAnother one.",
+    );
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].id).toBe("docs/repo-index.md#0");
+    expect(chunks[0].metadata.heading).toBe("Repo Index");
+    expect(chunks[0].metadata.path).toBe("docs/repo-index.md");
+    expect(chunks[0].text).toContain("Just a paragraph.");
+  });
+
+  it("splits on #, ##, and ### headings; #### does NOT split", () => {
+    const content = [
+      "# Title",
+      "intro",
+      "## Section A",
+      "body a",
+      "### Sub B",
+      "body b",
+      "#### Deep",
+      "still in sub b",
+    ].join("\n");
+    const chunks = chunkMarkdownByHeadings("docs/x.md", content);
+    expect(chunks.map((c) => c.metadata.heading)).toEqual([
+      "Title",
+      "Section A",
+      "Sub B",
+    ]);
+    // #### stays inside the ### chunk instead of opening a new one.
+    expect(chunks[2].text).toContain("#### Deep");
+    expect(chunks[2].text).toContain("still in sub b");
+  });
+
+  it("stores heading text without # marks and assigns sequential path#ordinal ids", () => {
+    const chunks = chunkMarkdownByHeadings("docs/x.md", "# One\na\n## Two\nb");
+    expect(chunks.map((c) => c.id)).toEqual(["docs/x.md#0", "docs/x.md#1"]);
+    expect(chunks.map((c) => c.metadata.heading)).toEqual(["One", "Two"]);
+    expect(chunks[0].metadata.heading).not.toContain("#");
+  });
+
+  it("keeps a preamble before the first heading as its own path-titled chunk", () => {
+    const chunks = chunkMarkdownByHeadings(
+      "docs/setup.md",
+      "Intro paragraph.\n\n# Install\nsteps",
+    );
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0].metadata.heading).toBe("Setup");
+    expect(chunks[0].text).toContain("Intro paragraph.");
+    expect(chunks[1].metadata.heading).toBe("Install");
+  });
+
+  it("re-splits an oversize section on paragraph boundaries; every sub-chunk ≤ MAX_CHUNK_CHARS and shares the heading", () => {
+    const para = "x".repeat(400);
+    const content = `# Big\n\n${[para, para, para, para, para, para].join("\n\n")}`;
+    const chunks = chunkMarkdownByHeadings("docs/big.md", content);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) {
+      expect(c.text.length).toBeLessThanOrEqual(MAX_CHUNK_CHARS);
+      expect(c.metadata.heading).toBe("Big");
+    }
+    // No content is lost across the sub-chunks.
+    const joined = chunks.map((c) => c.text).join("\n");
+    expect(joined.match(/x{400}/g)).toHaveLength(6);
+  });
+
+  it("every chunk carries a non-empty excerpt", () => {
+    const chunks = chunkMarkdownByHeadings(
+      "docs/x.md",
+      "# A\nsome body text\n## B\nmore text",
+    );
+    expect(chunks.length).toBeGreaterThan(0);
+    for (const c of chunks) {
+      expect(c.metadata.excerpt.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("getOrRebuildIndex — doc embedding hook (#127)", () => {
+  function treeBlob(path: string): { path: string; type: string } {
+    return { path, type: "blob" };
+  }
+
+  it("SHA unchanged → serves the cache and never touches the vector store", async () => {
+    kvData.set("index:sha", "same-sha");
+    kvData.set("index:summary", "- *api*: src/a.ts");
+    getHeadShaSpy.mockResolvedValue("same-sha");
+
+    const summary = await getOrRebuildIndex();
+    expect(summary).toBe("- *api*: src/a.ts");
+    expect(vectorUpsertSpy).not.toHaveBeenCalled();
+    expect(vectorDeleteNamespaceSpy).not.toHaveBeenCalled();
+  });
+
+  it("SHA changed → upserts chunks into the new SHA namespace, THEN repoints, THEN deletes the previous namespace (N1 order)", async () => {
+    kvData.set("index:sha", "old-sha");
+    kvData.set("index:vector_docs_ns", "acme/backend:docs:old-sha");
+    getHeadShaSpy.mockResolvedValue("new-sha");
+    getRepoTreeSpy.mockResolvedValue([
+      treeBlob("docs/setup.md"),
+      treeBlob("src/a.ts"),
+    ]);
+    readFileSpy.mockImplementation(async (path: string) => {
+      if (path === "docs/setup.md") {
+        return { path, content: "# Setup\n\nInstall the app." };
+      }
+      throw new Error(`unexpected read: ${path}`);
+    });
+
+    await getOrRebuildIndex();
+
+    expect(vectorUpsertSpy).toHaveBeenCalledWith("acme/backend:docs:new-sha", [
+      expect.objectContaining({ id: "docs/setup.md#0" }),
+    ]);
+    expect(kvData.get("index:vector_docs_ns")).toBe("acme/backend:docs:new-sha");
+    expect(vectorDeleteNamespaceSpy).toHaveBeenCalledWith(
+      "acme/backend:docs:old-sha",
+    );
+    // N1: upsert → pointer swap → old-namespace cleanup, in that order.
+    const upsertIdx = callOrder.indexOf("vectorUpsert");
+    const pointerIdx = callOrder.indexOf("kv.set:index:vector_docs_ns");
+    const deleteIdx = callOrder.indexOf("vectorDeleteNamespace");
+    expect(upsertIdx).toBeGreaterThanOrEqual(0);
+    expect(pointerIdx).toBeGreaterThan(upsertIdx);
+    expect(deleteIdx).toBeGreaterThan(pointerIdx);
+    expect(logSpy).toHaveBeenCalledWith(
+      "docs_embedded",
+      expect.objectContaining({ sha: "new-sha", docCount: 1, chunkCount: 1 }),
+    );
+  });
+
+  it("upsert failure → pointer untouched, docs_embed_failed logged, rebuild still succeeds", async () => {
+    kvData.set("index:sha", "old-sha");
+    kvData.set("index:vector_docs_ns", "acme/backend:docs:old-sha");
+    getHeadShaSpy.mockResolvedValue("new-sha");
+    getRepoTreeSpy.mockResolvedValue([treeBlob("docs/setup.md")]);
+    readFileSpy.mockImplementation(async (path: string) => {
+      if (path === "docs/setup.md") {
+        return { path, content: "# Setup\n\nInstall the app." };
+      }
+      throw new Error(`unexpected read: ${path}`);
+    });
+    vectorUpsertSpy.mockImplementation(async () => {
+      callOrder.push("vectorUpsert");
+      return false;
+    });
+
+    const summary = await getOrRebuildIndex();
+
+    expect(kvData.get("index:vector_docs_ns")).toBe("acme/backend:docs:old-sha");
+    expect(vectorDeleteNamespaceSpy).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(
+      "docs_embed_failed",
+      expect.objectContaining({ sha: "new-sha" }),
+    );
+    expect(logSpy).toHaveBeenCalledWith("index_rebuilt", expect.anything());
+    expect(typeof summary).toBe("string");
+  });
+
+  it("caps content fetches at MAX_DOCS_TO_EMBED and logs docs_embed_capped (the #108 fan-out lesson)", async () => {
+    kvData.set("index:sha", "old-sha");
+    getHeadShaSpy.mockResolvedValue("new-sha");
+    const docs = Array.from({ length: MAX_DOCS_TO_EMBED + 10 }, (_, i) =>
+      treeBlob(`docs/d${i}.md`),
+    );
+    getRepoTreeSpy.mockResolvedValue(docs);
+    readFileSpy.mockImplementation(async (path: string) => {
+      if (path.startsWith("docs/")) return { path, content: "# T\n\nbody" };
+      throw new Error(`unexpected read: ${path}`);
+    });
+
+    await getOrRebuildIndex();
+
+    const docReads = readFileSpy.mock.calls.filter(([p]) =>
+      String(p).startsWith("docs/"),
+    );
+    expect(docReads).toHaveLength(MAX_DOCS_TO_EMBED);
+    expect(logSpy).toHaveBeenCalledWith(
+      "docs_embed_capped",
+      expect.anything(),
+    );
+  });
+});
+
+describe("getDocsVectorNamespace (#127)", () => {
+  it("returns the stored pointer, or null when the index has never embedded docs", async () => {
+    expect(await getDocsVectorNamespace()).toBeNull();
+    kvData.set("index:vector_docs_ns", "acme/backend:docs:abc");
+    expect(await getDocsVectorNamespace()).toBe("acme/backend:docs:abc");
   });
 });

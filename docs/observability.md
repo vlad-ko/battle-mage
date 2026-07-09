@@ -108,6 +108,9 @@ The `effort` / `max_rounds` fields on `agent_start` and `agent_complete` come fr
 | `config_loaded` | .battle-mage.json read from repo | hasConfig, pathCount |
 | `index_rebuilt` | Index rebuilt after SHA change | sha, topicCount, fileCount, duration_ms |
 | `index_build_error` | Index build failed | message |
+| `docs_embedded` | Doc chunks embedded into the new SHA namespace after a rebuild (#127) | sha, docCount, chunkCount, duration_ms |
+| `docs_embed_capped` | More docs than `MAX_DOCS_TO_EMBED` (50) — only the first 50 were fetched/embedded | totalDocs, cap |
+| `docs_embed_failed` | Chunk upsert (or the embed pipeline) failed — namespace pointer left untouched, rebuild still succeeded | sha, docCount, chunkCount (or message) |
 
 ### Response Events (route.ts)
 
@@ -129,6 +132,16 @@ Every persistent-state operation flows through `src/lib/kv.ts`, which wraps the 
 | `kv_error` | Every failed op (also `Sentry.captureException`) | op, keyPrefix, durationMs, errorClass, errorMessage (sliced to 200 chars). Sentry tags: `kv.op`, `kv.keyPrefix`. |
 
 **Why `keyPrefix`, not the full key:** full keys contain channel IDs and message timestamps (`feedback:context:C01ABCDEF:1234.5678`) — not privacy-sensitive per se, but cardinality-hostile for aggregation. The first segment (`feedback`, `knowledge`, `pending-correction`, `repo-index`, `slack-users`) combined with `op` gives clean bucketing (e.g., `{op: get, keyPrefix: feedback}` for context lookups vs. `{op: zrange, keyPrefix: feedback}` for entry-list reads).
+
+### Vector Events (lib/vector.ts) — #127
+
+Every Upstash Vector operation flows through `src/lib/vector.ts`, mirroring the `kv_op` pattern above with one difference: the wrapper is **non-throwing** — degradation is a return value, and "not configured" is an expected state, not an error. Query and entry text are never logged.
+
+| Event | When | Key data |
+|-------|------|----------|
+| `vector_op` | Every successful op | op (`upsert`/`query`/`delete`/`deleteNamespace`), namespace, durationMs, count (items/matches/ids) |
+| `vector_unavailable` | Op attempted while `UPSTASH_VECTOR_REST_*` is unset — expected degradation, NOT an error, no Sentry | op, reason (`not_configured`) |
+| `vector_error` | Op failed or exceeded `VECTOR_OP_TIMEOUT_MS` (2s) (also `Sentry.captureException`) | op, namespace, durationMs, errorClass (`VectorTimeoutError` on timeout), errorMessage (sliced to 200 chars). Sentry tags: `vector.op`, `vector.namespace`. |
 
 ### Feedback Events (route.ts) — #114
 

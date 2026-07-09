@@ -52,6 +52,7 @@ See the [full setup guide](docs/setup.md) for Slack app creation, GitHub PAT, Ve
 | Source-of-Truth Hierarchy | [docs/features/source-hierarchy.md](docs/features/source-hierarchy.md) |
 | Auto-Correction on 👎 | [docs/features/auto-correction.md](docs/features/auto-correction.md) |
 | Live Progress Updates | [docs/features/progress-ux.md](docs/features/progress-ux.md) |
+| Hybrid Retrieval (lexical + semantic) | [docs/features/hybrid-retrieval.md](docs/features/hybrid-retrieval.md) |
 | Path Annotations (.battle-mage.json) | [docs/features/config.md](docs/features/config.md) |
 | Adaptive Effort Routing | [docs/features/effort-routing.md](docs/features/effort-routing.md) |
 
@@ -65,6 +66,8 @@ See the [full setup guide](docs/setup.md) for Slack app creation, GitHub PAT, Ve
 | `GITHUB_PAT_BM` | Fine-grained PAT scoped to your target repo |
 | `GITHUB_OWNER` | GitHub org or username |
 | `GITHUB_REPO` | Repository name |
+| `UPSTASH_VECTOR_REST_URL` | Optional — Upstash Vector index (built-in embedding model) for hybrid retrieval |
+| `UPSTASH_VECTOR_REST_TOKEN` | Optional — token for the Vector index; without the pair, search degrades to lexical-only |
 
 ## How It Works
 

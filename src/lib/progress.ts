@@ -22,6 +22,10 @@ const TOOL_FORMATS: Record<string, (input: ToolInput) => string> = {
     const query = (input.query as string) || "code";
     return `🔍 _Searching for "${query}"..._`;
   },
+  search_repo: (input) => {
+    const query = (input.query as string) || "code + docs";
+    return `🧭 _Searching code + docs for "${query}"..._`;
+  },
   read_file: (input) => {
     const path = truncatePath((input.path as string) || "file");
     return `👓 _Reading ${path}..._`;

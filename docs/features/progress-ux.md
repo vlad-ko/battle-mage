@@ -54,6 +54,7 @@ Each tool has its own emoji and message format:
 | `thinking` | 🧠 | _Thinking about your question..._ |
 | `index` | 🗂️ | _Checking repo index..._ |
 | `search_code` | 🔍 | _Searching for "authentication middleware"..._ |
+| `search_repo` | 🧭 | _Searching code + docs for "message splitting"..._ |
 | `read_file` | 👓 | _Reading src/middleware/auth.ts..._ |
 | `list_issues` | 🎫 | _Looking up issues..._ |
 | `list_commits` | 📜 | _Checking recent commits..._ |

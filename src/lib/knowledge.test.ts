@@ -49,6 +49,19 @@ vi.mock("./kv", () => ({
   },
 }));
 
+// ── #127: mock the vector layer (knowledge.ts must treat it as best-effort) ──
+const { vectorUpsertSpy, vectorDeleteSpy, vectorQuerySpy } = vi.hoisted(() => ({
+  vectorUpsertSpy: vi.fn(),
+  vectorDeleteSpy: vi.fn(),
+  vectorQuerySpy: vi.fn(),
+}));
+vi.mock("./vector", () => ({
+  vectorUpsert: (...a: unknown[]) => vectorUpsertSpy(...a),
+  vectorDelete: (...a: unknown[]) => vectorDeleteSpy(...a),
+  vectorQuery: (...a: unknown[]) => vectorQuerySpy(...a),
+  kbNamespace: () => "acme/backend:kb",
+}));
+
 import {
   saveKnowledgeEntry,
   supersedeKnowledgeEntry,
@@ -57,6 +70,7 @@ import {
   getAllKnowledge,
   getKnowledgeHistory,
   getKnowledgeAsMarkdown,
+  getKnowledgeRecallAsMarkdown,
   STALE_CONTEXT_FOOTER,
 } from "./knowledge";
 
@@ -71,6 +85,9 @@ import { kv } from "./kv";
 beforeEach(() => {
   store.clear();
   logSpy.mockClear();
+  vectorUpsertSpy.mockReset().mockResolvedValue(true);
+  vectorDeleteSpy.mockReset().mockResolvedValue(true);
+  vectorQuerySpy.mockReset().mockResolvedValue(null); // default: vector unavailable
 });
 
 describe("saveKnowledgeEntry", () => {
@@ -296,5 +313,162 @@ describe("getKnowledgeAsMarkdown", () => {
 
   it("returns null when the KB is empty", async () => {
     expect(await getKnowledgeAsMarkdown()).toBeNull();
+  });
+});
+
+describe("saveKnowledgeEntry — vector embedding (#127)", () => {
+  it("upserts the entry into the KB namespace keyed by its id, with text and timestamp metadata", async () => {
+    const id = await saveKnowledgeEntry("Auth lives in src/lib/auth.ts");
+    expect(vectorUpsertSpy).toHaveBeenCalledWith("acme/backend:kb", [
+      expect.objectContaining({
+        id,
+        text: "Auth lives in src/lib/auth.ts",
+        metadata: expect.objectContaining({
+          timestamp: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+        }),
+      }),
+    ]);
+  });
+
+  it("save succeeds and returns the id when embedding reports failure", async () => {
+    vectorUpsertSpy.mockResolvedValue(false);
+    const id = await saveKnowledgeEntry("fact survives embed failure");
+    expect(id.length).toBeGreaterThan(0);
+    expect((await getAllKnowledge()).map((e) => e.entry)).toContain(
+      "fact survives embed failure",
+    );
+  });
+
+  it("save succeeds even if the vector layer rejects (contract-violation guard)", async () => {
+    vectorUpsertSpy.mockRejectedValue(new Error("should never happen"));
+    const id = await saveKnowledgeEntry("fact survives embed crash");
+    expect(id.length).toBeGreaterThan(0);
+    expect(await getAllKnowledge()).toHaveLength(1);
+  });
+});
+
+describe("retire flows remove KB vectors (#127)", () => {
+  it("supersedeKnowledgeEntry best-effort-deletes the OLD entry's vector", async () => {
+    const oldId = await saveKnowledgeEntry("stale fact");
+    await supersedeKnowledgeEntry(oldId, "fresh fact");
+    expect(vectorDeleteSpy).toHaveBeenCalledWith("acme/backend:kb", [oldId]);
+  });
+
+  it("archiveKnowledgeEntry best-effort-deletes the entry's vector", async () => {
+    const id = await saveKnowledgeEntry("obsolete fact");
+    await archiveKnowledgeEntry(id, "cleanup");
+    expect(vectorDeleteSpy).toHaveBeenCalledWith("acme/backend:kb", [id]);
+  });
+
+  it("retire still succeeds when vector delete fails", async () => {
+    vectorDeleteSpy.mockResolvedValue(false);
+    const id = await saveKnowledgeEntry("fact");
+    expect(await archiveKnowledgeEntry(id, "reason")).toBe(true);
+    expect(await getAllKnowledge()).toHaveLength(0);
+  });
+});
+
+describe("getKnowledgeRecallAsMarkdown (#127)", () => {
+  // Deterministic fixture: 6 visible entries injected with explicit
+  // scores (1000 oldest → 6000 newest) and pinned timestamps.
+  function injectSixEntries(): void {
+    const rows = [
+      { id: "e1", entry: "The Redis KV wrapper lives in src/lib/kv.ts", timestamp: "2026-06-01" },
+      { id: "e2", entry: "Deploys go through Vercel only", timestamp: "2026-06-02" },
+      { id: "e3", entry: "Issue creation requires a confirmation reaction", timestamp: "2026-06-03" },
+      { id: "e4", entry: "The redis client is @upstash/redis behind the kv wrapper", timestamp: "2026-06-04" },
+      { id: "e5", entry: "Progress messages are deleted when the answer posts", timestamp: "2026-06-05" },
+      { id: "e6", entry: "Slack replies are thread-only, never channel root", timestamp: "2026-06-06" },
+    ];
+    rows.forEach((r, i) => injectRawMember(JSON.stringify(r), (i + 1) * 1000));
+  }
+
+  it("returns null for an empty KB", async () => {
+    expect(await getKnowledgeRecallAsMarkdown("anything")).toBeNull();
+  });
+
+  it("KB at or below RECALL_TOP_K renders ALL entries and never queries the vector store", async () => {
+    await saveKnowledgeEntry("fact a");
+    await saveKnowledgeEntry("fact b");
+    await saveKnowledgeEntry("fact c");
+    const md = await getKnowledgeRecallAsMarkdown("unrelated question");
+    expect(md).toContain("fact a");
+    expect(md).toContain("fact b");
+    expect(md).toContain("fact c");
+    expect(vectorQuerySpy).not.toHaveBeenCalled();
+    expect(md!.trimEnd().endsWith(STALE_CONTEXT_FOOTER)).toBe(true);
+  });
+
+  it("queries the vector arm with the question and MAX_ARM_RESULTS when KB exceeds RECALL_TOP_K", async () => {
+    injectSixEntries();
+    await getKnowledgeRecallAsMarkdown("where is the redis wrapper");
+    expect(vectorQuerySpy).toHaveBeenCalledWith(
+      "acme/backend:kb",
+      "where is the redis wrapper",
+      10, // MAX_ARM_RESULTS
+    );
+  });
+
+  it("vector unavailable (null) → lexical-only recall still returns the matching entries", async () => {
+    injectSixEntries();
+    vectorQuerySpy.mockResolvedValue(null);
+    const md = await getKnowledgeRecallAsMarkdown("where is the redis wrapper");
+    expect(md).toContain("kv.ts");            // e1
+    expect(md).toContain("@upstash/redis");   // e4
+    expect(md).not.toContain("thread-only");  // e6: no lexical match, no vector arm
+    // Only the 2 lexical matches render — no padding.
+    expect(md!.match(/^- \[/gm)).toHaveLength(2);
+  });
+
+  it("vector-only recall works when the question shares no keywords (semantic hit)", async () => {
+    injectSixEntries();
+    vectorQuerySpy.mockResolvedValue([
+      { id: "e5", score: 0.9 },
+      { id: "e2", score: 0.8 },
+    ]);
+    const md = await getKnowledgeRecallAsMarkdown("zzzq wwwk"); // no lexical overlap
+    const lines = md!.match(/^- \[.*$/gm)!;
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain("Progress messages"); // e5 ranked first
+    expect(lines[1]).toContain("Vercel only");       // e2 second
+  });
+
+  it("K1 invariant: retired and unknown ids from the vector arm never surface", async () => {
+    injectSixEntries();
+    injectRawMember(
+      JSON.stringify({ id: "dead", entry: "superseded ghost fact", timestamp: "2026-01-01", supersededById: "e1" }),
+      500,
+    );
+    vectorQuerySpy.mockResolvedValue([
+      { id: "dead", score: 0.99 },     // superseded — must be filtered
+      { id: "ghost-404", score: 0.98 }, // not in KV at all — must be filtered
+      { id: "e3", score: 0.9 },
+    ]);
+    const md = await getKnowledgeRecallAsMarkdown("zzzq wwwk");
+    expect(md).not.toContain("ghost fact");
+    expect(md).toContain("confirmation reaction"); // e3 survives
+    expect(md!.match(/^- \[/gm)).toHaveLength(1);
+  });
+
+  it("both arms empty → falls back to the newest RECALL_TOP_K entries", async () => {
+    injectSixEntries();
+    vectorQuerySpy.mockResolvedValue([]); // available, zero matches
+    const md = await getKnowledgeRecallAsMarkdown("zzzq wwwk");
+    const lines = md!.match(/^- \[.*$/gm)!;
+    expect(lines).toHaveLength(5);
+    expect(lines[0]).toContain("thread-only");     // e6, newest by score
+    expect(md).not.toContain("src/lib/kv.ts");     // e1, oldest, dropped
+  });
+
+  it("prompt-size bound: 50 matching entries still render exactly RECALL_TOP_K lines", async () => {
+    for (let i = 0; i < 50; i++) {
+      injectRawMember(
+        JSON.stringify({ id: `v${i}`, entry: `vercel deployment note ${i}`, timestamp: "2026-06-01" }),
+        1000 + i,
+      );
+    }
+    const md = await getKnowledgeRecallAsMarkdown("vercel deployment");
+    expect(md!.match(/^- \[/gm)).toHaveLength(5);
+    expect(md!.trimEnd().endsWith(STALE_CONTEXT_FOOTER)).toBe(true);
   });
 });
