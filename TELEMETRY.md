@@ -61,6 +61,19 @@ These names are treated as a public contract — renaming one is a breaking chan
 | `src_index_claim_lost` | Another tick owns the NX claim (`srcindex:claim`, 270 s TTL) — benign skip |
 | `src_index_unauthorized` | Cron auth rejected — check `CRON_SECRET` |
 
+### Passive KB learning (#136)
+
+| Event | Meaning |
+|---|---|
+| `kb_extraction_complete` / `kb_extraction_error` | One fast-model extraction pass succeeded / failed (`reason: timeout \| api_error \| malformed_json \| invalid_shape`) |
+| `kb_extraction_skipped` | A quiet thread was skipped — `reason: private_channel` is the fail-closed publicness guard (check `channels:read` scope if it spikes) |
+| `kb_batch_proposed` | KB candidates posted for human confirmation (nothing saved yet) |
+| `kb_batch_confirmed` / `kb_batch_saved` | A user confirmed; the batch saved (with per-entry `kb_save_error` on partial failure) |
+| `kb_extract_sweep_complete` | KB phase heartbeat (`scanned`, `extracted`, `proposed`, `pruned`, `gaveUp`, `skipped`) — rides every recovery sweep |
+| `kb_extract_sweep_failed` | The KB phase aborted — recovery (phase 1) is unaffected by design |
+
+Healthy: `kb_extract_sweep_complete` every ~5 minutes; `proposed` small and occasional; `count(kb_batch_confirmed) / count(kb_batch_proposed)` is the adoption signal. Zero `kb_batch_saved` without a matching `kb_batch_confirmed` — anything else violates the confirmation-before-write invariant and is a bug. Full field-level catalog: docs/observability.md.
+
 ## Query recipes (Sentry Logs UI)
 
 ### Turn failure rate

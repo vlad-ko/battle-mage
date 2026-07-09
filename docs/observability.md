@@ -213,6 +213,36 @@ A dedicated cron tick (every 5 minutes, `maxDuration` 240 s) keeps the stable `{
 | `src_index_tick_failed` | The tick threw (infrastructure/KV error or contract violation; also `Sentry.captureException` tagged `flow: cron_code_index`) | errorMessage |
 | `src_index_unauthorized` | Request without a valid `Bearer $CRON_SECRET` header | — |
 
+### Passive KB Events (lib/kb-extract.ts + lib/kb-runner.ts) — #136
+
+Passive KB learning runs as phase 2 of `/api/cron/sweep` (own
+try/catch — a KB failure never fails recovery). Threads bump
+`kb-extract:index` on every posted answer; quiet threads get one
+fast-model extraction pass whose candidates pass a deterministic
+provenance gate before landing as a proposal. Nothing writes to the KB
+without a human ✅ / "confirm all". See
+[features/passive-kb-learning.md](features/passive-kb-learning.md).
+
+| Event | When | Key data |
+|-------|------|----------|
+| `kb_extraction_complete` | The extractor call returned a valid payload | candidateCount, duration_ms, model |
+| `kb_extraction_error` | The extractor call failed — the attempt counts toward the retry cap | reason (`timeout` \| `api_error` \| `malformed_json` \| `invalid_shape`), message, duration_ms, model |
+| `kb_extraction_skipped` | A claimed/scanned thread was skipped without extracting | reason (`private_channel` — fail-closed publicness, `idle_recheck`, `pending_correction`, `pending_kb_batch`, `empty_thread`), channel, threadTs |
+| `kb_candidates_gated` | The provenance gate ran on an extraction's output | candidateCount, eligibleCount, droppedCount, dropReasons, channel, threadTs |
+| `kb_batch_proposed` | A proposal message was posted + its pending-kb-batch record written | count, channel, threadTs, firstTs, kinds, sampleEntries |
+| `kb_batch_confirmed` | A user claimed a pending KB batch (✅ or "confirm all") | count, confirmVia, confirmingUser, latencyMs, channel, threadTs |
+| `kb_batch_saved` | The claimed batch finished saving | totalCount, successCount, failureCount, supersededTotal, durationMs |
+| `kb_save_error` | One entry in a claimed batch failed to save (batch continues) | entrySample, errorClass, errorMessage |
+| `kb_batch_claim_lost` | A racing confirmation won the DEL claim — benign skip | channel, firstTs, confirmVia |
+| `kb_batch_reaction_after_claim` | A second ✅ hit an already-claimed KB proposal (tombstone) — silent return | channel, messageTs |
+| `kb_extract_claim_lost` | Another sweep instance holds the NX claim (`kb-extract:claim:*`, 120 s TTL) — benign skip | channel, threadTs |
+| `kb_extract_pruned` | An index member was dropped (quiet period consumed, malformed member, or confirmed-private channel) | channel, threadTs (or member), reason |
+| `kb_extraction_gave_up` | Attempt cap reached — the thread won't be retried until new activity | channel, threadTs, attempt |
+| `kb_extract_member_failed` | One index member threw mid-sweep (sweep continues; index + state intact) | member, errorMessage |
+| `kb_extract_sweep_complete` | End of every KB extraction phase | scanned, extracted, proposed, pruned, gaveUp, skipped |
+| `kb_extract_sweep_failed` | The whole KB phase aborted (recovery phase 1 unaffected) | errorMessage |
+| `kb_activity_record_failed` | The best-effort index bump after an answer failed (reply flow unaffected) | channel, threadTs, errorMessage |
+
 ### Error Events (all flows)
 
 Renamed in #125 (previously a single generic `error` event) so severity routing and dashboards can distinguish agent-turn failures from webhook plumbing failures. Any event name containing `error` or `failed` is routed to `console.error` by the logger.

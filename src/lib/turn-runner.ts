@@ -27,6 +27,12 @@ import {
   summarizeBatchResult,
   type BatchCreationOutcome,
 } from "@/lib/issue-batch";
+import {
+  recordKbThreadActivity,
+  executeKbBatchSave,
+  KB_SAVED_CONFIRMATION_PREFIX,
+} from "@/lib/kb-runner";
+import { kbBatchThreadPointerKey } from "@/lib/kb-proposals";
 import { storeQAContext, saveFeedback, deriveReferenceTypes } from "@/lib/feedback";
 import { formatReferences, rankReferences } from "@/lib/references";
 import { toSlackMrkdwn } from "@/lib/mrkdwn";
@@ -411,6 +417,12 @@ export async function runMentionTurn(params: MentionTurnParams): Promise<void> {
         kind: "proposal",
         proposalCount: proposals.length,
       });
+      // Passive-KB discovery bump (#136): every posted answer marks the
+      // thread active. Best-effort — never blocks the reply flow. The
+      // KB proposal post itself (kb-runner) deliberately does NOT bump.
+      if (posted.chunks > 0) {
+        await recordKbThreadActivity(channel, threadTs, rlog);
+      }
     } else {
       const finalBody = text + refsFooter + replyFooter;
       const posted = await postReplyInChunks({
@@ -421,6 +433,10 @@ export async function runMentionTurn(params: MentionTurnParams): Promise<void> {
       });
       if (posted.chunks > 0) thinkingTs = undefined;
       rlog("answer_posted", { channel, threadTs, chunks: posted.chunks });
+      // Passive-KB discovery bump (#136) — see the proposal branch.
+      if (posted.chunks > 0) {
+        await recordKbThreadActivity(channel, threadTs, rlog);
+      }
 
       // Store Q&A context for EVERY chunk ts (see #114). Reactions
       // on any chunk resolve to the same question/answer pair.
@@ -555,10 +571,13 @@ export async function runFollowupTurn(params: FollowupTurnParams): Promise<void>
         correctionSample: correctionText.slice(0, 100),
       });
 
+      // KB_SAVED_CONFIRMATION_PREFIX is shared with the passive-KB gate
+      // (kb-gate.ts), which scans thread transcripts for this exact
+      // prefix to avoid re-proposing an already-saved correction (#136).
       await replyInThread(
         channel,
         threadTs,
-        `:white_check_mark: Saved to knowledge base: _"${correctionText.slice(0, 100)}"_`,
+        `${KB_SAVED_CONFIRMATION_PREFIX} _"${correctionText.slice(0, 100)}"_`,
       );
       return;
     }
@@ -585,6 +604,25 @@ export async function runFollowupTurn(params: FollowupTurnParams): Promise<void>
         // Not claimed → either the batch expired or another handler
         // consumed it. Fall through to the normal agent flow so the
         // user still gets a response.
+      }
+
+      // KB proposal pointer (#136): same interception for a pending
+      // passive-KB batch in this thread. Checked AFTER the issue batch
+      // — mirrors the ✅ chain order in route.ts.
+      const kbFirstTs = await kv.get<string>(
+        kbBatchThreadPointerKey(channel, threadTs),
+      );
+      if (kbFirstTs) {
+        const kbOutcome = await executeKbBatchSave(
+          channel,
+          threadTs,
+          kbFirstTs,
+          user,
+          "text",
+          rlog,
+        );
+        if (kbOutcome.claimed) return;
+        // Not claimed → expired or consumed; fall through as above.
       }
     }
 
@@ -730,6 +768,12 @@ export async function runFollowupTurn(params: FollowupTurnParams): Promise<void>
         kind: "proposal",
         proposalCount: proposals.length,
       });
+      // Passive-KB discovery bump (#136): every posted answer marks the
+      // thread active. Best-effort — never blocks the reply flow. The
+      // KB proposal post itself (kb-runner) deliberately does NOT bump.
+      if (posted.chunks > 0) {
+        await recordKbThreadActivity(channel, threadTs, rlog);
+      }
     } else {
       const finalBody = text + refsFooter + replyFooter;
       const posted = await postReplyInChunks({
@@ -740,6 +784,10 @@ export async function runFollowupTurn(params: FollowupTurnParams): Promise<void>
       });
       if (posted.chunks > 0) thinkTs = undefined;
       rlog("answer_posted", { channel, threadTs, chunks: posted.chunks });
+      // Passive-KB discovery bump (#136) — see the proposal branch.
+      if (posted.chunks > 0) {
+        await recordKbThreadActivity(channel, threadTs, rlog);
+      }
 
       if (posted.firstTs && posted.allTs.length > 0) {
         const postedAt = Date.now();
