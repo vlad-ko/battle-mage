@@ -22,6 +22,8 @@ import {
   docsNamespace,
   srcNamespace,
   VECTOR_OP_TIMEOUT_MS,
+  VECTOR_BACKGROUND_TIMEOUT_MS,
+  UPSERT_BATCH_SIZE,
   __setVectorStoreFactoryForTests,
   type VectorStore,
 } from "./vector";
@@ -274,6 +276,85 @@ describe("degradation: store errors never throw", () => {
     );
     await expect(vectorDelete("ns", ["x"])).resolves.toBe(false);
     await expect(vectorDeleteNamespace("ns")).resolves.toBe(false);
+  });
+});
+
+describe("upsert batching + timeout override (BATTLE-MAGE-5)", () => {
+  beforeEach(() => stubVectorEnv());
+
+  const item = (i: number) => ({ id: `c${i}`, text: `chunk ${i}` });
+
+  it("pins the background timeout and batch size constants", () => {
+    expect(VECTOR_BACKGROUND_TIMEOUT_MS).toBe(30_000);
+    expect(UPSERT_BATCH_SIZE).toBe(20);
+    expect(VECTOR_BACKGROUND_TIMEOUT_MS).toBeGreaterThan(VECTOR_OP_TIMEOUT_MS);
+  });
+
+  it("splits a large item list into sequential store calls of at most UPSERT_BATCH_SIZE", async () => {
+    const store = makeFakeStore();
+    __setVectorStoreFactoryForTests(() => store);
+    const items = Array.from({ length: UPSERT_BATCH_SIZE * 2 + 5 }, (_, i) => item(i));
+    const ok = await vectorUpsert("ns", items);
+    expect(ok).toBe(true);
+    expect(store.upsert).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(store.upsert).mock.calls[0][1]).toHaveLength(UPSERT_BATCH_SIZE);
+    expect(vi.mocked(store.upsert).mock.calls[1][1]).toHaveLength(UPSERT_BATCH_SIZE);
+    expect(vi.mocked(store.upsert).mock.calls[2][1]).toHaveLength(5);
+    // One success log carrying the TOTAL count.
+    expect(logSpy).toHaveBeenCalledWith(
+      "vector_op",
+      expect.objectContaining({ op: "upsert", count: UPSERT_BATCH_SIZE * 2 + 5 }),
+    );
+  });
+
+  it("stops on the first failed batch and returns false (later batches never sent)", async () => {
+    const store = makeFakeStore({
+      upsert: vi
+        .fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error("boom")),
+    });
+    __setVectorStoreFactoryForTests(() => store);
+    const items = Array.from({ length: UPSERT_BATCH_SIZE * 3 }, (_, i) => item(i));
+    const ok = await vectorUpsert("ns", items);
+    expect(ok).toBe(false);
+    expect(store.upsert).toHaveBeenCalledTimes(2);
+  });
+
+  it("a list at or under the batch size still makes exactly one store call", async () => {
+    const store = makeFakeStore();
+    __setVectorStoreFactoryForTests(() => store);
+    await vectorUpsert("ns", Array.from({ length: UPSERT_BATCH_SIZE }, (_, i) => item(i)));
+    expect(store.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("honors a per-call timeout override: survives past the default, fails past the override", async () => {
+    vi.useFakeTimers();
+    __setVectorStoreFactoryForTests(() =>
+      makeFakeStore({ upsert: () => new Promise(() => {}) }), // hangs forever
+    );
+    const pending = vectorUpsert("ns", [item(1)], { timeoutMs: VECTOR_BACKGROUND_TIMEOUT_MS });
+    await vi.advanceTimersByTimeAsync(VECTOR_OP_TIMEOUT_MS + 1);
+    // Default budget elapsed — the overridden call must still be alive.
+    let settled = false;
+    pending.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(VECTOR_BACKGROUND_TIMEOUT_MS);
+    await expect(pending).resolves.toBe(false);
+    const err = logSpy.mock.calls.find((c) => c[0] === "vector_error");
+    expect(err?.[1]).toMatchObject({ op: "upsert", errorClass: "VectorTimeoutError" });
+    expect(String(err?.[1].errorMessage)).toContain("30000");
+  });
+
+  it("default timeout still applies when no override is passed", async () => {
+    vi.useFakeTimers();
+    __setVectorStoreFactoryForTests(() =>
+      makeFakeStore({ upsert: () => new Promise(() => {}) }),
+    );
+    const pending = vectorUpsert("ns", [item(1)]);
+    await vi.advanceTimersByTimeAsync(VECTOR_OP_TIMEOUT_MS + 1);
+    await expect(pending).resolves.toBe(false);
   });
 });
 

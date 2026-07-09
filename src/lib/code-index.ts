@@ -37,6 +37,7 @@ import { log } from "./logger";
 import {
   isVectorConfigured,
   srcNamespace,
+  VECTOR_BACKGROUND_TIMEOUT_MS,
   vectorUpsert,
   vectorDelete,
 } from "./vector";
@@ -324,6 +325,10 @@ export async function runCodeIndexTick(
         const ok = await vectorUpsert(
           namespace,
           chunks.map((c) => ({ id: c.id, text: c.text, metadata: c.metadata })),
+          // Background pipeline: server-side embedding of a file's chunks
+          // legitimately takes seconds (BATTLE-MAGE-5); the tick's
+          // wall-clock budget absorbs the slack.
+          { timeoutMs: VECTOR_BACKGROUND_TIMEOUT_MS },
         );
         if (!ok) {
           degraded = true;

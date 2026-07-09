@@ -5,6 +5,7 @@ import {
   docsNamespace,
   vectorUpsert,
   vectorDeleteNamespace,
+  VECTOR_BACKGROUND_TIMEOUT_MS,
 } from "./vector";
 import {
   type BattleMageConfig,
@@ -521,7 +522,9 @@ async function embedDocChunks(sha: string, docPaths: string[]): Promise<void> {
     }
 
     const namespace = docsNamespace(sha);
-    const ok = await vectorUpsert(namespace, items);
+    // Background pipeline: one docs corpus can be many chunks; use the
+    // generous embed budget, not the interactive 2s cap (BATTLE-MAGE-5).
+    const ok = await vectorUpsert(namespace, items, { timeoutMs: VECTOR_BACKGROUND_TIMEOUT_MS });
     if (!ok) {
       log("docs_embed_failed", { sha, docCount, chunkCount: chunks.length });
       return;

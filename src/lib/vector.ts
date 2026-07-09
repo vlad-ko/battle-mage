@@ -172,17 +172,38 @@ function getStore(): VectorStore {
 /** Hard latency cap per vector op — recall must never stall a turn. */
 export const VECTOR_OP_TIMEOUT_MS = 2000;
 
+/**
+ * Timeout for background embed pipelines (code index, doc embedding),
+ * where a single upsert batch is server-side-embedded and legitimately
+ * needs seconds — the 2s interactive cap starved them and stalled the
+ * index on large files (BATTLE-MAGE-5). Cron budgets absorb the slack.
+ */
+export const VECTOR_BACKGROUND_TIMEOUT_MS = 30_000;
+
+/**
+ * Max items per underlying store call. One upsert request carrying a
+ * whole large file (or a whole docs corpus) embeds slowly and fails as
+ * a unit; smaller batches keep per-request latency inside the timeout
+ * and make retries finer-grained. Ids are deterministic, so re-sending
+ * a batch after a mid-list failure is harmless.
+ */
+export const UPSERT_BATCH_SIZE = 20;
+
 export class VectorTimeoutError extends Error {
-  constructor(op: string) {
-    super(`vector ${op} exceeded ${VECTOR_OP_TIMEOUT_MS}ms`);
+  constructor(op: string, timeoutMs: number) {
+    super(`vector ${op} exceeded ${timeoutMs}ms`);
     this.name = "VectorTimeoutError";
   }
 }
 
-function withTimeout<T>(op: string, promise: Promise<T>): Promise<T> {
+function withTimeout<T>(
+  op: string,
+  promise: Promise<T>,
+  timeoutMs: number = VECTOR_OP_TIMEOUT_MS,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new VectorTimeoutError(op)), VECTOR_OP_TIMEOUT_MS);
+    timer = setTimeout(() => reject(new VectorTimeoutError(op, timeoutMs)), timeoutMs);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer)) as Promise<T>;
 }
@@ -221,20 +242,29 @@ function logError(op: VectorOp, namespace: string, startedAt: number, err: unkno
 export async function vectorUpsert(
   namespace: string,
   items: VectorUpsertItem[],
+  opts?: { timeoutMs?: number },
 ): Promise<boolean> {
   if (items.length === 0) return true;
   if (!isVectorConfigured()) {
     logUnavailable("upsert");
     return false;
   }
+  const timeoutMs = opts?.timeoutMs ?? VECTOR_OP_TIMEOUT_MS;
   const startedAt = Date.now();
   try {
-    await withTimeout("upsert", getStore().upsert(namespace, items));
+    // Sequential batches; stop on the first failure. Completed batches
+    // stay written — deterministic ids make the caller's retry re-send
+    // them idempotently.
+    for (let i = 0; i < items.length; i += UPSERT_BATCH_SIZE) {
+      const batch = items.slice(i, i + UPSERT_BATCH_SIZE);
+      await withTimeout("upsert", getStore().upsert(namespace, batch), timeoutMs);
+    }
     log("vector_op", {
       op: "upsert",
       namespace,
       durationMs: Date.now() - startedAt,
       count: items.length,
+      batches: Math.ceil(items.length / UPSERT_BATCH_SIZE),
     });
     return true;
   } catch (err) {

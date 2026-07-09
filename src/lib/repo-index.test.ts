@@ -39,6 +39,7 @@ vi.mock("./kv", () => ({
 }));
 
 vi.mock("./vector", () => ({
+  VECTOR_BACKGROUND_TIMEOUT_MS: 30_000,
   isVectorConfigured: () => true,
   docsNamespace: (sha: string) => `acme_backend:docs:${sha}`,
   vectorUpsert: (...a: unknown[]) => vectorUpsertSpy(...a),
@@ -610,9 +611,12 @@ describe("getOrRebuildIndex — doc embedding hook (#127)", () => {
       expect(logSpy).toHaveBeenCalledWith("docs_embedded", expect.anything()),
     );
 
-    expect(vectorUpsertSpy).toHaveBeenCalledWith("acme_backend:docs:new-sha", [
-      expect.objectContaining({ id: "docs/setup.md#0" }),
-    ]);
+    expect(vectorUpsertSpy).toHaveBeenCalledWith(
+      "acme_backend:docs:new-sha",
+      [expect.objectContaining({ id: "docs/setup.md#0" })],
+      // Background pipeline uses the generous embed budget (BATTLE-MAGE-5).
+      { timeoutMs: 30_000 },
+    );
     expect(kvData.get("index:vector_docs_ns")).toBe("acme_backend:docs:new-sha");
     expect(vectorDeleteNamespaceSpy).toHaveBeenCalledWith(
       "acme_backend:docs:old-sha",

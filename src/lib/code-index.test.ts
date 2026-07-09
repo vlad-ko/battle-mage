@@ -51,6 +51,7 @@ vi.mock("./logger", () => ({
 }));
 
 vi.mock("./vector", () => ({
+  VECTOR_BACKGROUND_TIMEOUT_MS: 30_000,
   isVectorConfigured: (...args: unknown[]) => h.isVectorConfiguredMock(...args),
   srcNamespace: () => "acme_backend:src",
   docsNamespace: (sha: string) => `acme_backend:docs:${sha}`,
@@ -221,6 +222,8 @@ describe("runCodeIndexTick", () => {
     expect(vectorUpsertSpy).toHaveBeenCalledWith(
       "acme_backend:src",
       [expect.objectContaining({ id: "src/a.ts#0", metadata: expect.objectContaining({ path: "src/a.ts", startLine: 1 }) })],
+      // Background pipeline uses the generous embed budget (BATTLE-MAGE-5).
+      { timeoutMs: 30_000 },
     );
     expect(kvData.get("srcindex:manifest")).toEqual({ "src/a.ts": { sha: "blob-a", chunks: 1 } });
     expect(kvData.get("srcindex:sha")).toBe("sha-2");
