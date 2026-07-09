@@ -269,7 +269,7 @@ If the bot does not respond, check the [Troubleshooting Guide](./troubleshooting
 | `UPSTASH_VECTOR_REST_TOKEN` | Optional | `ABcD3...` | Token for the Vector index -- both must be set or neither |
 | `KV_REST_API_URL` | Legacy | `https://...upstash.io` | Read as a fallback by `@upstash/redis` for projects that still provision "Vercel KV" |
 | `KV_REST_API_TOKEN` | Legacy | `AaB1Cc2...` | Read as a fallback — either pair works |
-| `CRON_SECRET` | Yes (for recovery) | `f3a9...64 hex chars` | Auth for both `/api/cron/*` routes — sweep and code-index (Vercel Cron sends it as a Bearer token). Unset = both deny all requests: recovery and code indexing disabled |
+| `CRON_SECRET` | Yes (for recovery + code index) | `f3a9...64 hex chars` | Auth for both `/api/cron/*` routes — sweep and code-index (Vercel Cron sends it as a Bearer token). Unset = both deny all requests: recovery and code indexing disabled |
 
 ## Security Notes
 
