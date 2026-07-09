@@ -203,3 +203,86 @@ describe("extractTranscriptTail", () => {
     expect(tail).not.toContain("msg 13");
   });
 });
+
+// ── #146: system footer must not echo through conversation history ──
+
+describe("buildConversationHistory — footer stripping (#146)", () => {
+  const BOT = "B001";
+  const FOOTER = "\n\n───\n*References:*\n  • 📄 <https://github.com/o/r/blob/main/f.ts|f.ts>\n_React with 👍 or 👎 to help me give better answers in the future._";
+
+  it("strips the system footer from assistant turns so the model can't imitate it", () => {
+    const history = buildConversationHistory(
+      [
+        { user: "U1", text: "how does auth work?", bot_id: undefined },
+        { user: BOT, text: "Auth uses JWT." + FOOTER, bot_id: "B001" },
+      ],
+      BOT,
+    );
+    expect(history).toHaveLength(2);
+    expect(history[1].content).toBe("Auth uses JWT.");
+    expect(history[1].content).not.toContain("References");
+    expect(history[1].content).not.toContain("React with");
+  });
+
+  it("does NOT strip footer-lookalike text from USER turns", () => {
+    const userText = "why does your ───\n*References:*\n block show twice?";
+    const history = buildConversationHistory(
+      [{ user: "U1", text: userText, bot_id: undefined }],
+      BOT,
+    );
+    expect(history[0].content).toContain("*References:*");
+  });
+
+  it("skips an assistant message that is footer-only (no empty turns)", () => {
+    const history = buildConversationHistory(
+      [
+        { user: "U1", text: "question", bot_id: undefined },
+        { user: BOT, text: FOOTER.trimStart(), bot_id: "B001" },
+        { user: "U1", text: "follow-up", bot_id: undefined },
+      ],
+      BOT,
+    );
+    // Footer-only bot turn vanishes; the two user turns merge.
+    expect(history).toHaveLength(1);
+    expect(history[0].role).toBe("user");
+    expect(history[0].content).toContain("question");
+    expect(history[0].content).toContain("follow-up");
+  });
+});
+
+describe("extractTranscriptTail — footer stripping (#146 review)", () => {
+  const BOT = "B001";
+  const FOOTER = "\n\n───\n*References:*\n  • 📄 <https://github.com/o/r/blob/main/f.ts|f.ts>\n_React with 👍 or 👎 to help me give better answers in the future._";
+
+  it("bot entries reach the classifier transcript footer-free", () => {
+    const tail = extractTranscriptTail(
+      [
+        { user: "U1", text: "how does auth work?", bot_id: undefined },
+        { user: BOT, text: "Auth uses JWT." + FOOTER, bot_id: "B001" },
+      ],
+      BOT,
+    );
+    expect(tail).toContain("bot: Auth uses JWT.");
+    expect(tail).not.toContain("References");
+    expect(tail).not.toContain("React with");
+  });
+
+  it("a footer-only bot message is skipped, not an empty entry", () => {
+    const tail = extractTranscriptTail(
+      [
+        { user: "U1", text: "question", bot_id: undefined },
+        { user: BOT, text: FOOTER.trimStart(), bot_id: "B001" },
+      ],
+      BOT,
+    );
+    expect(tail).toBe("user: question");
+  });
+
+  it("user entries quoting footer-lookalike text are NOT stripped", () => {
+    const tail = extractTranscriptTail(
+      [{ user: "U1", text: "why is *References:* doubled?", bot_id: undefined }],
+      BOT,
+    );
+    expect(tail).toContain("*References:*");
+  });
+});

@@ -117,5 +117,20 @@ export function formatReferences(refs: Reference[]): string {
   // No "...and N more" — if refs are ranked correctly, the cap is the answer
 
   const hint = "\n_React with 👍 or 👎 to help me give better answers in the future._";
-  return `\n\n───\n*References:*\n${lines.join("\n")}${hint}`;
+  return `\n\n${REFERENCES_FOOTER_MARKER}\n${lines.join("\n")}${hint}`;
+}
+
+// ── Footer stripping (#146) ──────────────────────────────────────────
+// Prior bot replies are replayed into conversation history; if the
+// system footer rides along, the model learns to imitate it and emits
+// its own references block mid-answer. The marker is shared between
+// format and strip so the pair can never drift apart.
+
+export const REFERENCES_FOOTER_MARKER = "───\n*References:*";
+
+/** Remove the system-appended footer (marker to end of text). */
+export function stripReferencesFooter(text: string): string {
+  const idx = text.indexOf(REFERENCES_FOOTER_MARKER);
+  if (idx === -1) return text;
+  return text.slice(0, idx).trimEnd();
 }

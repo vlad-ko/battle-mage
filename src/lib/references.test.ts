@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { formatReferences, rankReferences, MAX_REFERENCES } from "./references";
+import {
+  formatReferences,
+  rankReferences,
+  MAX_REFERENCES,
+  REFERENCES_FOOTER_MARKER,
+  stripReferencesFooter,
+} from "./references";
 
 describe("formatReferences", () => {
   it("returns empty string when no refs", () => {
@@ -180,5 +186,33 @@ describe("rankReferences", () => {
     ];
     const ranked = rankReferences(refs, "answer");
     expect(ranked).toHaveLength(1);
+  });
+});
+
+// ── #146: footer echo — format/strip round-trip ──────────────────────
+
+describe("stripReferencesFooter", () => {
+  const ref = { type: "doc" as const, label: "setup.md", url: "https://github.com/o/r/blob/main/docs/setup.md" };
+
+  it("round-trips: stripping a formatted footer restores the bare answer (drift guard)", () => {
+    const withFooter = "the answer body" + formatReferences([ref]);
+    expect(stripReferencesFooter(withFooter)).toBe("the answer body");
+  });
+
+  it("formatReferences output contains the exported marker (the pair can't drift apart)", () => {
+    expect(formatReferences([ref])).toContain(REFERENCES_FOOTER_MARKER);
+  });
+
+  it("returns text unchanged when no footer is present", () => {
+    expect(stripReferencesFooter("plain answer\nwith lines")).toBe("plain answer\nwith lines");
+  });
+
+  it("cuts from the marker to the END — trailing hint and any stragglers go too", () => {
+    const text = "answer\n\n" + REFERENCES_FOOTER_MARKER + "\n  • 📄 <u|l>\n_React with 👍 or 👎 to help me give better answers in the future._";
+    expect(stripReferencesFooter(text)).toBe("answer");
+  });
+
+  it("a footer-only string strips to empty", () => {
+    expect(stripReferencesFooter(formatReferences([ref]))).toBe("");
   });
 });

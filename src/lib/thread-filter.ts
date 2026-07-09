@@ -4,6 +4,8 @@
  * proper multi-turn conversation history from Slack thread messages.
  */
 
+import { stripReferencesFooter } from "./references";
+
 const MENTION_RE = /<@([A-Z0-9]+)>/g;
 
 /**
@@ -83,11 +85,15 @@ export function buildConversationHistory(
   // Build raw turns with cleaned text
   const rawTurns: MessageParam[] = [];
   for (const m of recent) {
-    const text = truncate(cleanText(m.text ?? ""), MAX_MESSAGE_LENGTH);
-    if (!text) continue; // Skip empty messages
-
     const role: "user" | "assistant" =
       m.user === botUserId || m.bot_id ? "assistant" : "user";
+    // Strip the system-appended references footer from prior bot replies
+    // before they re-enter the model's context — otherwise the model
+    // imitates the footer and emits its own copy mid-answer (#146).
+    const raw = role === "assistant" ? stripReferencesFooter(m.text ?? "") : m.text ?? "";
+    const text = truncate(cleanText(raw), MAX_MESSAGE_LENGTH);
+    if (!text) continue; // Skip empty messages
+
     rawTurns.push({ role, content: text });
   }
 
@@ -143,10 +149,14 @@ export function extractTranscriptTail(
   const entries: string[] = [];
   for (let i = messages.length - 1; i >= 0 && entries.length < TRANSCRIPT_TAIL_MAX; i--) {
     const m = messages[i];
-    const text = truncate(cleanText(m.text ?? ""), TRANSCRIPT_ENTRY_MAX_CHARS);
+    const speaker = m.user === botUserId || m.bot_id ? "bot" : "user";
+    // Same rule as buildConversationHistory (#146): bot replies drop the
+    // system footer so reference bullets can't eat the classifier's
+    // per-entry budget or skew the gate.
+    const raw = speaker === "bot" ? stripReferencesFooter(m.text ?? "") : m.text ?? "";
+    const text = truncate(cleanText(raw), TRANSCRIPT_ENTRY_MAX_CHARS);
     if (!text) continue; // Skip empty messages
 
-    const speaker = m.user === botUserId || m.bot_id ? "bot" : "user";
     entries.push(`${speaker}: ${text}`);
   }
   return entries.reverse().join("\n");
