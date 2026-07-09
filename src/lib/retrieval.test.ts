@@ -7,6 +7,7 @@ import {
   ageBoost,
   fuseRankedLists,
   lexicalRank,
+  mergeSemanticMatches,
   type RecallCandidate,
 } from "./retrieval";
 
@@ -229,5 +230,31 @@ describe("lexicalRank", () => {
       { id: "dated", text: "vercel deploy note", timestamp: "2026-01-01" },
     ];
     expect(lexicalRank("vercel deploy", cands)).toEqual(["dated", "legacy"]);
+  });
+});
+
+describe("mergeSemanticMatches", () => {
+  const m = (id: string, score: number) => ({ id, score });
+
+  it("merges by descending score across both lists", () => {
+    const merged = mergeSemanticMatches(
+      [m("doc:docs/x.md#0", 0.9), m("doc:docs/y.md#0", 0.5)],
+      [m("src:src/a.ts#0", 0.7)],
+      10,
+    );
+    expect(merged.map((x) => x.id)).toEqual(["doc:docs/x.md#0", "src:src/a.ts#0", "doc:docs/y.md#0"]);
+  });
+
+  it("exact score ties keep the first list (docs) ahead — stable", () => {
+    const merged = mergeSemanticMatches([m("doc:d#0", 0.7)], [m("src:s#0", 0.7)], 10);
+    expect(merged.map((x) => x.id)).toEqual(["doc:d#0", "src:s#0"]);
+  });
+
+  it("caps at the given topK; topK 0 → []; both lists empty → []", () => {
+    const a = [m("doc:1", 0.9), m("doc:2", 0.8)];
+    const b = [m("src:1", 0.85)];
+    expect(mergeSemanticMatches(a, b, 2).map((x) => x.id)).toEqual(["doc:1", "src:1"]);
+    expect(mergeSemanticMatches(a, b, 0)).toEqual([]);
+    expect(mergeSemanticMatches([], [], 5)).toEqual([]);
   });
 });

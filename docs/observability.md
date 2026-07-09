@@ -196,6 +196,23 @@ Mention and follow-up turns write a processing marker as the first step of the `
 | `recovery_sweep_failed` | The whole sweep aborted | errorMessage |
 | `recovery_sweep_unauthorized` | Request without a valid `Bearer $CRON_SECRET` header | — |
 
+### Code-Index Events (lib/code-index.ts + /api/cron/code-index) — #135
+
+A dedicated cron tick (every 5 minutes, `maxDuration` 240 s) keeps the stable `{owner}/{repo}:src` vector namespace in sync with the repo's source tree by diffing a tree snapshot against the `srcindex:manifest` KV cursor. Single writer via a `SET NX` claim (`srcindex:claim`, 270 s TTL). File **content never reaches logs** — paths and counts only.
+
+| Event | When | Key data |
+|-------|------|----------|
+| `src_index_noop` | Head SHA already fully indexed — fast path, no tree fetch | sha |
+| `src_index_unavailable` | Tick attempted while `UPSTASH_VECTOR_REST_*` is unset — expected degradation, NOT an error | reason (`not_configured`) |
+| `src_index_claim_lost` | Another tick holds the NX claim — benign skip | — |
+| `src_index_tree_truncated` | GitHub truncated the recursive tree listing — tick aborted BEFORE any delete (mass-delete guard) | sha |
+| `src_index_file_skipped` | One file failed to read (or wasn't a file) — skipped, siblings continue; retried next tick because the SHA doesn't advance | path, errorMessage (or reason) |
+| `src_index_degraded` | A vector upsert/delete returned degradation — tick stopped, partial progress persisted in the manifest, SHA untouched | phase (`upsert`/`delete`/`trim`), path or ids |
+| `src_index_tick` | End of every non-noop indexing tick | sha, status (`complete`/`partial`/`degraded`), upserted, deleted, skipped, remaining |
+| `src_index_tick_end` | Route-level summary of the tick's counters | status, upserted, deleted, skipped, remaining |
+| `src_index_tick_failed` | The tick threw (infrastructure/KV error or contract violation; also `Sentry.captureException` tagged `flow: cron_code_index`) | errorMessage |
+| `src_index_unauthorized` | Request without a valid `Bearer $CRON_SECRET` header | — |
+
 ### Error Events (all flows)
 
 Renamed in #125 (previously a single generic `error` event) so severity routing and dashboards can distinguish agent-turn failures from webhook plumbing failures. Any event name containing `error` or `failed` is routed to `console.error` by the logger.
