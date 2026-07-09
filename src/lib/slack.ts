@@ -204,6 +204,9 @@ export interface ThreadMessage {
   user?: string;
   text?: string;
   bot_id?: string;
+  /** Slack message timestamp ("<epoch-sec>.<seq>"). Used by the
+   * recovery sweep's already-answered guard (#125). */
+  ts?: string;
 }
 
 export async function fetchThreadMessages(
@@ -220,6 +223,7 @@ export async function fetchThreadMessages(
       user: m.user,
       text: m.text ?? "",
       bot_id: m.bot_id,
+      ts: m.ts,
     }));
   } catch {
     return [];

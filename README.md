@@ -39,6 +39,7 @@ See the [full setup guide](docs/setup.md) for Slack app creation, GitHub PAT, Ve
 | [Architecture](docs/architecture.md) | Agent loop, tools, system prompt, design decisions |
 | [Contributing](docs/contributing.md) | Fork workflow, TDD, CI, branch protection |
 | [Observability](docs/observability.md) | Structured JSON logs, Sentry integration, event catalog, debugging |
+| [Telemetry](TELEMETRY.md) | Incident response: stable event vocabulary + Sentry query recipes (failure rate, recovery funnel, duplicate suppression) |
 | [Evals](docs/evals.md) | Judge-lite output-contract rubric harness |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues and fixes |
 

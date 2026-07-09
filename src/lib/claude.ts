@@ -524,11 +524,12 @@ export type ProgressCallback = (
 
 /**
  * Per-turn agent options from the effort classifier (#126). claude.ts
- * stays classifier-agnostic — the route resolves the effort bucket via
- * effort-routing.ts and passes only the resulting numbers/label here.
- * Answer-length steering is NOT in this file either: the route appends
- * buildEffortHint() to the user message so the stable system-prompt
- * zone stays byte-identical for prompt caching.
+ * stays classifier-agnostic — the turn runner resolves the effort
+ * bucket via effort-routing.ts and passes only the resulting
+ * numbers/label here. Answer-length steering is NOT in this file
+ * either: the turn runner appends buildEffortHint() to the user
+ * message so the stable system-prompt zone stays byte-identical for
+ * prompt caching.
  */
 export interface RunAgentOptions {
   /** Per-turn tool-round cap. Floored and clamped to [1, MAX_TOOL_ROUNDS]. */
@@ -886,10 +887,19 @@ export async function executeToolsInParallel(
         const result = await exec(block.name, block.input as Record<string, unknown>);
         return { block, result, error: null as string | null };
       } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        // Previously this catch was silent — the error only surfaced to
+        // the MODEL as a tool_result, never to telemetry. #125 makes
+        // tool-dispatch failures a first-class event.
+        ctx.log("tool_call_failed", {
+          tool: block.name,
+          round: ctx.round,
+          errorMessage: errorMessage.slice(0, 200),
+        });
         return {
           block,
           result: null as ToolResult | null,
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessage,
         };
       }
     }),

@@ -42,6 +42,7 @@ npm run dev                  # http://localhost:3000
 src/
   app/
     api/slack/route.ts    — Slack webhook handler (mention, reaction, thread follow-up)
+    api/cron/sweep/route.ts — Recovery sweep (retries turns killed mid-processing)
     page.tsx              — Landing page
   lib/
     slack.ts              — Slack client, signature verification, message helpers
@@ -51,6 +52,9 @@ src/
     feedback.ts           — Feedback storage (Vercel KV) and Q&A context
     issue-batch.ts        — Pure helpers for multi-proposal formatting and bulk-confirm matching
     effort-routing.ts     — Turn classifier (follow-up shouldReply gate + effort buckets → round/answer budgets)
+    idempotency.ts        — Content-addressed idempotent execution (issue creation, #125)
+    recovery.ts           — Processing markers + sweep decisions for died turns (#125)
+    turn-runner.ts        — Mention/follow-up turn bodies (shared by webhook route + sweep)
     config.ts             — .battle-mage.json loader (path annotations with graduated trust)
     repo-index.ts         — Repository topic index (lazy rebuild on SHA change)
     auto-correct.ts       — Stale KB entry detection and doc reference flagging
@@ -84,6 +88,8 @@ docs/
     message-splitting.md  — Long-reply chunking architecture (split-reply + boundary guard)
     issue-creation.md     — Batch issue proposals + bulk-confirm flow
     effort-routing.md     — Fast-model follow-up gate + per-turn effort budgets
+TELEMETRY.md              — Incident-response event vocabulary + Sentry query recipes
+vercel.json               — Vercel Cron schedule for the recovery sweep
 ```
 
 ## Testing (TDD Required)
@@ -115,3 +121,4 @@ npm run test:watch    # Watch mode for development
 | `GITHUB_PAT_BM` | Fine-grained PAT for target repo |
 | `GITHUB_OWNER` | GitHub org/user |
 | `GITHUB_REPO` | Repository name |
+| `CRON_SECRET` | Bearer token for `/api/cron/sweep` (unset = sweep denies all requests) |

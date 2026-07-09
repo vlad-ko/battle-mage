@@ -130,10 +130,13 @@ If you see it anyway, Sentry will have a `SlackMessageOversizeError` with the of
 - **Is `reactions:read` scope granted?** Without this, the bot does not receive `reaction_added` events.
 - **Was the reaction on the bot's message?** The handler verifies that the reacted message was posted by the bot. If someone copies the proposal text into their own message and you react to that, nothing happens.
 - **Does the PAT have Issues (read/write) permission?** Creating issues requires write access. If the PAT only has read access, the API call will fail.
-- **Check Vercel logs**: The error is logged with the message "Battle Mage reaction handler error".
+- **Check Sentry/Vercel logs**: unhandled reaction-handler errors log as `webhook_handler_failed` with `flow: "reaction_checkmark"`.
+- **"already being created by another confirmation"** in the summary reply: a racing confirmation held the idempotency lock for that exact proposal. The other confirmation posts the result — if none arrives within a minute, the lock has expired (60 s TTL) and reacting again will retry safely.
+- **Stuck processing marker / dead sweep**: if the *turn itself* (not just issue creation) died mid-flight — user asked, thinking message appeared, then nothing — the recovery sweep should retry it within ~5 minutes (`recovery_sweep_retried` in the logs) or post a visible failure notice (`recovery_sweep_gave_up`). If neither appears: check that `CRON_SECRET` is set (an unset secret makes the sweep reject every invocation with `recovery_sweep_unauthorized`), that the cron shows up in the Vercel dashboard (it ships in `vercel.json`), and look for `recovery_sweep_complete` heartbeats. Full event vocabulary and the recovery-funnel queries are in [TELEMETRY.md](../TELEMETRY.md).
 
 ## Still Stuck?
 
 1. Check Vercel function logs (Dashboard > your project > Logs)
 2. Check Slack app activity logs (api.slack.com/apps > your app > App Activity Log)
-3. Open a GitHub issue with the `bug` label, including the error message and steps to reproduce
+3. Run the query recipes in [TELEMETRY.md](../TELEMETRY.md) against Sentry Logs (failure rate, recovery funnel, duplicate suppression) — most silent failures show up there
+4. Open a GitHub issue with the `bug` label, including the error message and steps to reproduce

@@ -6,203 +6,33 @@ import {
   replyInThread,
   fetchMessage,
   getBotUserId,
-  fetchThreadMessages,
-  updateMessage,
-  deleteMessage,
-  postReplyInChunks,
 } from "@/lib/slack";
-import { runAgent } from "@/lib/claude";
 import { createIssue } from "@/lib/github";
-import { parseProposalFromMessage, type IssueProposal } from "@/tools/create-issue";
-import {
-  formatBatchProposalMessage,
-  isBulkConfirmText,
-  summarizeBatchResult,
-  type BatchCreationOutcome,
-} from "@/lib/issue-batch";
-import { storeQAContext, getQAContext, saveFeedback, deriveReferenceTypes } from "@/lib/feedback";
-import { formatReferences, rankReferences } from "@/lib/references";
+import { executeIdempotent, issueIdempotencyKey } from "@/lib/idempotency";
+import { parseProposalFromMessage } from "@/tools/create-issue";
+import { getQAContext, saveFeedback } from "@/lib/feedback";
 import { getAllKnowledge } from "@/lib/knowledge";
 import { buildCorrectionActions } from "@/lib/auto-correct";
-import { toSlackMrkdwn } from "@/lib/mrkdwn";
-import { buildThinkingMessage, THINKING_HEADER } from "@/lib/progress";
-import { createThrottledUpdater } from "@/lib/slack-throttle";
-import { formatReplyFooter, isReplyFooterEnabled } from "@/lib/reply-footer";
+import { createRequestLogger, flushLogs } from "@/lib/logger";
+import { isAddressedToOtherUser } from "@/lib/thread-filter";
 import {
-  extractParticipantIds,
-  resolveParticipants,
-  type Participant,
-} from "@/lib/slack-users";
-import { createRequestLogger, flushLogs, type RequestLogger } from "@/lib/logger";
-import { getCachedTopics } from "@/lib/repo-index";
-import { matchTopicsToQuestion, buildQuestionHints } from "@/lib/topic-match";
+  writeProcessingMarker,
+  clearProcessingMarker,
+} from "@/lib/recovery";
 import {
-  isAddressedToOtherUser,
-  buildConversationHistory,
-  extractTranscriptTail,
-} from "@/lib/thread-filter";
-import {
-  classifyTurn,
-  decideEffort,
-  evaluateFollowup,
-  buildEffortHint,
-  EFFORT_BUDGETS,
-} from "@/lib/effort-routing";
+  runMentionTurn,
+  runFollowupTurn,
+  executeBatchCreation,
+  batchTombstoneKey,
+  type PendingCorrection,
+} from "@/lib/turn-runner";
 
-// Shape of the pending-correction record stored under
-// `pending-correction:{channel}:{threadTs}` when a user reacts 👎.
-// Read by the thread-followup handler on the user's next message to
-// save their correction to the KB. @upstash/redis auto-stringifies
-// this on set and auto-parses on get.
-interface PendingCorrection {
-  question: string;
-  references: string[];
-  flaggedKB: string[];
-  pendingAt: number;
-  answerTs: string;
-}
-
-// Shape of the pending-issue-batch record stored after the bot posts a
-// proposal message. Indexed by the proposal message's first TS. See #122.
-interface PendingIssueBatch {
-  proposals: IssueProposal[];
-  proposedAt: number;
-  requestedBy: string; // Slack user ID of the requester
-  threadTs: string;
-  messageFirstTs: string; // ts of the first chunk of the proposal message
-}
-
-const BATCH_KEY_PREFIX = "pending-issue-batch";
-const BATCH_TTL_SEC = 86400; // 24h — stale batches fall off naturally
-// Tombstone TTL: long enough to cover any plausible double-tap ✅ window
-// on a single-proposal message whose body still matches the legacy parser.
-// See PR #123 CodeRabbit finding — without this, a second reaction finds
-// the canonical record deleted, falls to parseProposalFromMessage, and
-// re-creates the issue.
-const BATCH_TOMBSTONE_TTL_SEC = 3600;
-
-function batchKey(channel: string, firstTs: string): string {
-  return `${BATCH_KEY_PREFIX}:${channel}:${firstTs}`;
-}
-function batchThreadPointerKey(channel: string, threadTs: string): string {
-  return `${BATCH_KEY_PREFIX}:thread:${channel}:${threadTs}`;
-}
-function batchTombstoneKey(channel: string, firstTs: string): string {
-  return `${BATCH_KEY_PREFIX}:done:${channel}:${firstTs}`;
-}
-
-/**
- * Atomically claim and execute a pending issue batch.
- *
- * Concurrency: the claim uses `kv.del` on the canonical key — Redis
- * DEL is atomic, so only the first caller sees `deleted === 1`. Any
- * racing handler (a second reaction, or a racing text command) sees
- * `0` and aborts without firing GitHub writes.
- *
- * Per-issue failures do not abort the rest: we use Promise.allSettled
- * and surface both creates and errors in the final summary.
- */
-async function executeBatchCreation(
-  channel: string,
-  threadTs: string,
-  firstTs: string,
-  confirmingUser: string,
-  confirmVia: "reaction" | "text",
-  rlog: RequestLogger,
-): Promise<{ claimed: boolean }> {
-  const { kv } = await import("@/lib/kv");
-  const primaryKey = batchKey(channel, firstTs);
-
-  // Read the batch before claiming so we have the data to create issues
-  // if we win the del race.
-  const batch = await kv.get<PendingIssueBatch>(primaryKey);
-  if (!batch) {
-    return { claimed: false };
-  }
-
-  const deleted = await kv.del(primaryKey);
-  if (deleted === 0) {
-    // Another handler won the race between get and del.
-    rlog("issue_batch_claim_lost", { channel, firstTs, confirmVia });
-    return { claimed: false };
-  }
-
-  // Tombstone the claim so a second ✅ on the same message can't fall
-  // through to the legacy parser and re-create the issue. The legacy
-  // fallback checks this before parsing message text. 1h is enough for
-  // any plausible double-tap; long-lived record stays under the canonical
-  // 24h TTL of the original batch.
-  try {
-    await kv.set(batchTombstoneKey(channel, firstTs), 1, {
-      ex: BATCH_TOMBSTONE_TTL_SEC,
-    });
-  } catch {
-    // Non-fatal; Sentry already captured via the kv wrapper. Worst case
-    // a racing second reaction takes the legacy path.
-  }
-
-  // Best-effort cleanup of the thread pointer. We don't care if it was
-  // already removed — TTL would catch it anyway.
-  try {
-    await kv.del(batchThreadPointerKey(channel, threadTs));
-  } catch {
-    // Non-fatal; Sentry already captured via the kv wrapper.
-  }
-
-  rlog("issue_batch_confirmed", {
-    count: batch.proposals.length,
-    confirmVia,
-    confirmingUser,
-    requestedBy: batch.requestedBy,
-    latencyMs: Date.now() - batch.proposedAt,
-    channel,
-    threadTs,
-  });
-
-  const createStart = Date.now();
-  const settled = await Promise.allSettled(
-    batch.proposals.map((p) => createIssue(p.title, p.body, p.labels)),
-  );
-
-  const outcomes: BatchCreationOutcome[] = settled.map((res, i) => {
-    const proposal = batch.proposals[i];
-    if (res.status === "fulfilled") {
-      return { status: "success", proposal, issue: res.value };
-    }
-    const errorMessage =
-      res.reason instanceof Error ? res.reason.message : String(res.reason);
-    // Per-issue Sentry capture so a rate-limit spike on one title doesn't
-    // hide under the summary event. Tagged for dashboard filtering.
-    Sentry.captureException(res.reason, {
-      tags: { flow: "issue_create", batchSize: String(batch.proposals.length) },
-      extra: { proposalTitle: proposal.title },
-    });
-    rlog("issue_create_error", {
-      title: proposal.title,
-      errorClass:
-        res.reason instanceof Error ? res.reason.constructor.name : "Unknown",
-      errorMessage: errorMessage.slice(0, 200),
-    });
-    return { status: "error", proposal, errorMessage };
-  });
-
-  const successCount = outcomes.filter((o) => o.status === "success").length;
-  const failureCount = outcomes.length - successCount;
-  rlog("issue_batch_created", {
-    totalCount: outcomes.length,
-    successCount,
-    failureCount,
-    durationMs: Date.now() - createStart,
-    numbers: outcomes
-      .filter((o) => o.status === "success")
-      .map((o) => (o as Extract<BatchCreationOutcome, { status: "success" }>).issue.number),
-    channel,
-    threadTs,
-  });
-
-  await replyInThread(channel, threadTs, summarizeBatchResult(outcomes));
-  return { claimed: true };
-}
+// Give the after() bodies the full Fluid-compute budget. Next.js reads
+// this statically, so it must be a literal — SLACK_ROUTE_MAX_DURATION_SEC
+// in src/lib/recovery.ts mirrors it and the recovery tests pin the
+// invariant PROCESSING_MAX_AGE_MS > maxDuration (a marker older than
+// max-age cannot belong to a live invocation). Keep the two in sync.
+export const maxDuration = 300;
 
 /**
  * Slack Events API webhook handler.
@@ -213,6 +43,15 @@ async function executeBatchCreation(
  *
  * Slack requires a 200 OK within 3 seconds. We ack immediately
  * and process the AI + GitHub calls asynchronously via after().
+ *
+ * Recovery (#125): the FIRST step of each after() body persists a
+ * ProcessingMarker; the after() finally clears it. A finally covers
+ * every handled error path — only container death leaves a marker
+ * behind, and the cron sweep (/api/cron/sweep) retries exactly that
+ * set via the same turn-runner code path. The write lives INSIDE
+ * after(), never on the ack path: two KV round-trips before the 200 OK
+ * could breach Slack's 3-second deadline under KV slowness, triggering
+ * Slack retries and duplicate processing (PR #133 review).
  */
 export async function POST(request: NextRequest) {
   const rlog = createRequestLogger();
@@ -260,205 +99,34 @@ export async function POST(request: NextRequest) {
     // reach Vercel's log drain — see #90. Every after() block below ends
     // with `await flushLogs(rlog, "<flow>")` inside its finally clause.
     after(async () => {
-      // Hoist thinkingTs so finally can always clean it up
-      let thinkingTs: string | undefined;
       try {
-        // Post thinking message and capture its ts for live updates
-        thinkingTs = await replyInThread(
-          channel, threadTs,
-          THINKING_HEADER,
-        );
-
-        const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
-
-        // Thread participants for #80: resolve user IDs to display names
-        // so the agent can @-mention correctly. Populated for BOTH fresh
-        // mentions (participants = invoking user + anyone they mentioned)
-        // and thread follow-ups (all thread authors + anyone mentioned).
-        let mentionHistory: { role: "user" | "assistant"; content: string }[] | undefined;
-        let mentionParticipants: Participant[] | undefined;
-        // Recent-thread tail for the effort classifier — empty for fresh
-        // top-level mentions (the question alone is enough to bucket).
-        let mentionTranscript = "";
-        const botId = await getBotUserId();
-        if (event.thread_ts) {
-          const threadMsgs = await fetchThreadMessages(channel, threadTs);
-          if (botId) {
-            mentionHistory = buildConversationHistory(threadMsgs, botId);
-          }
-          mentionTranscript = extractTranscriptTail(threadMsgs, botId ?? "");
-          const ids = extractParticipantIds(threadMsgs, botId);
-          if (ids.length > 0) {
-            mentionParticipants = await resolveParticipants(ids);
-          }
-        } else {
-          // Fresh top-level mention — the only participant signal is the
-          // invoking user + anyone they mentioned in the message body.
-          const ids = extractParticipantIds(
-            [{ user: event.user, text: userMessage }],
-            botId,
-          );
-          if (ids.length > 0) {
-            mentionParticipants = await resolveParticipants(ids);
-          }
-        }
-
-        // Pre-match question against topic index for concrete file hints.
-        // The effort classifier (#126) runs in parallel — on the mention
-        // path shouldReply is NEVER consulted (the user explicitly invoked
-        // the bot); the classifier only buckets the question so the agent
-        // gets a right-sized round budget and answer target.
-        const [topics, mentionClassification] = await Promise.all([
-          getCachedTopics(),
-          classifyTurn(
-            { invocation: "mention", transcript: mentionTranscript, question: cleanMessage },
-            { log: rlog },
-          ),
-        ]);
-        const mentionEffort = decideEffort(mentionClassification);
-        const topicMatches = matchTopicsToQuestion(cleanMessage, topics);
-        const augmentedMessage =
-          buildQuestionHints(cleanMessage, topicMatches) + buildEffortHint(mentionEffort);
-        if (topicMatches.length > 0) {
-          rlog("topic_hints_injected", { topics: topicMatches.map((m) => m.topic), fileCount: topicMatches.reduce((s, m) => s + m.paths.length, 0) });
-        }
-
-        // Tool-progress updater. Per #110 review: the streaming flood
-        // from #109 was character-level text deltas, NOT tool-progress
-        // messages. Tool progress at ~1 call per tool round (debounced
-        // to coalesce parallel bursts) is 5-7 calls per turn — well
-        // under Slack's 30/min Tier 2 limit and genuinely informative
-        // for the user. Re-introducing it WITHOUT streaming.
-        const progressThrottle = createThrottledUpdater(async (text) => {
-          if (thinkingTs) {
-            await updateMessage(channel, thinkingTs, text);
-          }
-        }, 1200);
-
-        const result = await runAgent(
-          augmentedMessage,
-          mentionHistory,
-          rlog,
-          mentionParticipants,
-          (toolName, input) => {
-            progressThrottle.update(buildThinkingMessage(toolName, input));
-          },
-          { maxRounds: EFFORT_BUDGETS[mentionEffort].maxRounds, effort: mentionEffort },
-        );
-        // Drain any pending progress update before the final write so a
-        // stale progress message can't land on top of the final answer.
-        await progressThrottle.flush();
-        // `agent_complete` is already emitted by runAgent with rounds,
-        // token usage, and cache metrics — don't duplicate at route level.
-
-        const text = toSlackMrkdwn(result.text);
-        const rankedRefs = rankReferences(result.references, result.text);
-        const refsFooter = formatReferences(rankedRefs);
-        // Optional compact telemetry footer (#79). Disabled by default;
-        // enable with BM_REPLY_FOOTER=1 in the Vercel env.
-        const replyFooter = isReplyFooterEnabled(process.env)
-          ? formatReplyFooter(result.metrics, rlog.requestId)
-          : "";
-
-        if (result.issueProposals.length > 0) {
-          const proposals = result.issueProposals;
-          const proposalBlock = formatBatchProposalMessage(proposals);
-          const finalBody = [text, "", proposalBlock].join("\n") + refsFooter + replyFooter;
-
-          const posted = await postReplyInChunks({
-            channel,
-            threadTs,
-            thinkingTs,
-            text: finalBody,
-          });
-          // Only mark as finalized when we actually posted. A 0-chunk
-          // result (empty body) falls through to the finally cleanup.
-          if (posted.chunks > 0) thinkingTs = undefined;
-
-          // Persist the batch so confirmation (reaction OR thread text)
-          // can create without re-parsing Slack message text. Key is the
-          // first chunk's ts; thread pointer enables "confirm all" text.
-          if (posted.firstTs) {
-            const { kv } = await import("@/lib/kv");
-            const record: PendingIssueBatch = {
-              proposals,
-              proposedAt: Date.now(),
-              requestedBy: event.user,
-              threadTs,
-              messageFirstTs: posted.firstTs,
-            };
-            await kv.set(batchKey(channel, posted.firstTs), record, { ex: BATCH_TTL_SEC });
-            await kv.set(
-              batchThreadPointerKey(channel, threadTs),
-              posted.firstTs,
-              { ex: BATCH_TTL_SEC },
-            );
-            rlog("issue_batch_proposed", {
-              count: proposals.length,
-              threadTs,
-              channel,
-              firstTs: posted.firstTs,
-              sampleTitles: proposals.slice(0, 3).map((p) => p.title.slice(0, 80)),
-              requestingUser: event.user,
-            });
-          }
-          rlog("answer_posted", {
-            channel,
-            threadTs,
-            chunks: posted.chunks,
-            kind: "proposal",
-            proposalCount: proposals.length,
-          });
-        } else {
-          const finalBody = text + refsFooter + replyFooter;
-          const posted = await postReplyInChunks({
-            channel,
-            threadTs,
-            thinkingTs,
-            text: finalBody,
-          });
-          if (posted.chunks > 0) thinkingTs = undefined;
-          rlog("answer_posted", { channel, threadTs, chunks: posted.chunks });
-
-          // Store Q&A context for EVERY chunk ts (see #114). Reactions
-          // on any chunk resolve to the same question/answer pair.
-          if (posted.firstTs && posted.allTs.length > 0) {
-            const postedAt = Date.now();
-            const referenceTypes = deriveReferenceTypes(result.references);
-            await Promise.all(
-              posted.allTs.map((ts, chunkIndex) =>
-                storeQAContext(channel, ts, {
-                  question: cleanMessage,
-                  answer: result.text.slice(0, 500),
-                  references: result.references.map((r) => r.label),
-                  answerTs: posted.firstTs!,
-                  chunkIndex,
-                  chunkCount: posted.chunks,
-                  postedAt,
-                  referenceTypes,
-                }),
-              ),
-            );
-          }
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        rlog("error", { flow: "mention", message: msg });
-        // Also capture as a Sentry Issue so the stack trace surfaces
-        // in the dashboard — `rlog` alone produces a Log entry without
-        // a stack, which is how #100 stayed a mystery (we knew the
-        // error message but not what line in the after() body threw it).
-        Sentry.captureException(err, { tags: { flow: "mention" } });
-        await replyInThread(
+        // Recovery marker (#125): written best-effort as the FIRST step
+        // of the async body — kept off the ack path so KV latency can
+        // never push the 200 OK past Slack's 3-second deadline (PR #133
+        // review). Accepted trade: a container death in the tiny window
+        // between the ack and this write loses recovery for that turn.
+        await writeProcessingMarker({
+          eventType: "app_mention",
           channel,
           threadTs,
-          `Something went wrong while processing your request. Error: ${msg}`,
-        );
+          user: event.user,
+          text: userMessage,
+          startedAt: Date.now(),
+          attempt: 0,
+          requestId: rlog.requestId,
+        });
+        await runMentionTurn({
+          channel,
+          threadTs,
+          user: event.user,
+          text: userMessage,
+          inThread: !!event.thread_ts,
+          rlog,
+        });
       } finally {
-        // Safety net: delete thinking message if it wasn't cleaned up
-        if (thinkingTs) {
-          await deleteMessage(channel, thinkingTs);
-        }
+        // Handled errors reach here too — only container death skips
+        // this clear, which is exactly the set the sweep recovers.
+        await clearProcessingMarker(channel, threadTs);
         // Yield so Vercel captures the after() block's logs — see #90.
         await flushLogs(rlog, "mention");
       }
@@ -492,281 +160,29 @@ export async function POST(request: NextRequest) {
     rlog("thread_followup_start", { channel, threadTs, user: event.user, question: userMessage.slice(0, 100) });
 
     after(async () => {
-      let thinkTs: string | undefined;
       try {
-        // Check for pending correction (from a 👎 reaction)
-        const { kv } = await import("@/lib/kv");
-        const pendingKey = `pending-correction:${channel}:${threadTs}`;
-        const pending = await kv.get<PendingCorrection>(pendingKey);
-        if (pending) {
-          // This reply is a correction — save directly to KB
-          const { saveKnowledgeEntry, markKnowledgeSuperseded } = await import(
-            "@/lib/knowledge"
-          );
-
-          // Strip @-mentions and trim, matching the normalization used
-          // for questions, so raw Slack tokens don't end up in the KB.
-          const correctionText = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
-          const correctionId = await saveKnowledgeEntry(correctionText);
-
-          // Clear the pending state as soon as the correction is durably
-          // saved — everything after this point is best-effort. If a later
-          // step throws, the error reply must NOT leave pending state
-          // behind, or the user's re-reply would save a duplicate entry.
-          await kv.del(pendingKey);
-
-          // Retire the KB entries flagged at 👎 time: mark them superseded
-          // by the correction instead of leaving them visible (or deleting
-          // them and losing history). Text-matched; entries already
-          // superseded or archived in the meantime are skipped. See #124.
-          let supersededCount = 0;
-          try {
-            for (const flaggedText of pending.flaggedKB) {
-              if (await markKnowledgeSuperseded(flaggedText, correctionId)) {
-                supersededCount++;
-              }
-            }
-          } catch (err) {
-            // Correction is saved; a KV flake while retiring old entries
-            // must not fail the flow. Worst case a stale entry stays
-            // visible — observable via the count on correction_saved.
-            rlog("correction_supersede_error", {
-              channel,
-              threadTs,
-              message: err instanceof Error ? err.message : String(err),
-            });
-          }
-
-          // Save the negative feedback NOW with the actual correction text
-          await saveFeedback({
-            type: "negative",
-            question: pending.question || "",
-            detail: `Correction: "${correctionText.slice(0, 200)}"`,
-            timestamp: new Date().toISOString().split("T")[0],
-          });
-          // Close the 👎 → correction funnel with latency from the
-          // moment 👎 was registered.
-          rlog("correction_saved", {
-            channel,
-            threadTs,
-            answerTs: pending.answerTs ?? null,
-            correctionLength: correctionText.length,
-            timeSincePendingMs: Date.now() - pending.pendingAt,
-            flaggedKBCount: pending.flaggedKB.length,
-            supersededCount,
-            correctionSample: correctionText.slice(0, 100),
-          });
-
-          await replyInThread(
-            channel,
-            threadTs,
-            `:white_check_mark: Saved to knowledge base: _"${correctionText.slice(0, 100)}"_`,
-          );
-          return;
-        }
-
-        // ── Bulk-confirm interception (#122) ────────────────────────────
-        // If there's a pending issue batch in this thread AND the user's
-        // reply is a bulk-confirm phrase ("confirm all", "yes", etc.),
-        // create all issues instead of running the agent. `isBulkConfirmText`
-        // is strict (short intent-only phrases) so normal conversation is
-        // unaffected.
-        if (isBulkConfirmText(userMessage)) {
-          const pointerKey = batchThreadPointerKey(channel, threadTs);
-          const batchFirstTs = await kv.get<string>(pointerKey);
-          if (batchFirstTs) {
-            const outcome = await executeBatchCreation(
-              channel,
-              threadTs,
-              batchFirstTs,
-              event.user,
-              "text",
-              rlog,
-            );
-            if (outcome.claimed) return;
-            // Not claimed → either the batch expired or another handler
-            // consumed it. Fall through to the normal agent flow so the
-            // user still gets a response.
-          }
-        }
-
-        // Fetch thread messages — used for both participation check and context
-        const bid = botId || (await getBotUserId());
-        const threadMessages = await fetchThreadMessages(channel, threadTs);
-        const botInThread = bid ? threadMessages.some((m) => m.user === bid) : false;
-        if (!bid || !botInThread) return;
-
-        const cleanMessage = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
-
-        // Follow-up gate (#126): the structural heuristic above only says
-        // "maybe" — ask the fast-model classifier whether this message is
-        // actually addressed to the bot. Fail-closed: any classifier
-        // error/timeout/low-confidence verdict means we stay silent. Runs
-        // BEFORE the thinking message so a decline produces ZERO Slack
-        // writes — just the log event below.
-        const followupEval = await evaluateFollowup(
-          {
-            invocation: "followup",
-            transcript: extractTranscriptTail(threadMessages, bid),
-            question: cleanMessage,
-          },
-          { log: rlog },
-        );
-        if (!followupEval.proceed) {
-          rlog("followup_reply_declined", {
-            reason:
-              followupEval.decision === null
-                ? "classifier_unavailable"
-                : followupEval.decision.shouldReply
-                  ? "low_confidence"
-                  : "not_addressed",
-            confidence: followupEval.decision?.shouldReplyConfidence ?? null,
-            channel,
-            threadTs,
-          });
-          return;
-        }
-        rlog("followup_agent_start", { channel, threadTs });
-
-        thinkTs = await replyInThread(
-          channel, threadTs,
-          THINKING_HEADER,
-        );
-
-        // Build proper multi-turn conversation history from thread
-        // (uses Anthropic's native message format, not string hacking)
-        const history = buildConversationHistory(threadMessages, bid);
-
-        // Thread participants for #80 — resolve IDs now so the agent can
-        // @-mention teammates in its answer.
-        const followupParticipantIds = extractParticipantIds(threadMessages, bid);
-        const followupParticipants = followupParticipantIds.length > 0
-          ? await resolveParticipants(followupParticipantIds)
-          : undefined;
-
-        // Pre-match for thread follow-ups too; the effort hint from the
-        // classifier rides along on the user message (never the system
-        // prompt — see effort-routing.ts on prompt caching).
-        const followupTopics = await getCachedTopics();
-        const followupMatches = matchTopicsToQuestion(cleanMessage, followupTopics);
-        const followupMessage =
-          buildQuestionHints(cleanMessage, followupMatches) + buildEffortHint(followupEval.effort);
-
-        // Mirror of the mention-flow progress updater — see comment
-        // there + #110 for rationale.
-        const followupProgress = createThrottledUpdater(async (text) => {
-          if (thinkTs) {
-            await updateMessage(channel, thinkTs, text);
-          }
-        }, 1200);
-
-        const result = await runAgent(
-          followupMessage,
-          history,
-          rlog,
-          followupParticipants,
-          (toolName, input) => {
-            followupProgress.update(buildThinkingMessage(toolName, input));
-          },
-          { maxRounds: EFFORT_BUDGETS[followupEval.effort].maxRounds, effort: followupEval.effort },
-        );
-        await followupProgress.flush();
-
-        const text = toSlackMrkdwn(result.text);
-        const rankedRefs = rankReferences(result.references, result.text);
-        const refsFooter = formatReferences(rankedRefs);
-        // Optional compact telemetry footer (#79) — mirrors the mention flow.
-        const replyFooter = isReplyFooterEnabled(process.env)
-          ? formatReplyFooter(result.metrics, rlog.requestId)
-          : "";
-
-        if (result.issueProposals.length > 0) {
-          const proposals = result.issueProposals;
-          const proposalBlock = formatBatchProposalMessage(proposals);
-          const finalBody = [text, "", proposalBlock].join("\n") + refsFooter + replyFooter;
-
-          const posted = await postReplyInChunks({
-            channel,
-            threadTs,
-            thinkingTs: thinkTs,
-            text: finalBody,
-          });
-          if (posted.chunks > 0) thinkTs = undefined;
-
-          if (posted.firstTs) {
-            const record: PendingIssueBatch = {
-              proposals,
-              proposedAt: Date.now(),
-              requestedBy: event.user,
-              threadTs,
-              messageFirstTs: posted.firstTs,
-            };
-            await kv.set(batchKey(channel, posted.firstTs), record, { ex: BATCH_TTL_SEC });
-            await kv.set(
-              batchThreadPointerKey(channel, threadTs),
-              posted.firstTs,
-              { ex: BATCH_TTL_SEC },
-            );
-            rlog("issue_batch_proposed", {
-              count: proposals.length,
-              threadTs,
-              channel,
-              firstTs: posted.firstTs,
-              sampleTitles: proposals.slice(0, 3).map((p) => p.title.slice(0, 80)),
-              requestingUser: event.user,
-            });
-          }
-          rlog("answer_posted", {
-            channel,
-            threadTs,
-            chunks: posted.chunks,
-            kind: "proposal",
-            proposalCount: proposals.length,
-          });
-        } else {
-          const finalBody = text + refsFooter + replyFooter;
-          const posted = await postReplyInChunks({
-            channel,
-            threadTs,
-            thinkingTs: thinkTs,
-            text: finalBody,
-          });
-          if (posted.chunks > 0) thinkTs = undefined;
-          rlog("answer_posted", { channel, threadTs, chunks: posted.chunks });
-
-          if (posted.firstTs && posted.allTs.length > 0) {
-            const postedAt = Date.now();
-            const referenceTypes = deriveReferenceTypes(result.references);
-            await Promise.all(
-              posted.allTs.map((ts, chunkIndex) =>
-                storeQAContext(channel, ts, {
-                  question: cleanMessage,
-                  answer: result.text.slice(0, 500),
-                  references: result.references.map((r) => r.label),
-                  answerTs: posted.firstTs!,
-                  chunkIndex,
-                  chunkCount: posted.chunks,
-                  postedAt,
-                  referenceTypes,
-                }),
-              ),
-            );
-          }
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        rlog("error", { flow: "thread_followup", message: msg });
-        Sentry.captureException(err, { tags: { flow: "thread_followup" } });
-        await replyInThread(
+        // Recovery marker (#125) — mirrors the mention flow: first step
+        // inside after(), off the ack path (PR #133 review).
+        await writeProcessingMarker({
+          eventType: "thread_followup",
           channel,
           threadTs,
-          `Something went wrong while processing your request. Error: ${msg}`,
-        );
+          user: event.user,
+          text: userMessage,
+          startedAt: Date.now(),
+          attempt: 0,
+          requestId: rlog.requestId,
+        });
+        await runFollowupTurn({
+          channel,
+          threadTs,
+          user: event.user,
+          text: userMessage,
+          botId,
+          rlog,
+        });
       } finally {
-        // Safety net: delete thinking message if it wasn't cleaned up
-        if (thinkTs) {
-          await deleteMessage(channel, thinkTs);
-        }
+        await clearProcessingMarker(channel, threadTs);
         await flushLogs(rlog, "thread_followup");
       }
     });
@@ -831,11 +247,26 @@ export async function POST(request: NextRequest) {
         const proposal = parseProposalFromMessage(msg.text);
         if (!proposal) return; // Not a proposal message — ignore
 
-        const issue = await createIssue(
-          proposal.title,
-          proposal.body,
-          proposal.labels,
+        // Idempotency guard (#125): a double-tap ✅ past the tombstone
+        // window, or a Slack event redelivery, re-reaches this parser.
+        // The content-addressed key (labels: undefined ≡ []) replays the
+        // recorded issue instead of creating a duplicate.
+        const idem = await executeIdempotent(
+          issueIdempotencyKey({
+            title: proposal.title,
+            body: proposal.body,
+            labels: proposal.labels,
+          }),
+          () => createIssue(proposal.title, proposal.body, proposal.labels),
+          rlog,
         );
+        if (idem.outcome === "in_flight") {
+          // A racing confirmation is creating this exact issue right
+          // now — it will post the success reply. Stay silent.
+          rlog("issue_create_in_flight", { via: "legacy_parser", channel, messageTs });
+          return;
+        }
+        const issue = idem.result;
         rlog("issue_created", { number: issue.number, via: "legacy_parser" });
         await replyInThread(
           channel,
@@ -844,7 +275,7 @@ export async function POST(request: NextRequest) {
         );
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : "Unknown error";
-        rlog("error", { flow: "reaction_checkmark", message: errMsg });
+        rlog("webhook_handler_failed", { flow: "reaction_checkmark", message: errMsg });
         Sentry.captureException(err, { tags: { flow: "reaction_checkmark" } });
         // Best-effort reply — use thread_ts if available
         try {
@@ -944,7 +375,7 @@ export async function POST(request: NextRequest) {
           rlog("feedback_ack_failed", { reason, chunkTs: messageTs, errMsg: errMsg.slice(0, 120) });
         }
       } catch (err) {
-        rlog("error", { flow: "reaction_thumbsup", message: err instanceof Error ? err.message : String(err) });
+        rlog("webhook_handler_failed", { flow: "reaction_thumbsup", message: err instanceof Error ? err.message : String(err) });
         Sentry.captureException(err, { tags: { flow: "reaction_thumbsup" } });
       } finally {
         await flushLogs(rlog, "reaction_thumbsup");
@@ -1064,7 +495,7 @@ export async function POST(request: NextRequest) {
           `:thinking_face: Thanks for the feedback.${flagText}\n\nWhat was wrong? Reply here and I'll save the correction.`,
         );
       } catch (err) {
-        rlog("error", { flow: "reaction_thumbsdown", message: err instanceof Error ? err.message : String(err) });
+        rlog("webhook_handler_failed", { flow: "reaction_thumbsdown", message: err instanceof Error ? err.message : String(err) });
         Sentry.captureException(err, { tags: { flow: "reaction_thumbsdown" } });
       } finally {
         await flushLogs(rlog, "reaction_thumbsdown");
