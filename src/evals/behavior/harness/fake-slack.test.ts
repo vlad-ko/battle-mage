@@ -44,4 +44,48 @@ describe("createFakeSlack", () => {
     const info = await f.client.users.info({ user: "U0VJK" });
     expect(info.user?.profile?.display_name ?? info.user?.real_name).toBe("vlad");
   });
+
+  // Qodo finding #2 on PR #140: production fetchMessage() calls
+  // conversations.replies with {ts, inclusive: true, limit: 1} and relies
+  // on messages[0] being the TARGET message — Slack semantics the fake
+  // must honor. Generic limit is "first N of the thread, oldest first".
+  describe("conversations.replies inclusive/limit semantics", () => {
+    it("inclusive:true + limit:1 returns exactly the mid-thread target message", async () => {
+      const f = createFakeSlack(seed);
+      const a = await f.client.chat.postMessage({ channel: "C0DEV", thread_ts: "1751371200.000100", text: "one" });
+      await f.client.chat.postMessage({ channel: "C0DEV", thread_ts: "1751371200.000100", text: "two" });
+      const r = await f.client.conversations.replies({
+        channel: "C0DEV",
+        ts: a.ts!,
+        inclusive: true,
+        limit: 1,
+      });
+      expect(r.messages).toHaveLength(1);
+      expect(r.messages![0].ts).toBe(a.ts);
+      expect(r.messages![0].text).toBe("one");
+    });
+
+    it("inclusive:true + limit:1 with an unknown ts returns an empty list", async () => {
+      const f = createFakeSlack(seed);
+      const r = await f.client.conversations.replies({
+        channel: "C0DEV",
+        ts: "9999999999.000001",
+        inclusive: true,
+        limit: 1,
+      });
+      expect(r.messages).toEqual([]);
+    });
+
+    it("a generic limit returns the first N thread messages, oldest first", async () => {
+      const f = createFakeSlack(seed);
+      await f.client.chat.postMessage({ channel: "C0DEV", thread_ts: "1751371200.000100", text: "one" });
+      await f.client.chat.postMessage({ channel: "C0DEV", thread_ts: "1751371200.000100", text: "two" });
+      const r = await f.client.conversations.replies({
+        channel: "C0DEV",
+        ts: "1751371200.000100",
+        limit: 2,
+      });
+      expect(r.messages!.map((m) => m.text)).toEqual(["<@U0BM> hello", "one"]);
+    });
+  });
 });

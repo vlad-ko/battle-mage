@@ -151,10 +151,20 @@ export function createFakeSlack(seed: FakeSlackSeed): FakeSlack {
     conversations: {
       async replies(args) {
         record("conversations.replies", { ...args });
-        return {
-          ok: true,
-          messages: threadOf(args.ts).map((m) => ({ ...m })),
-        };
+        // fetchMessage() contract (src/lib/slack.ts): {ts, inclusive:
+        // true, limit: 1} returns the TARGET message itself as
+        // messages[0] — or nothing when the ts doesn't exist.
+        if (args.inclusive === true && args.limit === 1) {
+          const target = messages.find((m) => m.ts === args.ts);
+          return { ok: true, messages: target ? [{ ...target }] : [] };
+        }
+        // Generic case: whole thread oldest-first, capped at limit
+        // (Slack returns the oldest messages first for replies).
+        let thread = threadOf(args.ts).map((m) => ({ ...m }));
+        if (typeof args.limit === "number") {
+          thread = thread.slice(0, args.limit);
+        }
+        return { ok: true, messages: thread };
       },
     },
     users: {

@@ -46,15 +46,19 @@ import {
   type Cassette,
   type CassetteEntry,
   type CassetteMatcher,
-  type AnthropicMessageLike,
   createCassetteMatcher,
   requestHash,
-  stripAnthropicVolatile,
   summarizeRequest,
   assertRecordAllowed,
+  toPlainJson,
+  errorFromCassetteEntry,
   RECORD_BLOCKLISTED_GITHUB_FNS,
   syntheticCreateIssueResponse,
 } from "./cassette";
+import {
+  createAnthropicBoundary,
+  type AnthropicClientLike,
+} from "./anthropic-boundary";
 import { assertThreadOnly, isSlackWrite } from "./contracts";
 
 // Anchors that identify a proposal post (see src/lib/issue-batch.ts).
@@ -123,18 +127,6 @@ export interface ScenarioSpec {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
-
-/** JSON round-trip: SDK response objects → plain serializable data. */
-function toPlain<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function errorFromEntry(entry: CassetteEntry): Error {
-  const err = new Error(entry.error!.message) as Error & { status?: number };
-  err.name = entry.error!.name;
-  if (entry.error!.status !== undefined) err.status = entry.error!.status;
-  return err;
-}
 
 function assertEnUsLocale(): void {
   const rendered = (1200).toLocaleString();
@@ -267,56 +259,34 @@ export async function runScenario(spec: ScenarioSpec): Promise<ScenarioWorld> {
   };
 
   // ── Anthropic boundary (covers all three module singletons) ────────
-  interface AnthropicClientLike {
-    messages: { create: (params: never) => Promise<unknown> };
-  }
+  // Two-argument contract: production passes `{ signal }` as options —
+  // see anthropic-boundary.ts. Matching is on params only; record mode
+  // forwards options to the real SDK so timeout aborts hold.
   let realAnthropic: AnthropicClientLike | null = null;
-  const anthropicCreate = async (params: unknown): Promise<unknown> => {
-    const request = toPlain(params);
-    if (mode === "replay") {
-      const entry = matcher!.match("anthropic", request);
-      if (entry.error) throw errorFromEntry(entry);
-      return structuredClone(entry.response);
-    }
-    const override = spec.recordOverrides?.find(
-      (o) => o.boundary === "anthropic" && o.when(request),
-    );
-    if (override) {
-      const response = stripAnthropicVolatile(
-        toPlain(override.response) as AnthropicMessageLike,
-      );
-      pushEntry("anthropic", request, { response, synthetic: true });
-      return structuredClone(response);
-    }
-    if (!realAnthropic) {
-      const sdk = await vi.importActual<{ default: new () => AnthropicClientLike }>(
-        "@anthropic-ai/sdk",
-      );
-      realAnthropic = new sdk.default();
-    }
-    try {
-      const raw = await realAnthropic.messages.create(params as never);
-      const response = stripAnthropicVolatile(toPlain(raw) as AnthropicMessageLike);
-      pushEntry("anthropic", request, { response, synthetic: false });
-      return structuredClone(response);
-    } catch (err) {
-      const e = err as Error & { status?: number };
-      pushEntry("anthropic", request, {
-        error: { name: e.name, message: e.message, status: e.status },
-        synthetic: false,
-      });
-      throw err;
-    }
-  };
+  const anthropicCreate = createAnthropicBoundary({
+    mode,
+    matcher,
+    overrides: spec.recordOverrides?.filter((o) => o.boundary === "anthropic"),
+    pushEntry: (request, outcome) => pushEntry("anthropic", request, outcome),
+    getRealClient: async () => {
+      if (!realAnthropic) {
+        const sdk = await vi.importActual<{ default: new () => AnthropicClientLike }>(
+          "@anthropic-ai/sdk",
+        );
+        realAnthropic = new sdk.default();
+      }
+      return realAnthropic;
+    },
+  });
 
   // ── GitHub boundary (semantic entries; createIssue blocklisted) ────
   let syntheticIssueNumber = 9000;
   const githubDispatch = async (fn: string, args: unknown[]): Promise<unknown> => {
     githubCalls.push({ fn, args });
-    const request = { fn, args: toPlain(args) };
+    const request = { fn, args: toPlainJson(args) };
     if (mode === "replay") {
       const entry = matcher!.match("github", request);
-      if (entry.error) throw errorFromEntry(entry);
+      if (entry.error) throw errorFromCassetteEntry(entry);
       return structuredClone(entry.response);
     }
     if (RECORD_BLOCKLISTED_GITHUB_FNS.has(fn)) {
@@ -333,7 +303,7 @@ export async function runScenario(spec: ScenarioSpec): Promise<ScenarioWorld> {
       "@/lib/github",
     );
     try {
-      const response = toPlain(await actual[fn](...args));
+      const response = toPlainJson(await actual[fn](...args));
       pushEntry("github", request, { response, synthetic: false });
       return response;
     } catch (err) {
@@ -362,7 +332,7 @@ export async function runScenario(spec: ScenarioSpec): Promise<ScenarioWorld> {
   vi.doMock("@anthropic-ai/sdk", () => ({
     default: class {
       messages = {
-        create: (params: unknown, _options?: unknown) => anthropicCreate(params),
+        create: (params: unknown, options?: unknown) => anthropicCreate(params, options),
       };
     },
   }));
