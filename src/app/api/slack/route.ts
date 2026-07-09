@@ -472,36 +472,67 @@ export async function POST(request: NextRequest) {
         const pending = await kv.get<PendingCorrection>(pendingKey);
         if (pending) {
           // This reply is a correction — save directly to KB
-          const { saveKnowledgeEntry } = await import("@/lib/knowledge");
+          const { saveKnowledgeEntry, markKnowledgeSuperseded } = await import(
+            "@/lib/knowledge"
+          );
 
-          await saveKnowledgeEntry(userMessage);
+          // Strip @-mentions and trim, matching the normalization used
+          // for questions, so raw Slack tokens don't end up in the KB.
+          const correctionText = userMessage.replace(/<@[A-Z0-9]+>/g, "").trim();
+          const correctionId = await saveKnowledgeEntry(correctionText);
+
+          // Clear the pending state as soon as the correction is durably
+          // saved — everything after this point is best-effort. If a later
+          // step throws, the error reply must NOT leave pending state
+          // behind, or the user's re-reply would save a duplicate entry.
+          await kv.del(pendingKey);
+
+          // Retire the KB entries flagged at 👎 time: mark them superseded
+          // by the correction instead of leaving them visible (or deleting
+          // them and losing history). Text-matched; entries already
+          // superseded or archived in the meantime are skipped. See #124.
+          let supersededCount = 0;
+          try {
+            for (const flaggedText of pending.flaggedKB) {
+              if (await markKnowledgeSuperseded(flaggedText, correctionId)) {
+                supersededCount++;
+              }
+            }
+          } catch (err) {
+            // Correction is saved; a KV flake while retiring old entries
+            // must not fail the flow. Worst case a stale entry stays
+            // visible — observable via the count on correction_saved.
+            rlog("correction_supersede_error", {
+              channel,
+              threadTs,
+              message: err instanceof Error ? err.message : String(err),
+            });
+          }
 
           // Save the negative feedback NOW with the actual correction text
           await saveFeedback({
             type: "negative",
             question: pending.question || "",
-            detail: `Correction: "${userMessage.slice(0, 200)}"`,
+            detail: `Correction: "${correctionText.slice(0, 200)}"`,
             timestamp: new Date().toISOString().split("T")[0],
           });
-
-          // Clear the pending state
-          await kv.del(pendingKey);
           // Close the 👎 → correction funnel with latency from the
           // moment 👎 was registered.
           rlog("correction_saved", {
             channel,
             threadTs,
             answerTs: pending.answerTs ?? null,
-            correctionLength: userMessage.length,
+            correctionLength: correctionText.length,
             timeSincePendingMs: Date.now() - pending.pendingAt,
             flaggedKBCount: pending.flaggedKB.length,
-            correctionSample: userMessage.slice(0, 100),
+            supersededCount,
+            correctionSample: correctionText.slice(0, 100),
           });
 
           await replyInThread(
             channel,
             threadTs,
-            `:white_check_mark: Saved to knowledge base: _"${userMessage.slice(0, 100)}"_`,
+            `:white_check_mark: Saved to knowledge base: _"${correctionText.slice(0, 100)}"_`,
           );
           return;
         }
@@ -930,7 +961,7 @@ export async function POST(request: NextRequest) {
 
         const notes: string[] = [];
         if (actions.kbEntriesToFlag.length > 0) {
-          notes.push("*Possibly related KB entries* (reply to confirm removal):");
+          notes.push("*Possibly related KB entries* (a correction reply retires these, keeping history):");
           for (const entry of actions.kbEntriesToFlag) {
             notes.push(`  • _"${entry.entry}"_`);
           }

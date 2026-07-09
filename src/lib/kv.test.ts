@@ -22,6 +22,7 @@ const redisMock = vi.hoisted(() => ({
   zadd: vi.fn(),
   zrange: vi.fn(),
   zrem: vi.fn(),
+  zscore: vi.fn(),
 }));
 vi.mock("@upstash/redis", () => ({
   Redis: {
@@ -218,6 +219,48 @@ describe("kv.zrem observability", () => {
         keyPrefix: "knowledge",
         removed: 1,
       }),
+    );
+  });
+});
+
+describe("kv.zscore observability", () => {
+  beforeEach(() => {
+    logSpy.mockClear();
+    vi.mocked(Sentry.captureException).mockClear();
+    redisMock.zscore.mockReset();
+  });
+
+  it("logs op=zscore with key prefix and found=true when member exists", async () => {
+    redisMock.zscore.mockResolvedValue(1720000000000);
+    const result = await kv.zscore("knowledge:entries", "some member");
+    expect(result).toBe(1720000000000);
+    expect(logSpy).toHaveBeenCalledWith(
+      "kv_op",
+      expect.objectContaining({
+        op: "zscore",
+        keyPrefix: "knowledge",
+        found: true,
+      }),
+    );
+  });
+
+  it("returns null and logs found=false for a missing member", async () => {
+    redisMock.zscore.mockResolvedValue(null);
+    const result = await kv.zscore("knowledge:entries", "missing");
+    expect(result).toBeNull();
+    expect(logSpy).toHaveBeenCalledWith(
+      "kv_op",
+      expect.objectContaining({ op: "zscore", found: false }),
+    );
+  });
+
+  it("captures Sentry exception and rethrows on failure", async () => {
+    const err = new Error("zscore failed");
+    redisMock.zscore.mockRejectedValue(err);
+    await expect(kv.zscore("knowledge:entries", "m")).rejects.toThrow("zscore failed");
+    expect(Sentry.captureException).toHaveBeenCalledWith(
+      err,
+      expect.objectContaining({ tags: expect.objectContaining({ "kv.op": "zscore" }) }),
     );
   });
 });

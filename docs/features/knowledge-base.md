@@ -10,10 +10,18 @@ Each entry is a JSON string:
 
 ```json
 {
+  "id": "b4f7c2e1-...",
   "entry": "The auth module lives in app/Services/Auth, not app/Http/Auth",
   "timestamp": "2026-03-28"
 }
 ```
+
+Entries are never deleted when corrected — they carry lifecycle fields instead (#124):
+
+- `supersededById` — set when a correction replaced this entry; points at the replacement's `id`
+- `archivedAt` / `archivedReason` — set when an entry was soft-deleted with a reason
+
+Entries with either marker are hidden from the prompt but preserved in the sorted set, so the history of what was believed and why it changed survives. Legacy entries written before ids existed still parse and can be superseded by matching their text.
 
 ## How Entries Are Saved
 
@@ -21,7 +29,7 @@ Each entry is a JSON string:
 
 When a user corrects the bot in a conversation, the bot uses the `save_knowledge` tool to persist the correction:
 
-```
+```text
 User: @bm Where does the auth config live?
 Bot:  It's in config/auth.php
 User: No, we moved that to config/security.php last month
@@ -38,16 +46,18 @@ The system prompt instructs the bot to save corrections immediately when:
 
 ### Via Auto-Correction on Thumbs Down
 
-When a user reacts with :thumbsdown:, the auto-correction system may **remove** stale KB entries. See [Auto-Correction](./auto-correction.md) for details.
+When a user reacts with :thumbsdown: and then replies with a correction, the flagged stale entries are **superseded** by the correction (hidden from the prompt, linked to their replacement). See [Auto-Correction](./auto-correction.md) for details.
 
 ## How Entries Flow Into the System Prompt
 
-The function `getKnowledgeAsMarkdown()` fetches all entries from KV and formats them as a timestamped list:
+The function `getKnowledgeAsMarkdown()` fetches the *visible* entries (not superseded, not archived) from KV and formats them as a timestamped list ending with a stale-context footer:
 
-```
+```text
 - [2026-03-28] The auth module lives in app/Services/Auth, not app/Http/Auth
 - [2026-03-27] API rate limit is 120 req/min, not 60
 - [2026-03-25] The deploy pipeline uses Docker Alpine, not Ubuntu
+
+_Treat these as possibly stale context. Current user instructions and repository evidence take priority._
 ```
 
 This is injected into the system prompt under the heading "Knowledge Base (learned corrections)" with a staleness warning:
@@ -89,17 +99,21 @@ The `knowledge.ts` module exports these functions:
 
 | Function | Description |
 |----------|-------------|
-| `saveKnowledgeEntry(entry)` | Add a new entry |
-| `getAllKnowledge()` | Get all entries, newest first |
-| `removeKnowledgeEntry(entryText)` | Remove an entry by matching its text |
-| `getKnowledgeAsMarkdown()` | Format all entries as markdown for the prompt |
+| `saveKnowledgeEntry(entry)` | Add a new entry; returns its id |
+| `supersedeKnowledgeEntry(oldIdOrText, newText)` | Save a replacement and mark the old entry superseded by it |
+| `markKnowledgeSuperseded(idOrText, newId)` | Mark an existing entry superseded by an already-saved entry |
+| `archiveKnowledgeEntry(idOrText, reason)` | Soft-delete an entry with a reason |
+| `getAllKnowledge()` | Get visible entries (not superseded/archived), newest first |
+| `getKnowledgeHistory()` | Get every entry including superseded and archived, newest first |
+| `getKnowledgeAsMarkdown()` | Format visible entries as markdown (with stale-context footer) for the prompt |
 
-### Removing a Stale Entry
+### Retiring a Stale Entry
 
-If you need to manually remove a KB entry, you can:
+If you need to retire a KB entry:
 
-1. Use the Vercel KV browser to find and delete the specific member from the sorted set
-2. Or let the auto-correction system handle it -- thumbs-down an answer that relied on stale KB data, and the bot will identify and remove related entries
+1. Let the auto-correction system handle it -- thumbs-down an answer that relied on stale KB data and reply with the correction; flagged entries are superseded by it automatically
+2. Or call `archiveKnowledgeEntry(idOrText, reason)` to soft-delete with a reason
+3. Deleting the raw member in the Vercel KV browser still works but erases history -- prefer the lifecycle functions
 
 ## Graceful Degradation
 

@@ -15,7 +15,8 @@ The flow:
 7. A pending correction state is stored in KV for this thread
 8. Bot replies listing flagged items and asks "What was wrong?"
 9. The user's next reply is saved directly to the knowledge base (not through the agent loop)
-10. Negative feedback entry is recorded with the actual correction text
+10. The flagged KB entries are marked **superseded** by the new correction — hidden from future prompts but preserved with a link to their replacement (#124)
+11. Negative feedback entry is recorded with the actual correction text
 
 ## How Stale KB Entries Are Identified
 
@@ -55,9 +56,9 @@ Match: "auth" appears in both -> entry flagged
 
 ### Step 3: Flag for User Review (NOT auto-remove)
 
-Flagged KB entries are shown to the user but **not automatically removed**. This is a deliberate design choice -- a thumbs-down might mean the answer was formatted badly, or the question was misunderstood, not necessarily that the KB entries are wrong.
+Flagged KB entries are shown to the user but **not automatically retired**. This is a deliberate design choice -- a thumbs-down might mean the answer was formatted badly, or the question was misunderstood, not necessarily that the KB entries are wrong.
 
-The user sees the flagged entries and can reply to confirm which (if any) should be removed.
+Only when the user replies with an actual correction are the flagged entries retired -- each is marked superseded by the newly saved correction. If the user never replies, the pending state expires (24h TTL) and nothing changes.
 
 ## How Doc References Are Flagged
 
@@ -104,7 +105,7 @@ When a user thumbs-down an answer that referenced auth files and the KB had a ma
 ```
 :thinking_face: Thanks for the feedback.
 
-Possibly related KB entries (reply to confirm removal):
+Possibly related KB entries (a correction reply retires these, keeping history):
   • "Auth uses JWT tokens, not session cookies"
 
 Docs referenced: `docs/auth-guide.md`
@@ -133,7 +134,7 @@ The keyword matching heuristic is deliberately broad. It can produce false posit
 
 - A KB entry about "AuthController response format" would be flagged if the answer referenced any auth file, even if the KB entry is still correct.
 
-Auto-removing on a false positive would destroy valid knowledge. By flagging instead, the user stays in control -- they confirm what's actually wrong, and the correction is specific and meaningful.
+Auto-retiring on a false positive would hide valid knowledge. By flagging instead, the user stays in control -- entries are only superseded once the user supplies an actual correction, and even then the old entry is preserved in history with a link to its replacement rather than deleted.
 
 ## Testing
 
