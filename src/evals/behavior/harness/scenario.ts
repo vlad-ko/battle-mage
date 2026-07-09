@@ -191,6 +191,16 @@ export async function runScenario(spec: ScenarioSpec): Promise<ScenarioWorld> {
   const recordedEntries: CassetteEntry[] = [];
   let pinnedNow: string;
 
+  // Snapshot the env vars this runner mutates so scenarios can't leak
+  // pinned/deleted values into each other (or into unrelated tests
+  // sharing the worker process). Restored in the finally below.
+  const savedEnv: Record<string, string | undefined> = {
+    GITHUB_OWNER: process.env.GITHUB_OWNER,
+    GITHUB_REPO: process.env.GITHUB_REPO,
+    UPSTASH_VECTOR_REST_URL: process.env.UPSTASH_VECTOR_REST_URL,
+    UPSTASH_VECTOR_REST_TOKEN: process.env.UPSTASH_VECTOR_REST_TOKEN,
+  };
+
   if (mode === "record") {
     assertRecordAllowed(process.env);
     for (const required of ["ANTHROPIC_API_KEY", "GITHUB_PAT_BM", "GITHUB_OWNER", "GITHUB_REPO"]) {
@@ -505,6 +515,10 @@ export async function runScenario(spec: ScenarioSpec): Promise<ScenarioWorld> {
 
     return world;
   } finally {
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     vi.useRealTimers();
     for (const mod of MOCKED_MODULES) vi.doUnmock(mod);
     try {
