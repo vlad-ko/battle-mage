@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "scenarioId": "silent-decline-classifier-unavailable",
+  "pinnedNow": "2026-07-01T12:00:00.000Z",
+  "env": {
+    "GITHUB_OWNER": "vlad-ko",
+    "GITHUB_REPO": "battle-mage"
+  },
+  "entries": [
+    {
+      "boundary": "anthropic",
+      "requestHash": "sha256:f17abbf55572c80e215e72fcf2d554d2f4a4918d289b0b6f42d4429ecaeb4a8d",
+      "requestSummary": {
+        "model": "claude-haiku-4-5-20251001",
+        "messageCount": 1,
+        "lastRole": "user",
+        "lastContentHead": "You are a turn classifier for a Slack bot (@bm) that answers engineering questions about a GitHub repository. Classify t"
+      },
+      "request": {
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": 256,
+        "messages": [
+          {
+            "role": "user",
+            "content": "You are a turn classifier for a Slack bot (@bm) that answers engineering questions about a GitHub repository. Classify the message below.\n\nInvocation mode: followup\n- \"mention\": the user explicitly @-mentioned the bot, so shouldReply is true by definition — only the effort classification matters.\n- \"followup\": the bot already replied earlier in this thread and the user posted WITHOUT mentioning it. Decide whether the message is genuinely addressed to the bot (a question or request it should answer) versus human-to-human chatter, status updates, acknowledgements, or something meant for another person.\n\nEffort buckets — how much repository investigation the question needs:\n- \"quick\": trivial lookups, yes/no checks, questions the transcript already answers, single small facts.\n- \"standard\": a typical single-topic question needing a few file reads.\n- \"deep\": broad, comparative, or multi-part questions spanning many files — audits, \"summarize our whole X\", architecture reviews.\n\nRecent thread transcript (oldest first; may be empty):\n---\nuser: where does the recovery sweep live?\nbot: The sweep lives in src/app/api/cron/sweep/route.ts.\nuser: cool, anyway are we still on for lunch?\n---\n\nMessage to classify:\n---\ncool, anyway are we still on for lunch?\n---\n\nRespond with ONLY a JSON object — no prose, no code fences — with exactly these four keys:\n{\"shouldReply\": true|false, \"shouldReplyConfidence\": 0.0-1.0, \"effort\": \"quick\"|\"standard\"|\"deep\", \"effortConfidence\": 0.0-1.0}"
+          }
+        ]
+      },
+      "response": {
+        "id": "msg_cassette",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-haiku-4-5-20251001",
+        "content": [
+          {
+            "type": "text",
+            "text": "I think probably yes? {not json"
+          }
+        ],
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0
+        }
+      },
+      "synthetic": true
+    }
+  ]
+}

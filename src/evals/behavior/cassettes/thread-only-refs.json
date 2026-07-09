@@ -1,0 +1,1248 @@
+{
+  "version": 1,
+  "scenarioId": "thread-only-refs",
+  "pinnedNow": "2026-07-01T12:00:00.000Z",
+  "env": {
+    "GITHUB_OWNER": "vlad-ko",
+    "GITHUB_REPO": "battle-mage"
+  },
+  "entries": [
+    {
+      "boundary": "anthropic",
+      "requestHash": "sha256:371649ef8ff80fc39f08a546398ed0c8ac3c1c125240f1674aff713e11eb32f9",
+      "requestSummary": {
+        "model": "claude-haiku-4-5-20251001",
+        "messageCount": 1,
+        "lastRole": "user",
+        "lastContentHead": "You are a turn classifier for a Slack bot (@bm) that answers engineering questions about a GitHub repository. Classify t"
+      },
+      "request": {
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": 256,
+        "messages": [
+          {
+            "role": "user",
+            "content": "You are a turn classifier for a Slack bot (@bm) that answers engineering questions about a GitHub repository. Classify the message below.\n\nInvocation mode: mention\n- \"mention\": the user explicitly @-mentioned the bot, so shouldReply is true by definition — only the effort classification matters.\n- \"followup\": the bot already replied earlier in this thread and the user posted WITHOUT mentioning it. Decide whether the message is genuinely addressed to the bot (a question or request it should answer) versus human-to-human chatter, status updates, acknowledgements, or something meant for another person.\n\nEffort buckets — how much repository investigation the question needs:\n- \"quick\": trivial lookups, yes/no checks, questions the transcript already answers, single small facts.\n- \"standard\": a typical single-topic question needing a few file reads.\n- \"deep\": broad, comparative, or multi-part questions spanning many files — audits, \"summarize our whole X\", architecture reviews.\n\nRecent thread transcript (oldest first; may be empty):\n---\n\n---\n\nMessage to classify:\n---\nwhat does the reply splitter do?\n---\n\nRespond with ONLY a JSON object — no prose, no code fences — with exactly these four keys:\n{\"shouldReply\": true|false, \"shouldReplyConfidence\": 0.0-1.0, \"effort\": \"quick\"|\"standard\"|\"deep\", \"effortConfidence\": 0.0-1.0}"
+          }
+        ]
+      },
+      "response": {
+        "model": "claude-haiku-4-5-20251001",
+        "id": "msg_cassette",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "```json\n{\"shouldReply\": false, \"shouldReplyConfidence\": 0.45, \"effort\": \"quick\", \"effortConfidence\": 0.75}\n```"
+          }
+        ],
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "stop_details": null,
+        "usage": {
+          "input_tokens": 337,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          },
+          "output_tokens": 44,
+          "service_tier": "standard",
+          "inference_geo": "not_available"
+        }
+      },
+      "synthetic": false
+    },
+    {
+      "boundary": "github",
+      "requestHash": "sha256:a85374414dc58de4fc9127c04129b8ff39cc88ed82cd35368334d27fa5dbf318",
+      "requestSummary": {
+        "fn": "getHeadSha",
+        "args": "[]"
+      },
+      "request": {
+        "fn": "getHeadSha",
+        "args": []
+      },
+      "response": "7cb676a1957dc3bafc335a8587aa658f182c5d34",
+      "synthetic": false
+    },
+    {
+      "boundary": "github",
+      "requestHash": "sha256:389bbef3c98d07223042e996f055c63cb9df0302e25ad090ed37cfe435cb203b",
+      "requestSummary": {
+        "fn": "readFile",
+        "args": "[\".battle-mage.json\"]"
+      },
+      "request": {
+        "fn": "readFile",
+        "args": [
+          ".battle-mage.json"
+        ]
+      },
+      "error": {
+        "name": "HttpError",
+        "message": "Not Found - https://docs.github.com/rest/repos/contents#get-repository-content",
+        "status": 404
+      },
+      "synthetic": false
+    },
+    {
+      "boundary": "github",
+      "requestHash": "sha256:2f3f0bd1d71494a916bac43d5cda9610acf948246d025cddb3377f0305d49f73",
+      "requestSummary": {
+        "fn": "getRepoTree",
+        "args": "[]"
+      },
+      "request": {
+        "fn": "getRepoTree",
+        "args": []
+      },
+      "response": [
+        {
+          "path": ".claude",
+          "type": "tree"
+        },
+        {
+          "path": ".claude/agents",
+          "type": "tree"
+        },
+        {
+          "path": ".claude/agents/architect.md",
+          "type": "blob"
+        },
+        {
+          "path": ".claude/agents/backend-expert.md",
+          "type": "blob"
+        },
+        {
+          "path": ".claude/agents/doc-librarian.md",
+          "type": "blob"
+        },
+        {
+          "path": ".claude/agents/frontend-expert.md",
+          "type": "blob"
+        },
+        {
+          "path": ".claude/agents/issue-maintainer.md",
+          "type": "blob"
+        },
+        {
+          "path": ".claude/agents/qa-engineer.md",
+          "type": "blob"
+        },
+        {
+          "path": ".claude/skills",
+          "type": "tree"
+        },
+        {
+          "path": ".claude/skills/wizard",
+          "type": "tree"
+        },
+        {
+          "path": ".claude/skills/wizard/CHECKLISTS.md",
+          "type": "blob"
+        },
+        {
+          "path": ".claude/skills/wizard/PATTERNS.md",
+          "type": "blob"
+        },
+        {
+          "path": ".claude/skills/wizard/SKILL.md",
+          "type": "blob"
+        },
+        {
+          "path": ".claude/skills/wizard/reference",
+          "type": "tree"
+        },
+        {
+          "path": ".claude/skills/wizard/reference/domain-user-lens.template.md",
+          "type": "blob"
+        },
+        {
+          "path": ".claude/skills/wizard/reference/parallel-pipeline.md",
+          "type": "blob"
+        },
+        {
+          "path": ".claude/skills/wizard/reference/pr-review-cycle.md",
+          "type": "blob"
+        },
+        {
+          "path": ".claude/skills/wizard/reference/threading-model.md",
+          "type": "blob"
+        },
+        {
+          "path": ".env.example",
+          "type": "blob"
+        },
+        {
+          "path": ".github",
+          "type": "tree"
+        },
+        {
+          "path": ".github/workflows",
+          "type": "tree"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "type": "blob"
+        },
+        {
+          "path": ".gitignore",
+          "type": "blob"
+        },
+        {
+          "path": ".mcp.json",
+          "type": "blob"
+        },
+        {
+          "path": "CLAUDE.md",
+          "type": "blob"
+        },
+        {
+          "path": "README.md",
+          "type": "blob"
+        },
+        {
+          "path": "TELEMETRY.md",
+          "type": "blob"
+        },
+        {
+          "path": "docs",
+          "type": "tree"
+        },
+        {
+          "path": "docs/architecture.md",
+          "type": "blob"
+        },
+        {
+          "path": "docs/contributing.md",
+          "type": "blob"
+        },
+        {
+          "path": "docs/evals.md",
+          "type": "blob"
+        },
+        {
+          "path": "docs/features",
+          "type": "tree"
+        },
+        {
+          "path": "docs/features/auto-correction.md",
+          "type": "blob"
+        },
+        {
+          "path": "docs/features/config.md",
+          "type": "blob"
+        },
+        {
+          "path": "docs/features/effort-routing.md",
+          "type": "blob"
+        },
+        {
+          "path": "docs/features/hybrid-retrieval.md",
+          "type": "blob"
+        },
+        {
+          "path": "docs/features/issue-creation.md",
+          "type": "blob"
+        },
+        {
+          "path": "docs/features/knowledge-base.md",
+          "type": "blob"
+        },
+        {
+          "path": "docs/features/message-splitting.md",
+          "type": "blob"
+        },
+        {
+          "path": "docs/features/progress-ux.md",
+          "type": "blob"
+        },
+        {
+          "path": "docs/features/repo-index.md",
+          "type": "blob"
+        },
+        {
+          "path": "docs/features/source-hierarchy.md",
+          "type": "blob"
+        },
+        {
+          "path": "docs/observability.md",
+          "type": "blob"
+        },
+        {
+          "path": "docs/setup.md",
+          "type": "blob"
+        },
+        {
+          "path": "docs/troubleshooting.md",
+          "type": "blob"
+        },
+        {
+          "path": "docs/usage.md",
+          "type": "blob"
+        },
+        {
+          "path": "icon.png",
+          "type": "blob"
+        },
+        {
+          "path": "next.config.ts",
+          "type": "blob"
+        },
+        {
+          "path": "package-lock.json",
+          "type": "blob"
+        },
+        {
+          "path": "package.json",
+          "type": "blob"
+        },
+        {
+          "path": "sentry.edge.config.ts",
+          "type": "blob"
+        },
+        {
+          "path": "sentry.server.config.ts",
+          "type": "blob"
+        },
+        {
+          "path": "slack-app-manifest.yaml",
+          "type": "blob"
+        },
+        {
+          "path": "src",
+          "type": "tree"
+        },
+        {
+          "path": "src/app",
+          "type": "tree"
+        },
+        {
+          "path": "src/app/api",
+          "type": "tree"
+        },
+        {
+          "path": "src/app/api/cron",
+          "type": "tree"
+        },
+        {
+          "path": "src/app/api/cron/sweep",
+          "type": "tree"
+        },
+        {
+          "path": "src/app/api/cron/sweep/route.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/app/api/cron/sweep/route.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/app/api/slack",
+          "type": "tree"
+        },
+        {
+          "path": "src/app/api/slack/route.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/app/global-error.tsx",
+          "type": "blob"
+        },
+        {
+          "path": "src/app/layout.tsx",
+          "type": "blob"
+        },
+        {
+          "path": "src/app/page.tsx",
+          "type": "blob"
+        },
+        {
+          "path": "src/evals",
+          "type": "tree"
+        },
+        {
+          "path": "src/evals/fixtures",
+          "type": "tree"
+        },
+        {
+          "path": "src/evals/fixtures/anti-narration.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/evals/fixtures/brevity.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/evals/fixtures/mrkdwn-correctness.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/evals/fixtures/reference-accuracy.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/evals/fixtures/should-reply.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/evals/rubric.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/evals/rubric.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/evals/run-eval.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/instrumentation-client.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/instrumentation.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib",
+          "type": "tree"
+        },
+        {
+          "path": "src/lib/api-error.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/api-error.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/auto-correct.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/auto-correct.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/claude.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/claude.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/compaction.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/compaction.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/config.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/config.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/effort-routing.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/effort-routing.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/feedback.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/feedback.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/github.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/idempotency.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/idempotency.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/issue-batch.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/issue-batch.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/knowledge.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/knowledge.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/kv.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/kv.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/logger.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/logger.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/mrkdwn.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/mrkdwn.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/path-filter.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/path-filter.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/progress.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/progress.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/recovery.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/recovery.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/references.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/references.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/reply-footer.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/reply-footer.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/repo-index.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/repo-index.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/retrieval.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/retrieval.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/slack-throttle.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/slack-throttle.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/slack-users.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/slack-users.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/slack.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/slack.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/split-reply.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/split-reply.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/thread-filter.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/thread-filter.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/time-budget.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/time-budget.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/topic-match.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/topic-match.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/turn-runner.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/vector.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/lib/vector.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/tools",
+          "type": "tree"
+        },
+        {
+          "path": "src/tools/create-issue.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/tools/create-issue.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/tools/index.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/tools/index.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/tools/list-commits.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/tools/list-issues.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/tools/list-prs.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/tools/read-file.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/tools/save-knowledge.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/tools/search-code.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/tools/search-repo.test.ts",
+          "type": "blob"
+        },
+        {
+          "path": "src/tools/search-repo.ts",
+          "type": "blob"
+        },
+        {
+          "path": "tsconfig.json",
+          "type": "blob"
+        },
+        {
+          "path": "vercel.json",
+          "type": "blob"
+        },
+        {
+          "path": "vitest.config.ts",
+          "type": "blob"
+        },
+        {
+          "path": "vitest.evals.config.ts",
+          "type": "blob"
+        }
+      ],
+      "synthetic": false
+    },
+    {
+      "boundary": "github",
+      "requestHash": "sha256:54a26fbf10bd764c8f1669f498970fb32c498cd3616a8ff525a15ca19336f9c3",
+      "requestSummary": {
+        "fn": "readFile",
+        "args": "[\"CLAUDE.md\"]"
+      },
+      "request": {
+        "fn": "readFile",
+        "args": [
+          "CLAUDE.md"
+        ]
+      },
+      "response": {
+        "path": "CLAUDE.md",
+        "content": "# Battle Mage (@bm)\n\nA Slack agent with Claude AI intelligence and full GitHub repo access — reads code, docs, issues, PRs, and commits. Creates issues on request. Invoke via `@bm` in Slack.\n\n## Architecture\n\n- **Runtime**: Vercel (Next.js serverless functions)\n- **Slack**: Webhook mode via Next.js API route (`/api/slack`), ack-then-process via `after()`\n- **AI**: Anthropic Claude API with tool use (8 tools, adaptive per-turn round budget: quick 4 / standard 10 / deep 15)\n- **GitHub**: Octokit REST API (fine-grained PAT, read-only for code/PRs, read-write for issues)\n- **Knowledge**: Vercel KV (corrections, feedback, repo index cache) + Upstash Vector (semantic recall for KB + docs, graceful lexical-only degradation)\n- **Context**: CLAUDE.md + KB + feedback + repo index + source hierarchy + search strategy + recency/brevity rules\n- **Progress**: Live thinking messages with contextual emoji, deleted on answer\n- **Formatting**: Markdown-to-Slack mrkdwn conversion, typed references with emoji (📄📖🎫🔀📜), ranked by source-of-truth hierarchy, capped at 7\n- **Auto-correct**: Thumbs-down flags stale KB entries for user confirmation, stores pending correction state\n\n## Development\n\n```bash\nnpm install\ncp .env.example .env.local  # Fill in credentials\nnpm run dev                  # http://localhost:3000\n```\n\n## Key Design Decisions\n\n1. **Webhook mode, not Socket mode** — Vercel serverless functions can't maintain persistent WebSocket connections. Webhook mode works naturally with serverless.\n\n2. **Ack-then-process pattern** — Slack requires 200 OK within 3 seconds. The API route acks immediately, then processes the Claude + GitHub calls asynchronously via `waitUntil()`.\n\n3. **Thread-only replies** — The bot NEVER posts at channel root. All responses go in the thread where it was mentioned.\n\n4. **Verify before asserting** — The agent uses GitHub tools to check that files, methods, and classes actually exist before referencing them. No hallucinated code references.\n\n5. **Issue creation requires confirmation** — The agent can propose one or many GitHub issues in a single turn but NEVER creates any without explicit approval. Approval is either a ✅ reaction on the proposal message or a short thread reply like \"confirm all\" / \"yes\". See `docs/features/issue-creation.md`.\n\n6. **Thread follow-ups** — Once the bot is participating in a thread, users can send follow-up messages without re-mentioning. The bot checks for its own prior replies, then a fast-model classifier decides whether the message is actually addressed to the bot — anything else (human-to-human chatter, classifier errors) fails closed to silence. See `docs/features/effort-routing.md`.\n\n## Project Structure\n\n```\nsrc/\n  app/\n    api/slack/route.ts    — Slack webhook handler (mention, reaction, thread follow-up)\n    api/cron/sweep/route.ts — Recovery sweep (retries turns killed mid-processing)\n    page.tsx              — Landing page\n  lib/\n    slack.ts              — Slack client, signature verification, message helpers\n    claude.ts             — Anthropic client, system prompt assembly, agent loop\n    github.ts             — Octokit client (search, read, issues, PRs, commits, tree)\n    knowledge.ts          — Knowledge base (Vercel KV sorted set)\n    feedback.ts           — Feedback storage (Vercel KV) and Q&A context\n    issue-batch.ts        — Pure helpers for multi-proposal formatting and bulk-confirm matching\n    effort-routing.ts     — Turn classifier (follow-up shouldReply gate + effort buckets → round/answer budgets)\n    idempotency.ts        — Content-addressed idempotent execution (issue creation, #125)\n    recovery.ts           — Processing markers + sweep decisions for died turns (#125)\n    turn-runner.ts        — Mention/follow-up turn bodies (shared by webhook route + sweep)\n    config.ts             — .battle-mage.json loader (path annotations with graduated trust)\n    repo-index.ts         — Repository topic index (lazy rebuild on SHA change)\n    auto-correct.ts       — Stale KB entry detection and doc reference flagging\n    progress.ts           — Progress message formatter (tool → emoji + status)\n    mrkdwn.ts             — Markdown → Slack mrkdwn converter\n    logger.ts             — Structured JSON logging with request correlation IDs\n    references.ts         — Typed references: ranking, dedup, emoji formatting\n    split-reply.ts        — Pure splitter for long Slack replies (paragraph/line/word/fence-aware)\n    kv.ts                 — @upstash/redis wrapper with Sentry observability (kv_op + kv_error events)\n    vector.ts             — @upstash/vector wrapper (non-throwing, vector_op/vector_error events, 2s timeout)\n    retrieval.ts          — Pure hybrid-retrieval primitives (RRF fusion, age boost, lexical ranking)\n  tools/\n    index.ts              — Tool registry and executor\n    search-code.ts        — GitHub code search tool\n    search-repo.ts        — Hybrid code + docs search (lexical + semantic, RRF-fused)\n    read-file.ts          — GitHub file/directory read tool\n    list-issues.ts        — GitHub issue list/lookup tool\n    list-commits.ts       — Recent commits on main (with dates)\n    list-prs.ts           — Recent pull requests (open/merged/closed)\n    create-issue.ts       — GitHub issue proposal + parser\n    save-knowledge.ts     — Knowledge base save (Vercel KV)\ndocs/\n  setup.md                — Complete setup guide (Slack, GitHub, Vercel, KV)\n  usage.md                — How to use the bot day-to-day\n  architecture.md         — How the internals work (agent loop, prompt, tools)\n  contributing.md         — Contributing guide (TDD, CI, fork workflow)\n  troubleshooting.md      — Common issues and fixes\n  features/\n    repo-index.md         — Lazy-rebuilt topic map (KV-cached)\n    knowledge-base.md     — Vercel KV knowledge base\n    source-hierarchy.md   — Source-of-truth hierarchy (5 levels)\n    auto-correction.md    — Auto-correction on 👎 reactions\n    progress-ux.md        — Live progress updates (emoji + status)\n    message-splitting.md  — Long-reply chunking architecture (split-reply + boundary guard)\n    issue-creation.md     — Batch issue proposals + bulk-confirm flow\n    effort-routing.md     — Fast-model follow-up gate + per-turn effort budgets\n    hybrid-retrieval.md   — Lexical + semantic retrieval (Upstash Vector, RRF fusion, degradation)\nTELEMETRY.md              — Incident-response event vocabulary + Sentry query recipes\nvercel.json               — Vercel Cron schedule for the recovery sweep\n```\n\n## Testing (TDD Required)\n\nAll new features must use test-driven development:\n\n1. **RED** — Write failing tests first\n2. **GREEN** — Implement minimum code to pass\n3. **REFACTOR** — Clean up while keeping tests green\n\nRules:\n- Test files colocated: `foo.ts` → `foo.test.ts`\n- Tests run via `npm test` (Vitest)\n- CI blocks merge on test failure (GitHub Actions)\n- Extract pure functions for testability — keep side effects in the handler layer\n\n```bash\nnpm test              # Run all tests once\nnpm run test:watch    # Watch mode for development\n```\n\n## Environment Variables\n\n| Variable | Description |\n|----------|-------------|\n| `SLACK_BOT_TOKEN` | Slack bot OAuth token (`xoxb-...`) |\n| `SLACK_SIGNING_SECRET` | Slack app signing secret |\n| `ANTHROPIC_API_KEY` | Claude API key |\n| `GITHUB_PAT_BM` | Fine-grained PAT for target repo |\n| `GITHUB_OWNER` | GitHub org/user |\n| `GITHUB_REPO` | Repository name |\n| `CRON_SECRET` | Bearer token for `/api/cron/sweep` (unset = sweep denies all requests) |\n| `UPSTASH_VECTOR_REST_URL` | Optional — Upstash Vector index (built-in embedding model) for hybrid retrieval |\n| `UPSTASH_VECTOR_REST_TOKEN` | Optional — Vector index token; unset pair degrades to lexical-only |\n",
+        "size": 7882,
+        "url": "https://github.com/vlad-ko/battle-mage/blob/main/CLAUDE.md"
+      },
+      "synthetic": false
+    },
+    {
+      "boundary": "anthropic",
+      "requestHash": "sha256:63589103196d71962505912f6711188aab6a86b0fabf6d29ed144820fee71cc5",
+      "requestSummary": {
+        "model": "claude-sonnet-4-6",
+        "messageCount": 1,
+        "lastRole": "user",
+        "lastContentHead": "what does the reply splitter do?\n\n[Effort hint: this looks like a quick question. Answer directly with minimal tool use "
+      },
+      "request": {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 4096,
+        "system": [
+          {
+            "type": "text",
+            "text": "<identity>\nYou are Battle Mage (@bm), an AI assistant embedded in Slack with read access to the vlad-ko/battle-mage GitHub repository. You answer engineering questions in-thread. You never post at channel root.\n</identity>\n\n<core-principles>\n1. *Verify before asserting* — Always use your tools to check that files, methods, and classes actually exist before referencing them. Never hallucinate code references.\n2. *Cite specifically* — When referencing code, include the file path and line numbers. Link to GitHub when possible.\n3. *Thread-only* — You are responding in a Slack thread. Keep answers concise but thorough.\n4. *Issue creation requires confirmation* — If asked to create a GitHub issue, propose it with title, body, and labels. The user must explicitly confirm before it is created.\n5. *Batch proposals* — When the user asks for multiple issues at once (e.g. \"file bugs for X, Y, Z\" or \"create all these as separate issues\"), call `create_issue` once for each proposed issue in the SAME turn. All proposals will be shown together and approved with a single :white_check_mark: reaction or by the user saying \"confirm all\" in the thread. Do not file them one at a time across multiple turns.\n</core-principles>\n\n<source-hierarchy>\n## Source-of-Truth Hierarchy\n\nWhen answering questions, you draw from multiple sources. These sources have different reliability levels. When they conflict, prefer higher-ranked sources and flag the discrepancy to the user.\n\n1. *Source code* — The actual implementation. Code is the ultimate source of truth. Always verify claims against the code before asserting them.\n2. *Tests* — Encode expected behavior. If tests pass, the tested behavior is correct.\n3. *Documentation* (docs/, CLAUDE.md, README) — Describes intent but can drift from reality. If documentation contradicts code, trust the code and flag the stale documentation.\n4. *Knowledge base* (Vercel KV corrections) — User corrections from Slack. Useful but can become outdated as code changes. If a KB entry contradicts what you see in the code, the code is authoritative — flag the discrepancy so the team can update the KB.\n5. *Feedback signals* (👍/👎 reactions) — The least authoritative signal. Subjective quality preferences. Never treat feedback as factual truth.\n\n*Conflict detection rules:*\n- For code-level questions, always read the actual code before asserting anything from docs, KB, or memory.\n- When you find a discrepancy between sources, include both the code truth and the stale source in your answer so the user can decide what to update.\n- Never silently prefer a lower-ranked source over a higher-ranked one.\n</source-hierarchy>\n\n<tools>\nAvailable GitHub tools (do not invent names):\n- *search_code*: Search for code patterns, function names, classes across the repo\n- *read_file*: Read file contents or list directory entries\n- *list_issues*: List or look up GitHub issues\n- *list_commits*: List recent commits on main — newest first, with dates\n- *list_prs*: List recent pull requests — shows merged/open status with dates\n- *create_issue*: Propose a new GitHub issue (requires user confirmation)\n- *search_repo*: Hybrid search across code AND docs — lexical code search fused with semantic (meaning-based) doc search. Best for conceptual questions\n- *save_knowledge*: Save a correction or fact to the persistent knowledge base\n</tools>\n\n<search-strategy>\n## Search Strategy — CRITICAL\n\nYou have a maximum of 15 tool rounds per question. Budget them wisely.\n\n*Step 1: Check the Repository Map FIRST* — Look at the Repository Map section in this prompt. It lists the key areas of the repo by topic (authentication, deployment, security, etc.). If the question maps to a topic, go directly to the listed files with `read_file`. Do NOT search if the map already tells you where to look.\n\n*Step 2: Search only as fallback* — Search ONLY if the repo map doesn't cover the topic. Pick the right search tool: for a conceptual question (\"how does X work\", \"where do we handle Y\") use `search_repo` — it fuses code search with semantic doc search; for an exact identifier (a specific function/class/keyword) use `search_code`. A search returns up to 10 results — don't read all of them.\n\n*Step 3: Read 2-3 files maximum* — For most questions, 2-3 files from the relevant topic is enough. If you've read 3 files and have enough to answer, stop reading and synthesize.\n\n*Step 4: Synthesize early* — Start forming your answer after 2-4 tool rounds. Don't exhaust all 15 rounds trying to be exhaustive. A good focused answer is better than a comprehensive one that takes 5 minutes.\n\n*Step 5: Use list tools sparingly* — `list_issues`, `list_commits`, and `list_prs` are for \"what's new?\" questions. Don't call them for code questions. Don't call multiple list tools in the same question unless specifically asked about activity.\n\n*Anti-patterns to avoid:*\n- Calling `search_code` when the repo map already points to the right files\n- Reading 5+ files in a single question\n- Calling `list_issues` + `list_commits` + `list_prs` in the same question\n- Hitting the tool limit without producing an answer\n- Trying to give an exhaustive answer to a vague question — suggest a follow-up to narrow the question instead\n</search-strategy>\n\n<knowledge-base-usage>\n## Knowledge Base — IMPORTANT\n\nYou have a persistent knowledge base stored in Vercel KV (not in the GitHub repo). Use it as follows:\n\n*When to save:*\n- A user corrects you (\"no, that's in app/Services not app/Http\")\n- A user shares non-obvious insider knowledge (\"we deprecated that endpoint last week\")\n- You discover something surprising that contradicts the codebase docs\n- A user says \"remember this\" or similar\n\n*How to save:*\n- Use the `save_knowledge` tool IMMEDIATELY — do NOT search the repo first. When a user says \"remember this\", \"memorize\", \"save to KB\", or provides a correction, call save_knowledge as your very first action. No research needed.\n- Write entries as standalone facts, not conversation snippets\n- Be specific: include file paths, class names, version numbers\n- Good: \"The auth module is in app/Services/Auth, not app/Http/Auth\"\n- Bad: \"User said auth is somewhere else\"\n\n*When reading:*\n- The most relevant KB entries for the current question are loaded below (top matches, not the full KB). They can become stale — always check the code first for code-level questions.\n- If a knowledge entry conflicts with what you see in the code, the code is authoritative — flag the discrepancy.\n</knowledge-base-usage>\n\n<output-contract>\n## Output Contract — CRITICAL\n\nYou write for Slack, not GitHub. Every response must obey these rules.\n\n*Slack mrkdwn format (NOT standard Markdown):*\n- Bold: *text* (single asterisk, NOT double)\n- Italic: _text_ (underscore)\n- Code: `text` (backtick)\n- Code blocks: ```text``` (triple backtick)\n- Links: <url|text>\n- Lists: use \"- \" or \"• \"\n- NEVER use # or ## or ### for headings — Slack does not support them. Use *bold text* on its own line instead.\n- NEVER use **double asterisks** — Slack renders them literally as **text**.\n- NEVER use [text](url) markdown links — Slack renders them literally. Use <url|text> instead.\n- NEVER use markdown tables (the pipe `|` row syntax) — Slack renders them broken. Use bullet lists instead.\n\n*Anti-narration — do NOT emit any of these phrases:*\n- \"let me check\"\n- \"i'll look into this\" / \"let me look\"\n- \"one moment\"\n- \"fetching now\"\n- \"hold on while i...\"\n- \"looking into that...\"\n\nPrefer a single result-focused reply after tool work completes. Don't pre-announce tool work or narrate intermediate steps — the user sees progress indicators separately.\n\n*Brevity:*\n- Lead with the direct answer in 2–3 sentences.\n- Target ~15 lines or fewer for a typical answer. Only go longer if the question genuinely requires depth.\n- Use bullets for supporting details, not prose paragraphs.\n- Skip editorializing: no \"what makes this special\", no marketing copy, no brochure-style overviews, no \"comprehensive overview\" essays. Just answer the question.\n- Skip sections like \"Development Maturity Indicators\" or \"Why This Is Impressive\" — the user didn't ask for a pitch.\n- Be direct and technical — this is an engineering team.\n- If the user wants more detail, they'll ask a follow-up.\n\n*Slack message budget — target one compact reply:*\n- Target **~3,000 characters** (≈60 lines) for your answer. Comparative or \"summarize our X\" questions are NOT an exception — condense aggressively.\n- Answers longer than the budget WILL be split across multiple thread replies automatically. That works, but a user absorbs one compact post much better than three long ones. Prefer concision.\n- When you'd want to go long: DON'T. Summarize the 3–5 key points, then point the user at specific files/PRs/issues via references. They can ask a narrower follow-up for detail on any one of them.\n- DO NOT quote or paraphrase tool results verbatim. Don't inline whole files. Don't write an essay comparing two systems when a bulleted contrast list + references will do.\n- When using `create_issue`, keep the proposal body under **~4,000 characters**: title, clear goal, 3–6 acceptance-criteria bullets, and the 1–2 most relevant file paths. Don't paste context dumps.\n- Your goal is a clear answer a human can absorb in ~30 seconds, with references they can follow for anything deeper. Not an essay.\n\n*Recency (today is 2026-07-01):*\n- Prefer the most recent activity first. When asked about \"recent developments\", \"status\", or \"what's new\", focus on the last 30 days.\n- For \"what's new\" questions, check MULTIPLE sources: `list_commits`, `list_prs`, `list_issues`. Recent commits and merged PRs are the strongest signals.\n- Skip `docs/archive/` — treat archive content as historical unless the user explicitly asks about history or past decisions.\n- If all the information you found is older than 30 days, say so — don't present stale data as current.\n</output-contract>",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          },
+          {
+            "type": "text",
+            "text": "\n\n<repo-context>\nOwner: vlad-ko\nRepository: battle-mage\n</repo-context>\n\n## Project Context (from CLAUDE.md)\n\n# Battle Mage (@bm)\n\nA Slack agent with Claude AI intelligence and full GitHub repo access — reads code, docs, issues, PRs, and commits. Creates issues on request. Invoke via `@bm` in Slack.\n\n## Architecture\n\n- **Runtime**: Vercel (Next.js serverless functions)\n- **Slack**: Webhook mode via Next.js API route (`/api/slack`), ack-then-process via `after()`\n- **AI**: Anthropic Claude API with tool use (8 tools, adaptive per-turn round budget: quick 4 / standard 10 / deep 15)\n- **GitHub**: Octokit REST API (fine-grained PAT, read-only for code/PRs, read-write for issues)\n- **Knowledge**: Vercel KV (corrections, feedback, repo index cache) + Upstash Vector (semantic recall for KB + docs, graceful lexical-only degradation)\n- **Context**: CLAUDE.md + KB + feedback + repo index + source hierarchy + search strategy + recency/brevity rules\n- **Progress**: Live thinking messages with contextual emoji, deleted on answer\n- **Formatting**: Markdown-to-Slack mrkdwn conversion, typed references with emoji (📄📖🎫🔀📜), ranked by source-of-truth hierarchy, capped at 7\n- **Auto-correct**: Thumbs-down flags stale KB entries for user confirmation, stores pending correction state\n\n## Development\n\n```bash\nnpm install\ncp .env.example .env.local  # Fill in credentials\nnpm run dev                  # http://localhost:3000\n```\n\n## Key Design Decisions\n\n1. **Webhook mode, not Socket mode** — Vercel serverless functions can't maintain persistent WebSocket connections. Webhook mode works naturally with serverless.\n\n2. **Ack-then-process pattern** — Slack requires 200 OK within 3 seconds. The API route acks immediately, then processes the Claude + GitHub calls asynchronously via `waitUntil()`.\n\n3. **Thread-only replies** — The bot NEVER posts at channel root. All responses go in the thread where it was mentioned.\n\n4. **Verify before asserting** — The agent uses GitHub tools to check that files, methods, and classes actually exist before referencing them. No hallucinated code references.\n\n5. **Issue creation requires confirmation** — The agent can propose one or many GitHub issues in a single turn but NEVER creates any without explicit approval. Approval is either a ✅ reaction on the proposal message or a short thread reply like \"confirm all\" / \"yes\". See `docs/features/issue-creation.md`.\n\n6. **Thread follow-ups** — Once the bot is participating in a thread, users can send follow-up messages without re-mentioning. The bot checks for its own prior replies, then a fast-model classifier decides whether the message is actually addressed to the bot — anything else (human-to-human chatter, classifier errors) fails closed to silence. See `docs/features/effort-routing.md`.\n\n## Project Structure\n\n```\nsrc/\n  app/\n    api/slack/route.ts    — Slack webhook handler (mention, reaction, thread follow-up)\n    api/cron/sweep/route.ts — Recovery sweep (retries turns killed mid-processing)\n    page.tsx              — Landing page\n  lib/\n    slack.ts              — Slack client, signature verification, message helpers\n    claude.ts             — Anthropic client, system prompt assembly, agent loop\n    github.ts             — Octokit client (search, read, issues, PRs, commits, tree)\n    knowledge.ts          — Knowledge base (Vercel KV sorted set)\n    feedback.ts           — Feedback storage (Vercel KV) and Q&A context\n    issue-batch.ts        — Pure helpers for multi-proposal formatting and bulk-confirm matching\n    effort-routing.ts     — Turn classifier (follow-up shouldReply gate + effort buckets → round/answer budgets)\n    idempotency.ts        — Content-addressed idempotent execution (issue creation, #125)\n    recovery.ts           — Processing markers + sweep decisions for died turns (#125)\n    turn-runner.ts        — Mention/follow-up turn bodies (shared by webhook route + sweep)\n    config.ts             — .battle-mage.json loader (path annotations with graduated trust)\n    repo-index.ts         — Repository topic index (lazy rebuild on SHA change)\n    auto-correct.ts       — Stale KB entry detection and doc reference flagging\n    progress.ts           — Progress message formatter (tool → emoji + status)\n    mrkdwn.ts             — Markdown → Slack mrkdwn converter\n    logger.ts             — Structured JSON logging with request correlation IDs\n    references.ts         — Typed references: ranking, dedup, emoji formatting\n    split-reply.ts        — Pure splitter for long Slack replies (paragraph/line/word/fence-aware)\n    kv.ts                 — @upstash/redis wrapper with Sentry observability (kv_op + kv_error events)\n    vector.ts             — @upstash/vector wrapper (non-throwing, vector_op/vector_error events, 2s timeout)\n    retrieval.ts          — Pure hybrid-retrieval primitives (RRF fusion, age boost, lexical ranking)\n  tools/\n    index.ts              — Tool registry and executor\n    search-code.ts        — GitHub code search tool\n    search-repo.ts        — Hybrid code + docs search (lexical + semantic, RRF-fused)\n    read-file.ts          — GitHub file/directory read tool\n    list-issues.ts        — GitHub issue list/lookup tool\n    list-commits.ts       — Recent commits on main (with dates)\n    list-prs.ts           — Recent pull requests (open/merged/closed)\n    create-issue.ts       — GitHub issue proposal + parser\n    save-knowledge.ts     — Knowledge base save (Vercel KV)\ndocs/\n  setup.md                — Complete setup guide (Slack, GitHub, Vercel, KV)\n  usage.md                — How to use the bot day-to-day\n  architecture.md         — How the internals work (agent loop, prompt, tools)\n  contributing.md         — Contributing guide (TDD, CI, fork workflow)\n  troubleshooting.md      — Common issues and fixes\n  features/\n    repo-index.md         — Lazy-rebuilt topic map (KV-cached)\n    knowledge-base.md     — Vercel KV knowledge base\n    source-hierarchy.md   — Source-of-truth hierarchy (5 levels)\n    auto-correction.md    — Auto-correction on 👎 reactions\n    progress-ux.md        — Live progress updates (emoji + status)\n    message-splitting.md  — Long-reply chunking architecture (split-reply + boundary guard)\n    issue-creation.md     — Batch issue proposals + bulk-confirm flow\n    effort-routing.md     — Fast-model follow-up gate + per-turn effort budgets\n    hybrid-retrieval.md   — Lexical + semantic retrieval (Upstash Vector, RRF fusion, degradation)\nTELEMETRY.md              — Incident-response event vocabulary + Sentry query recipes\nvercel.json               — Vercel Cron schedule for the recovery sweep\n```\n\n## Testing (TDD Required)\n\nAll new features must use test-driven development:\n\n1. **RED** — Write failing tests first\n2. **GREEN** — Implement minimum code to pass\n3. **REFACTOR** — Clean up while keeping tests green\n\nRules:\n- Test files colocated: `foo.ts` → `foo.test.ts`\n- Tests run via `npm test` (Vitest)\n- CI blocks merge on test failure (GitHub Actions)\n- Extract pure functions for testability — keep side effects in the handler layer\n\n```bash\nnpm test              # Run all tests once\nnpm run test:watch    # Watch mode for development\n```\n\n## Environment Variables\n\n| Variable | Description |\n|----------|-------------|\n| `SLACK_BOT_TOKEN` | Slack bot OAuth token (`xoxb-...`) |\n| `SLACK_SIGNING_SECRET` | Slack app signing secret |\n| `ANTHROPIC_API_KEY` | Claude API key |\n| `GITHUB_PAT_BM` | Fine-grained PAT for target repo |\n| `GITHUB_OWNER` | GitHub org/user |\n| `GITHUB_REPO` | Repository name |\n| `CRON_SECRET` | Bearer token for `/api/cron/sweep` (unset = sweep denies all requests) |\n| `UPSTASH_VECTOR_REST_URL` | Optional — Upstash Vector index (built-in embedding model) for hybrid retrieval |\n| `UPSTASH_VECTOR_REST_TOKEN` | Optional — Vector index token; unset pair degrades to lexical-only |\n\n\n## Repository Map (auto-generated index)\n\nThis map shows the key areas of the repo. Use it to jump directly to relevant files with `read_file` instead of searching blind. The map is rebuilt automatically when the repo changes.\n\n- *documentation*: .claude/agents/architect.md, .claude/agents/backend-expert.md, .claude/agents/doc-librarian.md, .claude/agents/frontend-expert.md, .claude/agents/issue-maintainer.md, .claude/agents/qa-engineer.md, .claude/skills/wizard/CHECKLISTS.md, .claude/skills/wizard/PATTERNS.md (+25 more)\n- *configuration*: .env.example, .github/workflows/ci.yml, .mcp.json, package-lock.json, package.json, slack-app-manifest.yaml, tsconfig.json, vercel.json\n- *ci-cd*: .github/workflows/ci.yml\n- *testing*: src/app/api/cron/sweep/route.test.ts, src/evals/fixtures/anti-narration.test.ts, src/evals/fixtures/brevity.test.ts, src/evals/fixtures/mrkdwn-correctness.test.ts, src/evals/fixtures/reference-accuracy.test.ts, src/evals/fixtures/should-reply.test.ts, src/evals/rubric.test.ts, src/lib/api-error.test.ts (+32 more)\n- *api*: src/app/api/cron/sweep/route.test.ts, src/app/api/cron/sweep/route.ts, src/app/api/slack/route.ts\n\n## Thread Participants\n\nWhen referring to a participant below, use the exact `<@USERID>` token from the list — never a bare `@name` (Slack only renders the `<@...>` form as a real mention). If someone is not in this list, don't try to @-mention them.\n\n- vlad (<@U0VJK>)\n"
+          }
+        ],
+        "tools": [
+          {
+            "name": "search_code",
+            "description": "Search for code across the repository. Returns matching file paths with relevance scores. Use this to find where specific functions, classes, patterns, or keywords exist in the codebase.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Search query — can be a function name, class name, keyword, or code pattern"
+                }
+              },
+              "required": [
+                "query"
+              ]
+            }
+          },
+          {
+            "name": "read_file",
+            "description": "Read the contents of a file from the repository. Returns the full file content. For directories, returns a listing of entries. Use this to verify code exists and understand implementation details before answering questions.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "File path relative to repo root, e.g. 'src/app.ts'"
+                },
+                "ref": {
+                  "type": "string",
+                  "description": "Optional git ref (branch, tag, or SHA). Defaults to the default branch."
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          {
+            "name": "list_issues",
+            "description": "List GitHub issues sorted by most recently updated. Can filter by state and labels. Results include dates so you can assess recency.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "open",
+                    "closed",
+                    "all"
+                  ],
+                  "description": "Filter by issue state. Defaults to 'open'."
+                },
+                "labels": {
+                  "type": "string",
+                  "description": "Comma-separated list of label names to filter by, e.g. 'bug,high-priority'"
+                },
+                "issue_number": {
+                  "type": "number",
+                  "description": "If provided, fetches a single issue by number instead of listing."
+                }
+              },
+              "required": []
+            }
+          },
+          {
+            "name": "list_commits",
+            "description": "List recent commits on the main branch, newest first. Use this to understand what work has been done recently — especially useful for 'what's new' or 'recent changes' questions.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "count": {
+                  "type": "number",
+                  "description": "Number of recent commits to return. Defaults to 10."
+                }
+              },
+              "required": []
+            }
+          },
+          {
+            "name": "list_prs",
+            "description": "List recent pull requests, newest first. Shows open, merged, and closed PRs. Use this to understand what features and fixes have been shipped or are in progress.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "open",
+                    "closed",
+                    "all"
+                  ],
+                  "description": "Filter by PR state. Defaults to 'all'."
+                },
+                "count": {
+                  "type": "number",
+                  "description": "Number of recent PRs to return. Defaults to 10."
+                }
+              },
+              "required": []
+            }
+          },
+          {
+            "name": "create_issue",
+            "description": "Propose a new GitHub issue. This does NOT create the issue immediately — it drafts a proposal that the user must explicitly confirm in Slack before it is created. Use this when a user asks you to file a bug, feature request, or task.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "description": "Issue title — concise and descriptive"
+                },
+                "body": {
+                  "type": "string",
+                  "description": "Issue body in Markdown — include context, steps to reproduce (for bugs), or acceptance criteria (for features)"
+                },
+                "labels": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Optional labels to apply, e.g. ['bug', 'high-priority']"
+                }
+              },
+              "required": [
+                "title",
+                "body"
+              ]
+            }
+          },
+          {
+            "name": "search_repo",
+            "description": "Hybrid search across BOTH code and documentation — combines lexical code search with semantic (meaning-based) doc search. Best for conceptual questions like \"how does X work\" or \"where is Y handled\" where you don't know the exact identifier. For an exact function/class/keyword, use search_code instead.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Natural-language or keyword query — a concept, feature, or question phrase"
+                }
+              },
+              "required": [
+                "query"
+              ]
+            }
+          },
+          {
+            "name": "save_knowledge",
+            "description": "Save a correction or learned fact to the persistent knowledge base (Vercel KV). Use this when a user corrects you, provides insider knowledge about the codebase, or clarifies something that would be wrong in future conversations. The entry is saved immediately — no confirmation needed. Does NOT write to the GitHub repo.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "entry": {
+                  "type": "string",
+                  "description": "A concise factual statement to remember. Write it as a standalone fact, not a conversation snippet. E.g. 'The auth module lives in app/Services/Auth, not app/Http/Auth' or 'The API rate limit is 120 req/min, not 60'."
+                }
+              },
+              "required": [
+                "entry"
+              ]
+            },
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "what does the reply splitter do?\n\n[Effort hint: this looks like a quick question. Answer directly with minimal tool use and keep the answer under ~1,200 characters.]"
+          }
+        ]
+      },
+      "response": {
+        "model": "claude-sonnet-4-6",
+        "id": "msg_cassette",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "toolu_01EGBdfhaxPXqugdE5rCssPA",
+            "name": "read_file",
+            "input": {
+              "path": "src/lib/split-reply.ts"
+            },
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "stop_reason": "tool_use",
+        "stop_sequence": null,
+        "stop_details": null,
+        "usage": {
+          "input_tokens": 3003,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 3915,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          },
+          "output_tokens": 62,
+          "service_tier": "standard",
+          "inference_geo": "global"
+        }
+      },
+      "synthetic": false
+    },
+    {
+      "boundary": "github",
+      "requestHash": "sha256:6e1845871c8a0dc732e18d9d54c4b0fb77bcf8fc18fd087b37395bdf5db2eac2",
+      "requestSummary": {
+        "fn": "readFile",
+        "args": "[\"src/lib/split-reply.ts\",null]"
+      },
+      "request": {
+        "fn": "readFile",
+        "args": [
+          "src/lib/split-reply.ts",
+          null
+        ]
+      },
+      "response": {
+        "path": "src/lib/split-reply.ts",
+        "content": "// ── Slack reply splitter ──────────────────────────────────────────────\n// Long answers are split into multiple thread replies rather than\n// truncated at a character cap. Truncation silently eats content\n// (including the user's call-to-action in issue-proposal messages)\n// and still trips Slack's msg_too_long because the \"40K limit\" is not\n// the only constraint in play. Splitting removes the limit entirely\n// from the happy path.\n//\n// Priority order when picking a cut point: paragraph (\\n\\n) > line (\\n)\n// > word (space) > hard-cut. Code fences are tracked and re-opened on\n// the next chunk so ``` blocks stay valid.\n//\n// Pure function, no I/O. Colocated tests in split-reply.test.ts.\n\nexport const DEFAULT_MAX_CHARS = 3_000;\nexport const DEFAULT_MAX_LINES = 60;\nexport const CONTINUATION_MARKER = \"\\n\\n_[continued ↓]_\";\n\nexport interface SplitOptions {\n  maxChars?: number;\n  maxLines?: number;\n}\n\ninterface FenceState {\n  // Language tag (e.g. \"python\", \"typescript\") or \"\" for fence with no tag.\n  // undefined means no fence currently open.\n  openLang: string | undefined;\n  // The fence marker (``` or ~~~) currently open.\n  openMarker: \"```\" | \"~~~\" | undefined;\n}\n\nconst FENCE_RE = /^(```|~~~)([\\w+-]*)\\s*$/;\n\n// Walk every line; toggle fence state on opening/closing markers.\n// Returns the fence state at the END of the given text.\nfunction trackFenceState(text: string, initial: FenceState): FenceState {\n  let state = { ...initial };\n  for (const line of text.split(\"\\n\")) {\n    const match = FENCE_RE.exec(line);\n    if (!match) continue;\n    const marker = match[1] as \"```\" | \"~~~\";\n    const lang = match[2] ?? \"\";\n    if (state.openMarker === undefined) {\n      state = { openMarker: marker, openLang: lang };\n    } else if (state.openMarker === marker) {\n      state = { openMarker: undefined, openLang: undefined };\n    }\n    // Mismatched close (e.g. ~~~ inside a ``` block) — ignore as text.\n  }\n  return state;\n}\n\n// Find the best cut point in `text` at or before `limit` characters.\n// Returns the index AT which to cut (exclusive): text.slice(0, cut) is\n// the chunk; text.slice(cut) is the remainder. Whitespace at the boundary\n// is consumed into the cut point.\nfunction findCutIndex(text: string, limit: number): number {\n  if (text.length <= limit) return text.length;\n\n  // 1. Paragraph boundary\n  const paragraphCut = text.lastIndexOf(\"\\n\\n\", limit);\n  if (paragraphCut > 0) return paragraphCut;\n\n  // 2. Line boundary\n  const lineCut = text.lastIndexOf(\"\\n\", limit);\n  if (lineCut > 0) return lineCut;\n\n  // 3. Word boundary (space)\n  const spaceCut = text.lastIndexOf(\" \", limit);\n  if (spaceCut > 0) return spaceCut;\n\n  // 4. Hard cut — but be careful about surrogate pairs. If `limit` lands\n  // on the low half of a surrogate pair, back up one so the emoji stays\n  // whole on the earlier chunk.\n  const codeUnit = text.charCodeAt(limit - 1);\n  if (codeUnit >= 0xD800 && codeUnit <= 0xDBFF) {\n    return limit - 1;\n  }\n  return limit;\n}\n\n// Enforce the line budget BEFORE the char budget: if `text` has more\n// than `maxLines` lines, truncate to that many lines first, then let\n// the char-budget cut further if needed.\nfunction applyLineBudget(text: string, maxLines: number): string {\n  const lines = text.split(\"\\n\");\n  if (lines.length <= maxLines) return text;\n  return lines.slice(0, maxLines).join(\"\\n\");\n}\n\nexport function splitSlackReplyText(\n  text: string,\n  options?: SplitOptions,\n): string[] {\n  const maxChars = options?.maxChars ?? DEFAULT_MAX_CHARS;\n  const maxLines = options?.maxLines ?? DEFAULT_MAX_LINES;\n\n  const trimmed = text.trim();\n  if (trimmed.length === 0) return [];\n\n  // Fast path: whole message fits both budgets.\n  const fitsChars = trimmed.length <= maxChars;\n  const fitsLines = trimmed.split(\"\\n\").length <= maxLines;\n  if (fitsChars && fitsLines) return [trimmed];\n\n  // Reserve room for the continuation marker on intermediate chunks so\n  // appending it can't push the chunk back over budget — both in chars\n  // and in lines. The marker is `\\n\\n_[continued ↓]_` → 2 extra newlines.\n  const markerLen = CONTINUATION_MARKER.length;\n  const markerLines = (CONTINUATION_MARKER.match(/\\n/g) ?? []).length;\n  const chunkBudget = Math.max(1, maxChars - markerLen);\n  // Also reserve 1 line for a potential fence-close (\"```\") on a split\n  // that lands inside a code block.\n  const intermediateLineBudget = Math.max(1, maxLines - markerLines - 1);\n\n  const chunks: string[] = [];\n  let remaining = trimmed;\n  let fenceState: FenceState = { openMarker: undefined, openLang: undefined };\n\n  // Safety bound: we'll never produce more than `text.length` chunks,\n  // and each iteration strictly shrinks `remaining`.\n  const maxIterations = Math.max(10, Math.ceil(trimmed.length / Math.max(1, chunkBudget)) + 4);\n  let iter = 0;\n\n  while (remaining.length > 0) {\n    if (iter++ > maxIterations) {\n      // Hard backstop — should be unreachable given the cut-advances-invariant.\n      chunks.push(remaining);\n      break;\n    }\n\n    // Does the remainder fit as the final chunk (no marker needed)?\n    const finalFitsChars = remaining.length <= maxChars;\n    const finalFitsLines = remaining.split(\"\\n\").length <= maxLines;\n    if (finalFitsChars && finalFitsLines) {\n      // Re-open any inherited fence so the final chunk is self-contained.\n      const prefixed = fenceState.openMarker !== undefined\n        ? `${fenceState.openMarker}${fenceState.openLang}\\n${remaining}`\n        : remaining;\n      chunks.push(prefixed);\n      break;\n    }\n\n    // Apply line budget first (cheaper), then char budget.\n    // Use the intermediate line budget since this chunk will get a marker\n    // (and possibly a fence-close) appended.\n    const lineBudgeted = applyLineBudget(remaining, intermediateLineBudget);\n    const cut = findCutIndex(lineBudgeted, chunkBudget);\n    if (cut <= 0) {\n      // Degenerate — force progress with a hard cut at the chunk budget.\n      const forced = Math.min(chunkBudget, remaining.length);\n      const rawChunk = remaining.slice(0, forced);\n      remaining = remaining.slice(forced).replace(/^\\s+/, \"\");\n      const finalized = finalizeChunk(rawChunk, fenceState, /*hasMore=*/ remaining.length > 0);\n      chunks.push(finalized.text);\n      fenceState = finalized.fenceState;\n      continue;\n    }\n\n    const rawChunk = remaining.slice(0, cut);\n    remaining = remaining.slice(cut).replace(/^\\s+/, \"\");\n    const finalized = finalizeChunk(rawChunk, fenceState, /*hasMore=*/ remaining.length > 0);\n    chunks.push(finalized.text);\n    fenceState = finalized.fenceState;\n  }\n\n  // Visual-polish: drop the continuation marker in the exact 2-chunk case.\n  if (chunks.length === 2) {\n    chunks[0] = (chunks[0] ?? \"\").replace(CONTINUATION_MARKER, \"\").trimEnd();\n  }\n\n  return chunks.filter((c) => c.trim().length > 0);\n}\n\n// Given a raw chunk + the fence state coming IN, produce:\n// - the finalized chunk text (prefixed with fence re-open if needed,\n//   suffixed with fence close + continuation marker if needed)\n// - the fence state to carry into the NEXT chunk\nfunction finalizeChunk(\n  rawChunk: string,\n  incomingFence: FenceState,\n  hasMore: boolean,\n): { text: string; fenceState: FenceState } {\n  // Prefix with fence re-open if we're inheriting one from a prior chunk.\n  let text = incomingFence.openMarker !== undefined\n    ? `${incomingFence.openMarker}${incomingFence.openLang}\\n${rawChunk}`\n    : rawChunk;\n\n  // Track fence state ACROSS the prefixed text (the re-opened fence might\n  // close within this chunk, in which case we don't need to carry state).\n  const outgoing = trackFenceState(text, { openMarker: undefined, openLang: undefined });\n\n  // If a fence is still open at end-of-chunk AND there's more content to\n  // come, close the fence here and the next chunk will re-open it.\n  if (outgoing.openMarker !== undefined && hasMore) {\n    text = `${text.trimEnd()}\\n${outgoing.openMarker}`;\n  }\n\n  // Continuation marker on non-final chunks.\n  if (hasMore) {\n    text = text + CONTINUATION_MARKER;\n  }\n\n  // Carry the fence state forward only if this chunk ends with an open fence\n  // and there's more content.\n  const carry: FenceState = hasMore && outgoing.openMarker !== undefined\n    ? outgoing\n    : { openMarker: undefined, openLang: undefined };\n\n  return { text, fenceState: carry };\n}\n",
+        "size": 8428,
+        "url": "https://github.com/vlad-ko/battle-mage/blob/main/src/lib/split-reply.ts"
+      },
+      "synthetic": false
+    },
+    {
+      "boundary": "anthropic",
+      "requestHash": "sha256:6109fc0fc2d7bc8c876b66c84adb7988fe277189f64ed43999398df174cef056",
+      "requestSummary": {
+        "model": "claude-sonnet-4-6",
+        "messageCount": 3,
+        "lastRole": "user",
+        "lastContentHead": "[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_01EGBdfhaxPXqugdE5rCssPA\",\"content\":\"**src/lib/split-reply.ts** (8428 bytes)"
+      },
+      "request": {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 4096,
+        "system": [
+          {
+            "type": "text",
+            "text": "<identity>\nYou are Battle Mage (@bm), an AI assistant embedded in Slack with read access to the vlad-ko/battle-mage GitHub repository. You answer engineering questions in-thread. You never post at channel root.\n</identity>\n\n<core-principles>\n1. *Verify before asserting* — Always use your tools to check that files, methods, and classes actually exist before referencing them. Never hallucinate code references.\n2. *Cite specifically* — When referencing code, include the file path and line numbers. Link to GitHub when possible.\n3. *Thread-only* — You are responding in a Slack thread. Keep answers concise but thorough.\n4. *Issue creation requires confirmation* — If asked to create a GitHub issue, propose it with title, body, and labels. The user must explicitly confirm before it is created.\n5. *Batch proposals* — When the user asks for multiple issues at once (e.g. \"file bugs for X, Y, Z\" or \"create all these as separate issues\"), call `create_issue` once for each proposed issue in the SAME turn. All proposals will be shown together and approved with a single :white_check_mark: reaction or by the user saying \"confirm all\" in the thread. Do not file them one at a time across multiple turns.\n</core-principles>\n\n<source-hierarchy>\n## Source-of-Truth Hierarchy\n\nWhen answering questions, you draw from multiple sources. These sources have different reliability levels. When they conflict, prefer higher-ranked sources and flag the discrepancy to the user.\n\n1. *Source code* — The actual implementation. Code is the ultimate source of truth. Always verify claims against the code before asserting them.\n2. *Tests* — Encode expected behavior. If tests pass, the tested behavior is correct.\n3. *Documentation* (docs/, CLAUDE.md, README) — Describes intent but can drift from reality. If documentation contradicts code, trust the code and flag the stale documentation.\n4. *Knowledge base* (Vercel KV corrections) — User corrections from Slack. Useful but can become outdated as code changes. If a KB entry contradicts what you see in the code, the code is authoritative — flag the discrepancy so the team can update the KB.\n5. *Feedback signals* (👍/👎 reactions) — The least authoritative signal. Subjective quality preferences. Never treat feedback as factual truth.\n\n*Conflict detection rules:*\n- For code-level questions, always read the actual code before asserting anything from docs, KB, or memory.\n- When you find a discrepancy between sources, include both the code truth and the stale source in your answer so the user can decide what to update.\n- Never silently prefer a lower-ranked source over a higher-ranked one.\n</source-hierarchy>\n\n<tools>\nAvailable GitHub tools (do not invent names):\n- *search_code*: Search for code patterns, function names, classes across the repo\n- *read_file*: Read file contents or list directory entries\n- *list_issues*: List or look up GitHub issues\n- *list_commits*: List recent commits on main — newest first, with dates\n- *list_prs*: List recent pull requests — shows merged/open status with dates\n- *create_issue*: Propose a new GitHub issue (requires user confirmation)\n- *search_repo*: Hybrid search across code AND docs — lexical code search fused with semantic (meaning-based) doc search. Best for conceptual questions\n- *save_knowledge*: Save a correction or fact to the persistent knowledge base\n</tools>\n\n<search-strategy>\n## Search Strategy — CRITICAL\n\nYou have a maximum of 15 tool rounds per question. Budget them wisely.\n\n*Step 1: Check the Repository Map FIRST* — Look at the Repository Map section in this prompt. It lists the key areas of the repo by topic (authentication, deployment, security, etc.). If the question maps to a topic, go directly to the listed files with `read_file`. Do NOT search if the map already tells you where to look.\n\n*Step 2: Search only as fallback* — Search ONLY if the repo map doesn't cover the topic. Pick the right search tool: for a conceptual question (\"how does X work\", \"where do we handle Y\") use `search_repo` — it fuses code search with semantic doc search; for an exact identifier (a specific function/class/keyword) use `search_code`. A search returns up to 10 results — don't read all of them.\n\n*Step 3: Read 2-3 files maximum* — For most questions, 2-3 files from the relevant topic is enough. If you've read 3 files and have enough to answer, stop reading and synthesize.\n\n*Step 4: Synthesize early* — Start forming your answer after 2-4 tool rounds. Don't exhaust all 15 rounds trying to be exhaustive. A good focused answer is better than a comprehensive one that takes 5 minutes.\n\n*Step 5: Use list tools sparingly* — `list_issues`, `list_commits`, and `list_prs` are for \"what's new?\" questions. Don't call them for code questions. Don't call multiple list tools in the same question unless specifically asked about activity.\n\n*Anti-patterns to avoid:*\n- Calling `search_code` when the repo map already points to the right files\n- Reading 5+ files in a single question\n- Calling `list_issues` + `list_commits` + `list_prs` in the same question\n- Hitting the tool limit without producing an answer\n- Trying to give an exhaustive answer to a vague question — suggest a follow-up to narrow the question instead\n</search-strategy>\n\n<knowledge-base-usage>\n## Knowledge Base — IMPORTANT\n\nYou have a persistent knowledge base stored in Vercel KV (not in the GitHub repo). Use it as follows:\n\n*When to save:*\n- A user corrects you (\"no, that's in app/Services not app/Http\")\n- A user shares non-obvious insider knowledge (\"we deprecated that endpoint last week\")\n- You discover something surprising that contradicts the codebase docs\n- A user says \"remember this\" or similar\n\n*How to save:*\n- Use the `save_knowledge` tool IMMEDIATELY — do NOT search the repo first. When a user says \"remember this\", \"memorize\", \"save to KB\", or provides a correction, call save_knowledge as your very first action. No research needed.\n- Write entries as standalone facts, not conversation snippets\n- Be specific: include file paths, class names, version numbers\n- Good: \"The auth module is in app/Services/Auth, not app/Http/Auth\"\n- Bad: \"User said auth is somewhere else\"\n\n*When reading:*\n- The most relevant KB entries for the current question are loaded below (top matches, not the full KB). They can become stale — always check the code first for code-level questions.\n- If a knowledge entry conflicts with what you see in the code, the code is authoritative — flag the discrepancy.\n</knowledge-base-usage>\n\n<output-contract>\n## Output Contract — CRITICAL\n\nYou write for Slack, not GitHub. Every response must obey these rules.\n\n*Slack mrkdwn format (NOT standard Markdown):*\n- Bold: *text* (single asterisk, NOT double)\n- Italic: _text_ (underscore)\n- Code: `text` (backtick)\n- Code blocks: ```text``` (triple backtick)\n- Links: <url|text>\n- Lists: use \"- \" or \"• \"\n- NEVER use # or ## or ### for headings — Slack does not support them. Use *bold text* on its own line instead.\n- NEVER use **double asterisks** — Slack renders them literally as **text**.\n- NEVER use [text](url) markdown links — Slack renders them literally. Use <url|text> instead.\n- NEVER use markdown tables (the pipe `|` row syntax) — Slack renders them broken. Use bullet lists instead.\n\n*Anti-narration — do NOT emit any of these phrases:*\n- \"let me check\"\n- \"i'll look into this\" / \"let me look\"\n- \"one moment\"\n- \"fetching now\"\n- \"hold on while i...\"\n- \"looking into that...\"\n\nPrefer a single result-focused reply after tool work completes. Don't pre-announce tool work or narrate intermediate steps — the user sees progress indicators separately.\n\n*Brevity:*\n- Lead with the direct answer in 2–3 sentences.\n- Target ~15 lines or fewer for a typical answer. Only go longer if the question genuinely requires depth.\n- Use bullets for supporting details, not prose paragraphs.\n- Skip editorializing: no \"what makes this special\", no marketing copy, no brochure-style overviews, no \"comprehensive overview\" essays. Just answer the question.\n- Skip sections like \"Development Maturity Indicators\" or \"Why This Is Impressive\" — the user didn't ask for a pitch.\n- Be direct and technical — this is an engineering team.\n- If the user wants more detail, they'll ask a follow-up.\n\n*Slack message budget — target one compact reply:*\n- Target **~3,000 characters** (≈60 lines) for your answer. Comparative or \"summarize our X\" questions are NOT an exception — condense aggressively.\n- Answers longer than the budget WILL be split across multiple thread replies automatically. That works, but a user absorbs one compact post much better than three long ones. Prefer concision.\n- When you'd want to go long: DON'T. Summarize the 3–5 key points, then point the user at specific files/PRs/issues via references. They can ask a narrower follow-up for detail on any one of them.\n- DO NOT quote or paraphrase tool results verbatim. Don't inline whole files. Don't write an essay comparing two systems when a bulleted contrast list + references will do.\n- When using `create_issue`, keep the proposal body under **~4,000 characters**: title, clear goal, 3–6 acceptance-criteria bullets, and the 1–2 most relevant file paths. Don't paste context dumps.\n- Your goal is a clear answer a human can absorb in ~30 seconds, with references they can follow for anything deeper. Not an essay.\n\n*Recency (today is 2026-07-01):*\n- Prefer the most recent activity first. When asked about \"recent developments\", \"status\", or \"what's new\", focus on the last 30 days.\n- For \"what's new\" questions, check MULTIPLE sources: `list_commits`, `list_prs`, `list_issues`. Recent commits and merged PRs are the strongest signals.\n- Skip `docs/archive/` — treat archive content as historical unless the user explicitly asks about history or past decisions.\n- If all the information you found is older than 30 days, say so — don't present stale data as current.\n</output-contract>",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          },
+          {
+            "type": "text",
+            "text": "\n\n<repo-context>\nOwner: vlad-ko\nRepository: battle-mage\n</repo-context>\n\n## Project Context (from CLAUDE.md)\n\n# Battle Mage (@bm)\n\nA Slack agent with Claude AI intelligence and full GitHub repo access — reads code, docs, issues, PRs, and commits. Creates issues on request. Invoke via `@bm` in Slack.\n\n## Architecture\n\n- **Runtime**: Vercel (Next.js serverless functions)\n- **Slack**: Webhook mode via Next.js API route (`/api/slack`), ack-then-process via `after()`\n- **AI**: Anthropic Claude API with tool use (8 tools, adaptive per-turn round budget: quick 4 / standard 10 / deep 15)\n- **GitHub**: Octokit REST API (fine-grained PAT, read-only for code/PRs, read-write for issues)\n- **Knowledge**: Vercel KV (corrections, feedback, repo index cache) + Upstash Vector (semantic recall for KB + docs, graceful lexical-only degradation)\n- **Context**: CLAUDE.md + KB + feedback + repo index + source hierarchy + search strategy + recency/brevity rules\n- **Progress**: Live thinking messages with contextual emoji, deleted on answer\n- **Formatting**: Markdown-to-Slack mrkdwn conversion, typed references with emoji (📄📖🎫🔀📜), ranked by source-of-truth hierarchy, capped at 7\n- **Auto-correct**: Thumbs-down flags stale KB entries for user confirmation, stores pending correction state\n\n## Development\n\n```bash\nnpm install\ncp .env.example .env.local  # Fill in credentials\nnpm run dev                  # http://localhost:3000\n```\n\n## Key Design Decisions\n\n1. **Webhook mode, not Socket mode** — Vercel serverless functions can't maintain persistent WebSocket connections. Webhook mode works naturally with serverless.\n\n2. **Ack-then-process pattern** — Slack requires 200 OK within 3 seconds. The API route acks immediately, then processes the Claude + GitHub calls asynchronously via `waitUntil()`.\n\n3. **Thread-only replies** — The bot NEVER posts at channel root. All responses go in the thread where it was mentioned.\n\n4. **Verify before asserting** — The agent uses GitHub tools to check that files, methods, and classes actually exist before referencing them. No hallucinated code references.\n\n5. **Issue creation requires confirmation** — The agent can propose one or many GitHub issues in a single turn but NEVER creates any without explicit approval. Approval is either a ✅ reaction on the proposal message or a short thread reply like \"confirm all\" / \"yes\". See `docs/features/issue-creation.md`.\n\n6. **Thread follow-ups** — Once the bot is participating in a thread, users can send follow-up messages without re-mentioning. The bot checks for its own prior replies, then a fast-model classifier decides whether the message is actually addressed to the bot — anything else (human-to-human chatter, classifier errors) fails closed to silence. See `docs/features/effort-routing.md`.\n\n## Project Structure\n\n```\nsrc/\n  app/\n    api/slack/route.ts    — Slack webhook handler (mention, reaction, thread follow-up)\n    api/cron/sweep/route.ts — Recovery sweep (retries turns killed mid-processing)\n    page.tsx              — Landing page\n  lib/\n    slack.ts              — Slack client, signature verification, message helpers\n    claude.ts             — Anthropic client, system prompt assembly, agent loop\n    github.ts             — Octokit client (search, read, issues, PRs, commits, tree)\n    knowledge.ts          — Knowledge base (Vercel KV sorted set)\n    feedback.ts           — Feedback storage (Vercel KV) and Q&A context\n    issue-batch.ts        — Pure helpers for multi-proposal formatting and bulk-confirm matching\n    effort-routing.ts     — Turn classifier (follow-up shouldReply gate + effort buckets → round/answer budgets)\n    idempotency.ts        — Content-addressed idempotent execution (issue creation, #125)\n    recovery.ts           — Processing markers + sweep decisions for died turns (#125)\n    turn-runner.ts        — Mention/follow-up turn bodies (shared by webhook route + sweep)\n    config.ts             — .battle-mage.json loader (path annotations with graduated trust)\n    repo-index.ts         — Repository topic index (lazy rebuild on SHA change)\n    auto-correct.ts       — Stale KB entry detection and doc reference flagging\n    progress.ts           — Progress message formatter (tool → emoji + status)\n    mrkdwn.ts             — Markdown → Slack mrkdwn converter\n    logger.ts             — Structured JSON logging with request correlation IDs\n    references.ts         — Typed references: ranking, dedup, emoji formatting\n    split-reply.ts        — Pure splitter for long Slack replies (paragraph/line/word/fence-aware)\n    kv.ts                 — @upstash/redis wrapper with Sentry observability (kv_op + kv_error events)\n    vector.ts             — @upstash/vector wrapper (non-throwing, vector_op/vector_error events, 2s timeout)\n    retrieval.ts          — Pure hybrid-retrieval primitives (RRF fusion, age boost, lexical ranking)\n  tools/\n    index.ts              — Tool registry and executor\n    search-code.ts        — GitHub code search tool\n    search-repo.ts        — Hybrid code + docs search (lexical + semantic, RRF-fused)\n    read-file.ts          — GitHub file/directory read tool\n    list-issues.ts        — GitHub issue list/lookup tool\n    list-commits.ts       — Recent commits on main (with dates)\n    list-prs.ts           — Recent pull requests (open/merged/closed)\n    create-issue.ts       — GitHub issue proposal + parser\n    save-knowledge.ts     — Knowledge base save (Vercel KV)\ndocs/\n  setup.md                — Complete setup guide (Slack, GitHub, Vercel, KV)\n  usage.md                — How to use the bot day-to-day\n  architecture.md         — How the internals work (agent loop, prompt, tools)\n  contributing.md         — Contributing guide (TDD, CI, fork workflow)\n  troubleshooting.md      — Common issues and fixes\n  features/\n    repo-index.md         — Lazy-rebuilt topic map (KV-cached)\n    knowledge-base.md     — Vercel KV knowledge base\n    source-hierarchy.md   — Source-of-truth hierarchy (5 levels)\n    auto-correction.md    — Auto-correction on 👎 reactions\n    progress-ux.md        — Live progress updates (emoji + status)\n    message-splitting.md  — Long-reply chunking architecture (split-reply + boundary guard)\n    issue-creation.md     — Batch issue proposals + bulk-confirm flow\n    effort-routing.md     — Fast-model follow-up gate + per-turn effort budgets\n    hybrid-retrieval.md   — Lexical + semantic retrieval (Upstash Vector, RRF fusion, degradation)\nTELEMETRY.md              — Incident-response event vocabulary + Sentry query recipes\nvercel.json               — Vercel Cron schedule for the recovery sweep\n```\n\n## Testing (TDD Required)\n\nAll new features must use test-driven development:\n\n1. **RED** — Write failing tests first\n2. **GREEN** — Implement minimum code to pass\n3. **REFACTOR** — Clean up while keeping tests green\n\nRules:\n- Test files colocated: `foo.ts` → `foo.test.ts`\n- Tests run via `npm test` (Vitest)\n- CI blocks merge on test failure (GitHub Actions)\n- Extract pure functions for testability — keep side effects in the handler layer\n\n```bash\nnpm test              # Run all tests once\nnpm run test:watch    # Watch mode for development\n```\n\n## Environment Variables\n\n| Variable | Description |\n|----------|-------------|\n| `SLACK_BOT_TOKEN` | Slack bot OAuth token (`xoxb-...`) |\n| `SLACK_SIGNING_SECRET` | Slack app signing secret |\n| `ANTHROPIC_API_KEY` | Claude API key |\n| `GITHUB_PAT_BM` | Fine-grained PAT for target repo |\n| `GITHUB_OWNER` | GitHub org/user |\n| `GITHUB_REPO` | Repository name |\n| `CRON_SECRET` | Bearer token for `/api/cron/sweep` (unset = sweep denies all requests) |\n| `UPSTASH_VECTOR_REST_URL` | Optional — Upstash Vector index (built-in embedding model) for hybrid retrieval |\n| `UPSTASH_VECTOR_REST_TOKEN` | Optional — Vector index token; unset pair degrades to lexical-only |\n\n\n## Repository Map (auto-generated index)\n\nThis map shows the key areas of the repo. Use it to jump directly to relevant files with `read_file` instead of searching blind. The map is rebuilt automatically when the repo changes.\n\n- *documentation*: .claude/agents/architect.md, .claude/agents/backend-expert.md, .claude/agents/doc-librarian.md, .claude/agents/frontend-expert.md, .claude/agents/issue-maintainer.md, .claude/agents/qa-engineer.md, .claude/skills/wizard/CHECKLISTS.md, .claude/skills/wizard/PATTERNS.md (+25 more)\n- *configuration*: .env.example, .github/workflows/ci.yml, .mcp.json, package-lock.json, package.json, slack-app-manifest.yaml, tsconfig.json, vercel.json\n- *ci-cd*: .github/workflows/ci.yml\n- *testing*: src/app/api/cron/sweep/route.test.ts, src/evals/fixtures/anti-narration.test.ts, src/evals/fixtures/brevity.test.ts, src/evals/fixtures/mrkdwn-correctness.test.ts, src/evals/fixtures/reference-accuracy.test.ts, src/evals/fixtures/should-reply.test.ts, src/evals/rubric.test.ts, src/lib/api-error.test.ts (+32 more)\n- *api*: src/app/api/cron/sweep/route.test.ts, src/app/api/cron/sweep/route.ts, src/app/api/slack/route.ts\n\n## Thread Participants\n\nWhen referring to a participant below, use the exact `<@USERID>` token from the list — never a bare `@name` (Slack only renders the `<@...>` form as a real mention). If someone is not in this list, don't try to @-mention them.\n\n- vlad (<@U0VJK>)\n"
+          }
+        ],
+        "tools": [
+          {
+            "name": "search_code",
+            "description": "Search for code across the repository. Returns matching file paths with relevance scores. Use this to find where specific functions, classes, patterns, or keywords exist in the codebase.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Search query — can be a function name, class name, keyword, or code pattern"
+                }
+              },
+              "required": [
+                "query"
+              ]
+            }
+          },
+          {
+            "name": "read_file",
+            "description": "Read the contents of a file from the repository. Returns the full file content. For directories, returns a listing of entries. Use this to verify code exists and understand implementation details before answering questions.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "File path relative to repo root, e.g. 'src/app.ts'"
+                },
+                "ref": {
+                  "type": "string",
+                  "description": "Optional git ref (branch, tag, or SHA). Defaults to the default branch."
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          {
+            "name": "list_issues",
+            "description": "List GitHub issues sorted by most recently updated. Can filter by state and labels. Results include dates so you can assess recency.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "open",
+                    "closed",
+                    "all"
+                  ],
+                  "description": "Filter by issue state. Defaults to 'open'."
+                },
+                "labels": {
+                  "type": "string",
+                  "description": "Comma-separated list of label names to filter by, e.g. 'bug,high-priority'"
+                },
+                "issue_number": {
+                  "type": "number",
+                  "description": "If provided, fetches a single issue by number instead of listing."
+                }
+              },
+              "required": []
+            }
+          },
+          {
+            "name": "list_commits",
+            "description": "List recent commits on the main branch, newest first. Use this to understand what work has been done recently — especially useful for 'what's new' or 'recent changes' questions.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "count": {
+                  "type": "number",
+                  "description": "Number of recent commits to return. Defaults to 10."
+                }
+              },
+              "required": []
+            }
+          },
+          {
+            "name": "list_prs",
+            "description": "List recent pull requests, newest first. Shows open, merged, and closed PRs. Use this to understand what features and fixes have been shipped or are in progress.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "open",
+                    "closed",
+                    "all"
+                  ],
+                  "description": "Filter by PR state. Defaults to 'all'."
+                },
+                "count": {
+                  "type": "number",
+                  "description": "Number of recent PRs to return. Defaults to 10."
+                }
+              },
+              "required": []
+            }
+          },
+          {
+            "name": "create_issue",
+            "description": "Propose a new GitHub issue. This does NOT create the issue immediately — it drafts a proposal that the user must explicitly confirm in Slack before it is created. Use this when a user asks you to file a bug, feature request, or task.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "description": "Issue title — concise and descriptive"
+                },
+                "body": {
+                  "type": "string",
+                  "description": "Issue body in Markdown — include context, steps to reproduce (for bugs), or acceptance criteria (for features)"
+                },
+                "labels": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Optional labels to apply, e.g. ['bug', 'high-priority']"
+                }
+              },
+              "required": [
+                "title",
+                "body"
+              ]
+            }
+          },
+          {
+            "name": "search_repo",
+            "description": "Hybrid search across BOTH code and documentation — combines lexical code search with semantic (meaning-based) doc search. Best for conceptual questions like \"how does X work\" or \"where is Y handled\" where you don't know the exact identifier. For an exact function/class/keyword, use search_code instead.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Natural-language or keyword query — a concept, feature, or question phrase"
+                }
+              },
+              "required": [
+                "query"
+              ]
+            }
+          },
+          {
+            "name": "save_knowledge",
+            "description": "Save a correction or learned fact to the persistent knowledge base (Vercel KV). Use this when a user corrects you, provides insider knowledge about the codebase, or clarifies something that would be wrong in future conversations. The entry is saved immediately — no confirmation needed. Does NOT write to the GitHub repo.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "entry": {
+                  "type": "string",
+                  "description": "A concise factual statement to remember. Write it as a standalone fact, not a conversation snippet. E.g. 'The auth module lives in app/Services/Auth, not app/Http/Auth' or 'The API rate limit is 120 req/min, not 60'."
+                }
+              },
+              "required": [
+                "entry"
+              ]
+            },
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "what does the reply splitter do?\n\n[Effort hint: this looks like a quick question. Answer directly with minimal tool use and keep the answer under ~1,200 characters.]"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_01EGBdfhaxPXqugdE5rCssPA",
+                "name": "read_file",
+                "input": {
+                  "path": "src/lib/split-reply.ts"
+                },
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "toolu_01EGBdfhaxPXqugdE5rCssPA",
+                "content": "**src/lib/split-reply.ts** (8428 bytes)\n```\n// ── Slack reply splitter ──────────────────────────────────────────────\n// Long answers are split into multiple thread replies rather than\n// truncated at a character cap. Truncation silently eats content\n// (including the user's call-to-action in issue-proposal messages)\n// and still trips Slack's msg_too_long because the \"40K limit\" is not\n// the only constraint in play. Splitting removes the limit entirely\n// from the happy path.\n//\n// Priority order when picking a cut point: paragraph (\\n\\n) > line (\\n)\n// > word (space) > hard-cut. Code fences are tracked and re-opened on\n// the next chunk so ``` blocks stay valid.\n//\n// Pure function, no I/O. Colocated tests in split-reply.test.ts.\n\nexport const DEFAULT_MAX_CHARS = 3_000;\nexport const DEFAULT_MAX_LINES = 60;\nexport const CONTINUATION_MARKER = \"\\n\\n_[continued ↓]_\";\n\nexport interface SplitOptions {\n  maxChars?: number;\n  maxLines?: number;\n}\n\ninterface FenceState {\n  // Language tag (e.g. \"python\", \"typescript\") or \"\" for fence with no tag.\n  // undefined means no fence currently open.\n  openLang: string | undefined;\n  // The fence marker (``` or ~~~) currently open.\n  openMarker: \"```\" | \"~~~\" | undefined;\n}\n\nconst FENCE_RE = /^(```|~~~)([\\w+-]*)\\s*$/;\n\n// Walk every line; toggle fence state on opening/closing markers.\n// Returns the fence state at the END of the given text.\nfunction trackFenceState(text: string, initial: FenceState): FenceState {\n  let state = { ...initial };\n  for (const line of text.split(\"\\n\")) {\n    const match = FENCE_RE.exec(line);\n    if (!match) continue;\n    const marker = match[1] as \"```\" | \"~~~\";\n    const lang = match[2] ?? \"\";\n    if (state.openMarker === undefined) {\n      state = { openMarker: marker, openLang: lang };\n    } else if (state.openMarker === marker) {\n      state = { openMarker: undefined, openLang: undefined };\n    }\n    // Mismatched close (e.g. ~~~ inside a ``` block) — ignore as text.\n  }\n  return state;\n}\n\n// Find the best cut point in `text` at or before `limit` characters.\n// Returns the index AT which to cut (exclusive): text.slice(0, cut) is\n// the chunk; text.slice(cut) is the remainder. Whitespace at the boundary\n// is consumed into the cut point.\nfunction findCutIndex(text: string, limit: number): number {\n  if (text.length <= limit) return text.length;\n\n  // 1. Paragraph boundary\n  const paragraphCut = text.lastIndexOf(\"\\n\\n\", limit);\n  if (paragraphCut > 0) return paragraphCut;\n\n  // 2. Line boundary\n  const lineCut = text.lastIndexOf(\"\\n\", limit);\n  if (lineCut > 0) return lineCut;\n\n  // 3. Word boundary (space)\n  const spaceCut = text.lastIndexOf(\" \", limit);\n  if (spaceCut > 0) return spaceCut;\n\n  // 4. Hard cut — but be careful about surrogate pairs. If `limit` lands\n  // on the low half of a surrogate pair, back up one so the emoji stays\n  // whole on the earlier chunk.\n  const codeUnit = text.charCodeAt(limit - 1);\n  if (codeUnit >= 0xD800 && codeUnit <= 0xDBFF) {\n    return limit - 1;\n  }\n  return limit;\n}\n\n// Enforce the line budget BEFORE the char budget: if `text` has more\n// than `maxLines` lines, truncate to that many lines first, then let\n// the char-budget cut further if needed.\nfunction applyLineBudget(text: string, maxLines: number): string {\n  const lines = text.split(\"\\n\");\n  if (lines.length <= maxLines) return text;\n  return lines.slice(0, maxLines).join(\"\\n\");\n}\n\nexport function splitSlackReplyText(\n  text: string,\n  options?: SplitOptions,\n): string[] {\n  const maxChars = options?.maxChars ?? DEFAULT_MAX_CHARS;\n  const maxLines = options?.maxLines ?? DEFAULT_MAX_LINES;\n\n  const trimmed = text.trim();\n  if (trimmed.length === 0) return [];\n\n  // Fast path: whole message fits both budgets.\n  const fitsChars = trimmed.length <= maxChars;\n  const fitsLines = trimmed.split(\"\\n\").length <= maxLines;\n  if (fitsChars && fitsLines) return [trimmed];\n\n  // Reserve room for the continuation marker on intermediate chunks so\n  // appending it can't push the chunk back over budget — both in chars\n  // and in lines. The marker is `\\n\\n_[continued ↓]_` → 2 extra newlines.\n  const markerLen = CONTINUATION_MARKER.length;\n  const markerLines = (CONTINUATION_MARKER.match(/\\n/g) ?? []).length;\n  const chunkBudget = Math.max(1, maxChars - markerLen);\n  // Also reserve 1 line for a potential fence-close (\"```\") on a split\n  // that lands inside a code block.\n  const intermediateLineBudget = Math.max(1, maxLines - markerLines - 1);\n\n  const chunks: string[] = [];\n  let remaining = trimmed;\n  let fenceState: FenceState = { openMarker: undefined, openLang: undefined };\n\n  // Safety bound: we'll never produce more than `text.length` chunks,\n  // and each iteration strictly shrinks `remaining`.\n  const maxIterations = Math.max(10, Math.ceil(trimmed.length / Math.max(1, chunkBudget)) + 4);\n  let iter = 0;\n\n  while (remaining.length > 0) {\n    if (iter++ > maxIterations) {\n      // Hard backstop — should be unreachable given the cut-advances-invariant.\n      chunks.push(remaining);\n      break;\n    }\n\n    // Does the remainder fit as the final chunk (no marker needed)?\n    const finalFitsChars = remaining.length <= maxChars;\n    const finalFitsLines = remaining.split(\"\\n\").length <= maxLines;\n    if (finalFitsChars && finalFitsLines) {\n      // Re-open any inherited fence so the final chunk is self-contained.\n      const prefixed = fenceState.openMarker !== undefined\n        ? `${fenceState.openMarker}${fenceState.openLang}\\n${remaining}`\n        : remaining;\n      chunks.push(prefixed);\n      break;\n    }\n\n    // Apply line budget first (cheaper), then char budget.\n    // Use the intermediate line budget since this chunk will get a marker\n    // (and possibly a fence-close) appended.\n    const lineBudgeted = applyLineBudget(remaining, intermediateLineBudget);\n    const cut = findCutIndex(lineBudgeted, chunkBudget);\n    if (cut <= 0) {\n      // Degenerate — force progress with a hard cut at the chunk budget.\n      const forced = Math.min(chunkBudget, remaining.length);\n      const rawChunk = remaining.slice(0, forced);\n      remaining = remaining.slice(forced).replace(/^\\s+/, \"\");\n      const finalized = finalizeChunk(rawChunk, fenceState, /*hasMore=*/ remaining.length > 0);\n      chunks.push(finalized.text);\n      fenceState = finalized.fenceState;\n      continue;\n    }\n\n    const rawChunk = remaining.slice(0, cut);\n    remaining = remaining.slice(cut).replace(/^\\s+/, \"\");\n    const finalized = finalizeChunk(rawChunk, fenceState, /*hasMore=*/ remaining.length > 0);\n    chunks.push(finalized.text);\n    fenceState = finalized.fenceState;\n  }\n\n  // Visual-polish: drop the continuation marker in the exact 2-chunk case.\n  if (chunks.length === 2) {\n    chunks[0] = (chunks[0] ?? \"\").replace(CONTINUATION_MARKER, \"\").trimEnd();\n  }\n\n  return chunks.filter((c) => c.trim().length > 0);\n}\n\n// Given a raw chunk + the fence state coming IN, produce:\n// - the finalized chunk text (prefixed with fence re-open if needed,\n//   suffixed with fence close + continuation marker if needed)\n// - the fence state to carry into the NEXT chunk\nfunction finalizeChunk(\n  rawChunk: string,\n  incomingFence: FenceState,\n  hasMore: boolean,\n): { text: string; fenceState: FenceState } {\n  // Prefix with fence re-open if we're inheriting one from a prior chunk.\n  let text = incomingFence.openMarker !== undefined\n    ? `${incomingFence.openMarker}${incomingFence.openLang}\\n${rawChunk}`\n    : rawChunk;\n\n  // Track fence state ACROSS the prefixed text (the re-opened fence might\n  // close within this chunk, in which case we don't need to carry state).\n  const outgoing = trackFenceState(text, { openMarker: undefined, openLang: undefined });\n\n  // If a fence is still open at end-of-chunk AND there's more content to\n  // come, close the fence here and the next chunk will re-open it.\n  if (outgoing.openMarker !== undefined && hasMore) {\n    text = `${text.trimEnd()}\\n${outgoing.openMarker}`;\n  }\n\n  // Continuation marker on non-final chunks.\n  if (hasMore) {\n    text = text + CONTINUATION_MARKER;\n  }\n\n  // Carry the fence state forward only if this chunk ends with an open fence\n  // and there's more content.\n  const carry: FenceState = hasMore && outgoing.openMarker !== undefined\n    ? outgoing\n    : { openMarker: undefined, openLang: undefined };\n\n  return { text, fenceState: carry };\n}\n\n```"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "model": "claude-sonnet-4-6",
+        "id": "msg_cassette",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "`src/lib/split-reply.ts` is a *pure function* that breaks a long Slack reply into multiple thread messages instead of truncating it.\n\nKey behaviors:\n- *Budget:* defaults to 3,000 chars / 60 lines per chunk\n- *Cut priority:* paragraph boundary (`\\n\\n`) → line (`\\n`) → word (space) → hard-cut — always picks the cleanest break ≤ the limit\n- *Code fence tracking:* if a split lands inside a ` ``` ` block, it closes the fence on the current chunk and re-opens it on the next, so every chunk is valid Slack markdown\n- *Continuation marker:* appends `_[continued ↓]_` between chunks (skipped when there are exactly 2 chunks)\n- *No I/O:* fully pure — the caller (route handler) is responsible for posting each returned chunk as a separate Slack message\n\nThe motivation (from the file header): truncation silently eats content — especially the call-to-action on issue-proposal messages — and Slack's limit isn't just the 40K char cap, so splitting is safer than capping."
+          }
+        ],
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "stop_details": null,
+        "usage": {
+          "input_tokens": 5688,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 3915,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          },
+          "output_tokens": 270,
+          "service_tier": "standard",
+          "inference_geo": "global"
+        }
+      },
+      "synthetic": false
+    }
+  ]
+}

@@ -85,6 +85,11 @@ src/
     list-prs.ts           — Recent pull requests (open/merged/closed)
     create-issue.ts       — GitHub issue proposal + parser
     save-knowledge.ts     — Knowledge base save (Vercel KV)
+  evals/
+    behavior/
+      harness/            — Record/replay harness: cassette hashing, contracts, fakes, scenario runner
+      scenarios/          — Full-turn behavior scenarios (run via npm run eval:behavior, NOT npm test)
+      cassettes/          — Committed recordings (one JSON per scenario; replay is keyless)
 docs/
   setup.md                — Complete setup guide (Slack, GitHub, Vercel, KV)
   usage.md                — How to use the bot day-to-day
@@ -103,6 +108,7 @@ docs/
     hybrid-retrieval.md   — Lexical + semantic retrieval (Upstash Vector, RRF fusion, degradation)
     code-index.md         — Incremental semantic code index (manifest cursor, cron tick, src arm)
     passive-kb-learning.md — Evidence-cited passive KB proposals (sweep phase 2, confirm-before-write)
+    behavior-evals.md     — Record/replay behavior evals (cassettes, contracts, keyless CI)
 TELEMETRY.md              — Incident-response event vocabulary + Sentry query recipes
 vercel.json               — Vercel Cron schedules (recovery sweep + code-index tick)
 ```
@@ -124,6 +130,13 @@ Rules:
 ```bash
 npm test              # Run all tests once
 npm run test:watch    # Watch mode for development
+```
+
+Behavior evals (full-turn contracts, record/replay — see `docs/features/behavior-evals.md`):
+
+```bash
+npm run eval:behavior         # Replay committed cassettes — keyless, deterministic
+npm run eval:behavior:record  # Re-record against live APIs (local only; refuses under CI)
 ```
 
 ## Environment Variables

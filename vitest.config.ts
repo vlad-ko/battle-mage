@@ -12,6 +12,10 @@ export default defineConfig({
       "**/dist/**",
       "**/.next/**",
       "src/evals/fixtures/**",
+      // Behavior-eval scenarios replay cassettes under their own config
+      // (`npm run eval:behavior`, vitest.behavior.config.ts). The harness
+      // unit tests in src/evals/behavior/harness/** still run here.
+      "src/evals/behavior/scenarios/**",
     ],
   },
   resolve: {
