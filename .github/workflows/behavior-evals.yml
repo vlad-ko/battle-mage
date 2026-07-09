@@ -1,0 +1,63 @@
+# Behavior evals (#137): replay committed cassettes against real turn
+# code. Deliberately NOT a required check — it only runs when a PR is
+# labeled `behavior-evals` or touches the eval surface itself.
+#
+# Keyless by design: no API secrets are exposed here. Replay never makes
+# a live call (CassetteMissError instead), and record mode hard-refuses
+# to run when CI is set (invariant I7), so this workflow can never spend
+# API money or write to GitHub/Slack.
+name: Behavior Evals
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            evals:
+              - 'src/evals/behavior/**'
+              - 'vitest.behavior.config.ts'
+      - id: decide
+        env:
+          LABELED: ${{ contains(github.event.pull_request.labels.*.name, 'behavior-evals') }}
+          CHANGED: ${{ steps.changes.outputs.evals }}
+        run: |
+          if [ "$LABELED" = "true" ] || [ "$CHANGED" = "true" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  behavior-evals:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # NO API-key secrets here — replay must pass keyless. CI=true is set by
+      # Actions automatically, which hard-blocks RECORD mode (invariant I7).
+      - run: npm run eval:behavior
+        env:
+          LANG: en_US.UTF-8   # pins toLocaleString output → stable cassette hashes
+          TZ: UTC

@@ -13,7 +13,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "eval": "vitest run --config vitest.evals.config.ts"
+    "eval": "vitest run --config vitest.evals.config.ts",
+    "eval:behavior": "vitest run --config vitest.behavior.config.ts",
+    "eval:behavior:record": "RECORD=1 vitest run --config vitest.behavior.config.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
